@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BondScore for X - Verification & Testing Harness</title>
+  <link rel="stylesheet" href="content/styles.css">
+  <style>
+    body {
+      background-color: #000000;
+      color: #e7e9ea;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      padding: 24px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .harness-card {
+      background: #16181c;
+      border: 1px solid #2f3336;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    h1, h2, h3 { color: #fff; margin-bottom: 12px; }
+    .btn-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+    button.harness-btn {
+      background: #1d9bf0;
+      color: #fff;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 9999px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.harness-btn:hover { background: #1a8cd8; }
+    button.harness-btn.pink { background: #f91880; }
+    button.harness-btn.pink:hover { background: #d8156e; }
+    button.harness-btn.green { background: #00ba7c; }
+    button.harness-btn.green:hover { background: #009966; }
+    .mock-tweet {
+      border-bottom: 1px solid #2f3336;
+      padding: 16px 0;
+      display: flex;
+      gap: 12px;
+    }
+    .mock-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 9999px;
+      background: #2f3336;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .mock-content { flex: 1; }
+    .mock-header { display: flex; align-items: center; gap: 6px; }
+    .mock-display-name { font-weight: 700; color: #fff; }
+    .mock-handle { color: #71767b; font-size: 14px; }
+    .mock-text { margin-top: 6px; font-size: 15px; line-height: 1.4; }
+    .mock-actions { display: flex; gap: 20px; margin-top: 10px; font-size: 13px; color: #71767b; }
+    .mock-action { cursor: pointer; }
+    .mock-action:hover { color: #1d9bf0; }
+    .log-box {
+      background: #0b0e11;
+      border: 1px solid #2f3336;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 12px;
+      color: #00ba7c;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .empty-state {
+      padding: 32px 16px;
+      text-align: center;
+      color: #71767b;
+      font-size: 14px;
+    }
+    input.harness-input {
+      padding: 8px 14px;
+      border-radius: 9999px;
+      border: 1px solid #2f3336;
+      background: #0b0e11;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+    input.harness-input:focus {
+      border-color: #1d9bf0;
+    }
+  </style>
+</head>
+<body>
+  <h1>⚡ BondScore for X - Test Harness</h1>
+  <p style="color: #71767b; margin-bottom: 20px;">Interactive testing sandbox to verify scores, decay, real-time live like boosts, and badge injection on any handle.</p>
+
+  <div class="harness-card">
+    <h3>Simulated Controls</h3>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px;">
+      <label style="font-size: 13px; color: #71767b;">Current User Handle:</label>
+      <input type="text" class="harness-input" id="current-user-input" placeholder="e.g. your_handle" style="width: 160px; color: #1d9bf0; font-weight: 700;">
+      <button class="harness-btn" id="btn-set-user" style="padding: 6px 14px; font-size: 13px;">Save</button>
+      <span id="user-status-msg" style="font-size: 12px; color: #00ba7c;"></span>
+    </div>
+
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+      <input type="text" class="harness-input" id="target-handle-input" placeholder="Enter target handle..." style="flex: 1; min-width: 200px;">
+      <button class="harness-btn" id="btn-create-post">+ Create Post</button>
+      <button class="harness-btn pink" id="btn-simulate-like">❤️ Simulate Like</button>
+      <button class="harness-btn" id="btn-simulate-reply">💬 Simulate Reply</button>
+      <button class="harness-btn" id="btn-run-deep">⚡ Run Deep Mode</button>
+    </div>
+
+    <div class="btn-row" style="margin-top: 12px;">
+      <button class="harness-btn green" id="btn-fast-forward">⏩ Fast Forward 10 Days (Test Decay)</button>
+      <button class="harness-btn" style="background: #333;" id="btn-reset-data">🗑️ Reset Storage</button>
+    </div>
+  </div>
+
+  <div class="harness-card">
+    <h3>Timeline</h3>
+    <div id="timeline-posts">
+      <div class="empty-state" id="empty-state">No posts on screen. Type any handle above and click "+ Create Post" to generate a live interactive post.</div>
+    </div>
+  </div>
+
+  <div class="harness-card">
+    <h3>Real-time Event Log</h3>
+    <div class="log-box" id="harness-log">Harness initialized. Ready.<br></div>
+  </div>
+
+  <!-- Load Extension Scripts with Mock Storage Fallback for Standalone Testing -->
+  <script>
+    if (typeof chrome === 'undefined' || !chrome.storage) {
+      let initialData = {};
+      try {
+        initialData = JSON.parse(localStorage.getItem('bond_harness_data') || '{}');
+      } catch (e) {}
+
+      window.chrome = {
+        storage: {
+          local: {
+            _data: initialData,
+            get: function(keys, cb) {
+              if (keys === null) return cb(this._data);
+              if (typeof keys === 'string') keys = [keys];
+              const res = {};
+              for (const k of keys) res[k] = this._data[k];
+              cb(res);
+            },
+            set: function(obj, cb) {
+              Object.assign(this._data, obj);
+              try {
+                localStorage.setItem('bond_harness_data', JSON.stringify(this._data));
+              } catch (e) {}
+              if (cb) cb();
+            },
+            clear: function(cb) {
+              this._data = {};
+              try {
+                localStorage.removeItem('bond_harness_data');
+              } catch (e) {}
+              if (cb) cb();
+            }
+          }
+        },
+        runtime: { lastError: null },
+        tabs: {
+          create: function(opts) { window.open(opts.url, '_blank'); }
+        }
+      };
+    }
+  </script>
+  <script src="core/storage.js"></script>
+  <script src="core/scoring.js"></script>
+  <script src="core/deep-analyzer.js"></script>
+  <script src="content/detector.js"></script>
+  <script src="content/ui.js"></script>
+
+  <script>
+    function log(msg) {
+      const box = document.getElementById('harness-log');
+      box.innerHTML += `[${new Date().toLocaleTimeString()}] ${msg}<br>`;
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function cleanHandle(h) {
+      return (h || '').trim().replace(/^@/, '').toLowerCase();
+    }
+
+    async function createPost(handle) {
+      handle = cleanHandle(handle);
+      if (!handle) {
+        alert('Please enter a handle');
+        return;
+      }
+
+      const empty = document.getElementById('empty-state');
+      if (empty) empty.remove();
+
+      const postsContainer = document.getElementById('timeline-posts');
+      const article = document.createElement('article');
+      article.className = 'mock-tweet';
+      article.setAttribute('data-testid', 'tweet');
+
+      const avatarChar = handle.charAt(0).toUpperCase() || 'U';
+
+      article.innerHTML = `
+        <div class="mock-avatar">${avatarChar}</div>
+        <div class="mock-content">
+          <div class="mock-header" data-testid="User-Name">
+            <span class="mock-display-name">${handle}</span>
+            <a role="link" class="mock-handle" href="/${handle}">@${handle}</a>
+          </div>
+          <div class="mock-text" data-testid="tweetText">
+            Testing real-time BondScore interactions and badge updates.
+          </div>
+          <div class="mock-actions">
+            <span class="mock-action" data-testid="like">❤️ Like</span>
+            <span class="mock-action" data-testid="retweet">🔁 Repost</span>
+            <span class="mock-action" data-testid="tweetButtonInline">💬 Reply</span>
+          </div>
+        </div>
+      `;
+
+      postsContainer.prepend(article);
+
+      const header = article.querySelector('[data-testid="User-Name"]');
+      await window.bondUI.injectBadge(header, handle, false);
+
+      log(`Created post for @${handle} and injected live badge.`);
+    }
+
+    async function initHarness() {
+      await window.bondStorage.init();
+      await window.interactionDetector.init();
+
+      const current = await window.bondStorage.getCurrentUser() || 'user';
+      document.getElementById('current-user-input').value = current;
+      window.interactionDetector.currentUser = current;
+      log(`Storage ready. Current User: @${current}`);
+
+      // Save user button
+      document.getElementById('btn-set-user').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('current-user-input').value);
+        if (h) {
+          await window.bondStorage.setCurrentUser(h);
+          window.interactionDetector.currentUser = h;
+          document.getElementById('user-status-msg').innerText = '✓ Saved';
+          setTimeout(() => document.getElementById('user-status-msg').innerText = '', 2000);
+          log(`Updated current user to @${h}`);
+        }
+      });
+
+      // Create post button
+      document.getElementById('btn-create-post').addEventListener('click', () => {
+        const h = document.getElementById('target-handle-input').value;
+        createPost(h);
+      });
+
+      // Allow Enter key in target handle input
+      document.getElementById('target-handle-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          createPost(e.target.value);
+        }
+      });
+
+      // Simulate Like button
+      document.getElementById('btn-simulate-like').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordInteraction(h, {
+          type: 'like',
+          textSnippet: 'Liked post',
+          isMutual: false
+        });
+        log(`Simulated like on @${h} (+2 pts)`);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate Reply button
+      document.getElementById('btn-simulate-reply').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordInteraction(h, {
+          type: 'reply_mutual',
+          textSnippet: 'Mutual reply thread exchange',
+          isMutual: true
+        });
+        log(`Simulated mutual reply with @${h} (+15 pts + reciprocity bonus)`);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Run deep mode
+      document.getElementById('btn-run-deep').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        const currentUser = window.interactionDetector.currentUser || 'user';
+        log(`Running Deep Mode on @${h}...`);
+        await window.deepAnalyzer.runAnalysis(currentUser, h, ({ percent, stage, itemsFound }) => {
+          log(`Deep Progress: ${percent}% - ${stage} (${itemsFound} items)`);
+        });
+        log(`Deep Analysis on @${h} complete!`);
+      });
+
+      // Fast forward decay
+      document.getElementById('btn-fast-forward').addEventListener('click', async () => {
+        log('Simulating 10 days passing... applying exponential half-life decay');
+        const users = await window.bondStorage.getAllUsers();
+        for (const u of users) {
+          const events = await window.bondStorage.getEvents(u.handle);
+          for (const e of events) {
+            e.timestamp -= 86400000 * 10;
+          }
+          await window.bondStorage.saveEvents(u.handle, events);
+          const settings = await window.bondStorage.getSettings();
+          const { score, tier, trend } = BondScoring.calculateUserScore(events, settings, u.currentScore);
+          u.currentScore = score;
+          u.tier = tier.id;
+          u.trend = trend;
+          await window.bondStorage.saveUser(u.handle, u);
+          window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: u.handle } }));
+        }
+        log('Decay applied to all tracked accounts.');
+      });
+
+      // Reset storage
+      document.getElementById('btn-reset-data').addEventListener('click', async () => {
+        await window.bondStorage.clearAll();
+        log('Cleared all data. Reloading...');
+        setTimeout(() => location.reload(), 500);
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', initHarness);
+    } else {
+      initHarness();
+    }
+  </script>
+</body>
+</html>

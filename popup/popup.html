@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BondScore for X</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="header-brand">
+        <div class="brand-logo">
+          <svg viewBox="0 0 24 24" class="brand-svg">
+            <path fill="#F91880" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="brand-title">BondScore</h1>
+          <div class="creator-tag">Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></div>
+        </div>
+      </div>
+      <div class="header-status-dot" title="Active on X"></div>
+    </header>
+
+    <!-- Nav Tabs -->
+    <nav class="popup-tabs">
+      <button class="tab-btn active" data-tab="tab-leaderboard">🏆 Mutuals</button>
+      <button class="tab-btn" data-tab="tab-orbit">🪐 Orbit</button>
+      <button class="tab-btn" data-tab="tab-radar">⚡ Radar & Streaks</button>
+      <button class="tab-btn" data-tab="tab-settings">⚙️ Decay</button>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="popup-body">
+      <!-- Tab 1: Leaderboard -->
+      <section id="tab-leaderboard" class="tab-pane active">
+        <div class="stats-overview">
+          <div class="stat-box">
+            <div class="stat-number" id="stat-total-accounts">0</div>
+            <div class="stat-label">Tracked</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number" id="stat-top-score">0</div>
+            <div class="stat-label">Highest Bond</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number" id="stat-mutual-replies">0</div>
+            <div class="stat-label">Exchanges</div>
+          </div>
+        </div>
+
+        <!-- Filter Pills & Search -->
+        <div class="search-filter-section">
+          <div class="search-bar-wrapper">
+            <input type="text" id="mutual-search-input" placeholder="Search friends by @handle or name..." autocomplete="off">
+          </div>
+          <div class="filter-pills">
+            <button class="filter-pill active" data-filter="all">All</button>
+            <button class="filter-pill" data-filter="vip">⭐ VIPs</button>
+            <button class="filter-pill" data-filter="streaks">🔥 Streaks</button>
+            <button class="filter-pill" data-filter="at-risk">⚠️ At Risk</button>
+          </div>
+        </div>
+
+        <div class="mutuals-list" id="mutuals-list">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-icon">🤝</div>
+            <h3>No tracked mutuals yet</h3>
+            <p>Browse X, reply to mutuals, or click <strong>Deep Analysis</strong> on any profile to calculate your first Bond Score.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 2: Mutuals Orbit View (Solar System) -->
+      <section id="tab-orbit" class="tab-pane">
+        <div class="orbit-header-bar">
+          <div class="orbit-title-group">
+            <h3>🪐 Solar System Orbit</h3>
+            <p class="settings-hint">Concentric orbit rings showing your closest bonds around your gravity center.</p>
+          </div>
+          <button class="orbit-download-btn" id="orbit-download-btn" title="Export high-resolution orbit card image to share on X">📸 Share Image</button>
+        </div>
+
+        <div class="orbit-canvas-container">
+          <canvas id="orbit-canvas" width="370" height="370"></canvas>
+          <div class="orbit-legend">
+            <span class="legend-item"><span class="legend-dot core"></span> Core (80+)</span>
+            <span class="legend-item"><span class="legend-dot close"></span> Close (50-79)</span>
+            <span class="legend-item"><span class="legend-dot casual"></span> Orbit (20-49)</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab 3: Settings -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="settings-group">
+          <h3>Decay Speed & Retention</h3>
+          <p class="settings-hint">Scores slowly decay when no interactions happen, keeping your bond score reflective of active relationships.</p>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="decay-halflife">Half-Life Decay Rate</label>
+              <span class="setting-val-badge" id="decay-halflife-val">14 days</span>
+            </div>
+            <input type="range" id="decay-halflife" min="3" max="60" value="14" step="1">
+            <div class="range-sub">Shorter = fast decay | Longer = persistent bond</div>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="grace-period">Grace Period (Zero Decay)</label>
+              <span class="setting-val-badge" id="grace-period-val">2 days</span>
+            </div>
+            <input type="range" id="grace-period" min="0" max="14" value="2" step="1">
+            <div class="range-sub">Days before score starts decaying after last interaction</div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <h3>Signal Weights</h3>
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="weight-mutual">Mutual Reply Exchange</label>
+              <span class="setting-val-badge" id="weight-mutual-val">15 pts</span>
+            </div>
+            <input type="range" id="weight-mutual" min="5" max="30" value="15" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="weight-reply">Single Reply (Sent/Received)</label>
+              <span class="setting-val-badge" id="weight-reply-val">8 pts</span>
+            </div>
+            <input type="range" id="weight-reply" min="2" max="20" value="8" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="weight-like">Like</label>
+              <span class="setting-val-badge" id="weight-like-val">2 pts</span>
+            </div>
+            <input type="range" id="weight-like" min="1" max="10" value="2" step="1">
+          </div>
+        </div>
+
+        <button class="save-settings-btn" id="save-settings-btn">Save Preferences</button>
+      </section>
+
+      <!-- Tab 4: Mutuals Radar, Streaks & Quick Deep Scan -->
+      <section id="tab-radar" class="tab-pane">
+        <div class="radar-header-bar">
+          <h3>⚡ Mutuals Radar & Streaks</h3>
+          <p class="settings-hint">Live breakdown of active reply streaks, at-risk bonds, and direct conversation analysis.</p>
+        </div>
+
+        <!-- Direct Quick Deep Scan -->
+        <div class="radar-card">
+          <div class="radar-card-title">🔍 Quick Deep Analysis</div>
+          <p class="settings-hint">Audit archived exchanges for any X handle directly without leaving this popup.</p>
+          <div class="quick-deep-row">
+            <input type="text" id="quick-deep-input" placeholder="Enter @handle (e.g. handle)...">
+            <button class="quick-deep-btn" id="quick-deep-btn">⚡ Analyze</button>
+          </div>
+          <div id="quick-deep-status" class="quick-deep-status" style="display:none;"></div>
+        </div>
+
+        <!-- Streaks Spotlight -->
+        <div class="radar-card">
+          <div class="radar-card-title">🔥 Daily Reply Streaks</div>
+          <div id="streaks-list" class="radar-mini-list">
+            <div class="radar-empty">No active reply streaks yet. Chat daily with mutuals to ignite streaks!</div>
+          </div>
+        </div>
+
+        <!-- Inactivity Radar (At Risk) -->
+        <div class="radar-card">
+          <div class="radar-card-title">⚠️ At-Risk Bonds (Decay Imminent)</div>
+          <p class="settings-hint">Accounts with scores ≥40 and no replies in 7+ days.</p>
+          <div id="at-risk-list" class="radar-mini-list">
+            <div class="radar-empty">All tracked bonds are fresh and active!</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="popup-footer">
+      <span>Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></span>
+      <a href="https://x.com/MaserSuspended" target="_blank" class="footer-link">Follow on X &rarr;</a>
+    </footer>
+  </div>
+
+  <script src="../core/storage.js"></script>
+  <script src="../core/scoring.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BondScore for X — Live Relationship Score, Mutual Streaks & Solar System Orbit</title>
+  <link rel="icon" type="image/png" href="../icons/icon32.png">
+  <style>
+    :root {
+      --bg-black: #000000;
+      --bg-card: #16181c;
+      --bg-card-hover: #1c1f24;
+      --border: #2f3336;
+      --text: #e7e9ea;
+      --text-muted: #71767b;
+      --accent-blue: #1d9bf0;
+      --accent-pink: #f91880;
+      --accent-green: #00ba7c;
+      --accent-orange: #ff7a00;
+      --accent-yellow: #ffd400;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-black);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Container */
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Header */
+    header {
+      padding: 24px 0;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+
+    .nav-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+      color: #fff;
+    }
+
+    .brand-icon {
+      width: 38px;
+      height: 38px;
+      background: rgba(249, 24, 128, 0.15);
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .brand-icon svg {
+      width: 22px;
+      height: 22px;
+      fill: var(--accent-pink);
+    }
+
+    .brand-name {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .nav-btn {
+      padding: 8px 18px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+      transition: all 0.2s ease;
+    }
+
+    .nav-btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .nav-btn-secondary:hover {
+      border-color: #536471;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-btn-primary {
+      background: var(--text);
+      color: var(--bg-black);
+    }
+
+    .nav-btn-primary:hover {
+      background: #d7dbdc;
+    }
+
+    /* Hero Section */
+    .hero {
+      padding: 80px 0 60px;
+      text-align: center;
+    }
+
+    .pill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: rgba(29, 155, 240, 0.1);
+      border: 1px solid rgba(29, 155, 240, 0.3);
+      color: var(--accent-blue);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 24px;
+    }
+
+    .hero-title {
+      font-size: 52px;
+      font-weight: 900;
+      letter-spacing: -1.5px;
+      line-height: 1.1;
+      margin-bottom: 20px;
+      max-width: 860px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .hero-title span.grad {
+      background: linear-gradient(135deg, #1d9bf0 0%, #f91880 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero-subtitle {
+      font-size: 19px;
+      color: var(--text-muted);
+      max-width: 680px;
+      margin: 0 auto 36px;
+      line-height: 1.5;
+    }
+
+    .hero-cta-group {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 40px;
+    }
+
+    .cta-button {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 28px;
+      border-radius: 9999px;
+      font-size: 15px;
+      font-weight: 800;
+      text-decoration: none;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+
+    .cta-primary {
+      background: var(--accent-blue);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(29, 155, 240, 0.35);
+    }
+
+    .cta-primary:hover {
+      background: #1a8cd8;
+      transform: translateY(-2px);
+    }
+
+    .cta-mobile {
+      background: #202327;
+      color: #fff;
+      border: 1px solid var(--border);
+    }
+
+    .cta-mobile:hover {
+      background: #2a2e33;
+      transform: translateY(-2px);
+    }
+
+    /* Live Interactive Interactive Preview Simulator */
+    .preview-card-wrap {
+      max-width: 620px;
+      margin: 0 auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      text-align: left;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+    }
+
+    .tweet-mock {
+      display: flex;
+      gap: 14px;
+    }
+
+    .avatar-mock {
+      width: 48px;
+      height: 48px;
+      border-radius: 9999px;
+      background: linear-gradient(135deg, #f91880, #794bc4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+
+    .tweet-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .tweet-author {
+      font-weight: 800;
+      color: #fff;
+      font-size: 15px;
+    }
+
+    .tweet-handle {
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 800;
+      background: rgba(249, 24, 128, 0.15);
+      color: var(--accent-pink);
+      border: 1px solid rgba(249, 24, 128, 0.3);
+      cursor: pointer;
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(249, 24, 128, 0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(249, 24, 128, 0); }
+    }
+
+    .tweet-body {
+      font-size: 15px;
+      color: var(--text);
+      line-height: 1.45;
+      margin-bottom: 12px;
+    }
+
+    .tweet-actions-row {
+      display: flex;
+      justify-content: space-between;
+      max-width: 400px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* Grid Features */
+    .section-title {
+      font-size: 36px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      text-align: center;
+      margin: 80px 0 16px;
+    }
+
+    .section-sub {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 16px;
+      max-width: 600px;
+      margin: 0 auto 48px;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+      margin-bottom: 80px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 28px;
+      transition: all 0.2s ease;
+    }
+
+    .feature-card:hover {
+      background: var(--bg-card-hover);
+      border-color: #3e4144;
+      transform: translateY(-3px);
+    }
+
+    .feature-icon {
+      font-size: 32px;
+      margin-bottom: 16px;
+    }
+
+    .feature-card h3 {
+      font-size: 19px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    /* Monetization & India UPI Section */
+    .monetization-box {
+      background: radial-gradient(circle at top right, rgba(249, 24, 128, 0.12), transparent 60%),
+                  radial-gradient(circle at bottom left, rgba(29, 155, 240, 0.12), transparent 60%),
+                  var(--bg-card);
+      border: 1px solid rgba(249, 24, 128, 0.3);
+      border-radius: 24px;
+      padding: 40px;
+      margin: 60px 0;
+    }
+
+    .monetization-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .monetization-title h2 {
+      font-size: 28px;
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+
+    .monetization-title p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .upi-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: center;
+    }
+
+    @media (max-width: 768px) {
+      .upi-grid { grid-template-columns: 1fr; }
+      .hero-title { font-size: 36px; }
+    }
+
+    .upi-detail-card {
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+    }
+
+    .upi-input-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .upi-input-group label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    .upi-input-group input {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      color: #fff;
+      outline: none;
+    }
+
+    .upi-qr-card {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+    }
+
+    .upi-qr-img {
+      width: 180px;
+      height: 180px;
+      background: #fff;
+      padding: 10px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+    }
+
+    /* Installation Steps */
+    .install-steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin-bottom: 80px;
+    }
+
+    .step-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px;
+    }
+
+    .step-num {
+      width: 32px;
+      height: 32px;
+      background: var(--accent-blue);
+      color: #fff;
+      border-radius: 9999px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 14px;
+      margin-bottom: 14px;
+    }
+
+    .step-card h4 {
+      font-size: 17px;
+      font-weight: 800;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .step-card p {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    footer a {
+      color: var(--accent-blue);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Nav -->
+  <header>
+    <div class="container nav-row">
+      <a href="#" class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+          </svg>
+        </div>
+        <div class="brand-name">BondScore for X</div>
+      </a>
+      <div class="nav-actions">
+        <a href="#install" class="nav-btn nav-btn-secondary">Installation</a>
+        <a href="#monetize" class="nav-btn nav-btn-secondary">Creator Payouts</a>
+        <a href="../dist/bondscore-v1.1.0-production.zip" download class="nav-btn nav-btn-primary">Download v1.1.0</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container">
+      <div class="pill-badge">✨ Live on Manifest V3 & Android Mobile</div>
+      <h1 class="hero-title">
+        The real measure of who matters on <span class="grad">X (Twitter)</span>
+      </h1>
+      <p class="hero-subtitle">
+        BondScore calculates a live, decay-adjusted relationship score with everyone you interact with. Features mutual reply streaks, reciprocity balance, and a solar system orbit visualization.
+      </p>
+
+      <div class="hero-cta-group">
+        <a href="../dist/bondscore-v1.1.0-production.zip" download class="cta-button cta-primary">
+          <span>📥 Download Production ZIP (Chrome / Edge / Brave)</span>
+        </a>
+        <a href="../bondscore.user.js" download class="cta-button cta-mobile">
+          <span>📱 Install Android Userscript (.user.js)</span>
+        </a>
+      </div>
+
+      <!-- Live Interactive Tweet Preview Simulator -->
+      <div class="preview-card-wrap">
+        <div class="tweet-mock">
+          <div class="avatar-mock" style="background: #1d9bf0;">X</div>
+          <div style="flex:1;">
+            <div class="tweet-header">
+              <span class="tweet-author">Account</span>
+              <!-- Injected Live Badge -->
+              <span class="live-badge" title="Click to view BondScore details">
+                <span>⭐</span>
+                <span>🔥</span>
+                <span>88</span>
+                <span style="font-size:10px;color:#ff7a00;">🔥12d</span>
+              </span>
+              <span style="color:var(--text-muted);font-size:12px;margin-left:auto;">2m</span>
+            </div>
+            <div class="tweet-body">
+              BondScore tracked a 12-day mutual reply streak! The half-life decay formula keeps scores honest and dynamic.
+            </div>
+            <div class="tweet-actions-row">
+              <span>💬 24</span>
+              <span>🔁 12</span>
+              <span>❤️ 156</span>
+              <span>📊 4.2k</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feature Grid -->
+  <section class="container">
+    <h2 class="section-title">Engineered for authentic connection</h2>
+    <p class="section-sub">No paid X API needed. 100% local storage. Zero servers or remote telemetry.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">⏳</div>
+        <h3>Half-Life Exponential Decay</h3>
+        <p>Inactivity slowly cools scores using a 14-day half-life. Active friends stay high; ghosted accounts fade gracefully back to dormant.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🔥</div>
+        <h3>Mutual Interaction Streaks</h3>
+        <p>Celebrate consistent daily conversations with fire streak badges (e.g. 🔥7d). Keeps momentum going with your favorite mutuals.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">⚖️</div>
+        <h3>Reciprocity Radar</h3>
+        <p>Detects one-sided relationships versus true two-way bonds. See exactly what percentage of replies you give vs receive.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🪐</div>
+        <h3>Solar System Orbit</h3>
+        <p>Visualizes your entire mutuals network as a cosmic solar system. Export high-resolution shareable orbit graphics directly to X.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">⭐</div>
+        <h3>VIP Pins & Private Notes</h3>
+        <p>Star your core mutuals to keep them pinned at the top. Add private local notes that only you can see right on their profile.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3>Local-First & Zero Costs</h3>
+        <p>All relationship data lives in your browser's Chrome storage. No subscriptions, no servers, zero API costs.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- All Features Suite Section -->
+  <section class="container" id="features">
+    <div class="monetization-box">
+      <div class="monetization-header">
+        <div class="monetization-title">
+          <h2>⚡ All 8 Unique Super-Features Included</h2>
+          <p>BondScore is not just a badge — it is an entire relationship intelligence suite for X.</p>
+        </div>
+      </div>
+
+      <div style="margin-top:20px;display:grid;grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));gap:16px;">
+        <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <h4 style="color:#fff;font-size:15px;margin-bottom:6px;">🪐 Solar System Orbit (with Real PFPs)</h4>
+          <p style="color:var(--text-muted);font-size:12px;line-height:1.4;">
+            Renders your mutuals as planets orbiting your gravity center, complete with real Twitter profile pictures and 1-click high-resolution PNG export for sharing.
+          </p>
+        </div>
+        <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <h4 style="color:#fff;font-size:15px;margin-bottom:6px;">⚖️ Two-Way Reciprocity Radar</h4>
+          <p style="color:var(--text-muted);font-size:12px;line-height:1.4;">
+            Analyzes whether relationships are a healthy 50/50 dialogue or one-sided. Triggers a 25% conversation multiplier when you talk both ways.
+          </p>
+        </div>
+        <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <h4 style="color:#fff;font-size:15px;margin-bottom:6px;">🔥 Daily Conversation Streaks</h4>
+          <p style="color:var(--text-muted);font-size:12px;line-height:1.4;">
+            Counts consecutive calendar days you exchange replies with each mutual, displaying dynamic flame badges directly on X timelines.
+          </p>
+        </div>
+        <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <h4 style="color:#fff;font-size:15px;margin-bottom:6px;">📈 30-Day Trajectory Sparklines</h4>
+          <p style="color:var(--text-muted);font-size:12px;line-height:1.4;">
+            Interactive SVG historical graph visualizing relationship velocity, growth trends, and decay trajectory over the past month.
+          </p>
+        </div>
+        <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <h4 style="color:#fff;font-size:15px;margin-bottom:6px;">❄️ Inactivity Decay Alarms</h4>
+          <p style="color:var(--text-muted);font-size:12px;line-height:1.4;">
+            Alerts you when a high-value bond hasn't had contact in 7+ days, so you can reach out before half-life decay reduces your score.
+          </p>
+        </div>
+        <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:16px;">
+          <h4 style="color:#fff;font-size:15px;margin-bottom:6px;">🔍 Deep Mode Analysis (Zero Paid API)</h4>
+          <p style="color:var(--text-muted);font-size:12px;line-height:1.4;">
+            Audits past conversation archives and replies in both directions using browser session tokens, with zero ongoing cost or paid X API required.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation Steps Section -->
+  <section class="container" id="install">
+    <h2 class="section-title">How to Install in 60 Seconds</h2>
+    <p class="section-sub">Simple step-by-step instructions for desktop and mobile browsers.</p>
+
+    <div class="install-steps">
+      <div class="step-card">
+        <div class="step-num">1</div>
+        <h4>Chrome / Edge / Brave</h4>
+        <p>1. Download and extract <code>bondscore-v1.1.0-production.zip</code>.<br>2. Open <code>chrome://extensions</code> (or <code>edge://extensions</code>).<br>3. Turn on <strong>Developer Mode</strong> in the top right.<br>4. Click <strong>Load unpacked</strong> and select the extracted folder.</p>
+      </div>
+
+      <div class="step-card">
+        <div class="step-num">2</div>
+        <h4>Android (Kiwi Browser)</h4>
+        <p>1. Install <strong>Kiwi Browser</strong> from Google Play Store.<br>2. Open <code>kiwi://extensions</code>.<br>3. Toggle <strong>Developer mode</strong>.<br>4. Click <strong>+ (from .zip)</strong> and pick the downloaded ZIP file.</p>
+      </div>
+
+      <div class="step-card">
+        <div class="step-num">3</div>
+        <h4>Android (Firefox Mobile)</h4>
+        <p>1. Install <strong>Firefox</strong> and add the <strong>Tampermonkey</strong> add-on.<br>2. Click the <strong>Install Userscript (.user.js)</strong> button above.<br>3. Confirm "Install" in Tampermonkey. It runs automatically on X!</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <p>BondScore for X • Created by <a href="https://x.com/MaserSuspended" target="_blank" style="font-weight:700;color:var(--accent-blue);">@MaserSuspended</a></p>
+      <p style="margin-top:6px;font-size:11px;">100% Free & Open Source • Pure Manifest V3 • Not affiliated with X Corp.</p>
+    </div>
+  </footer>
+</body>
+</html>

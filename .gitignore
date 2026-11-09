@@ -1,0 +1,9 @@
+# Test & temporary debug artifacts
+*.png
+extract_screen.js
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
