@@ -143,6 +143,9 @@
       <button class="harness-btn" id="btn-create-post">+ Create Post</button>
       <button class="harness-btn pink" id="btn-simulate-like">❤️ Like</button>
       <button class="harness-btn" id="btn-simulate-reply">💬 Reply</button>
+      <button class="harness-btn" style="background: #0284c7;" id="btn-simulate-thread-reply">🧵 Thread Reply</button>
+      <button class="harness-btn" style="background: #10b981;" id="btn-simulate-they-reply">📥 They Reply Back</button>
+      <button class="harness-btn" style="background: #f43f5e;" id="btn-simulate-many-likes">❤️ 5x Likes</button>
       <button class="harness-btn" style="background: #a855f7;" id="btn-simulate-dm">✉️ DM</button>
       <button class="harness-btn" style="background: #00ba7c;" id="btn-simulate-mutual">🤝 Mutual</button>
       <button class="harness-btn" style="background: #f59e0b;" id="btn-simulate-oneway">➡️ One-Way</button>
@@ -368,9 +371,6 @@
           createPost(e.target.value);
         }
       });
-          createPost(e.target.value);
-        }
-      });
 
       // Simulate Like button
       document.getElementById('btn-simulate-like').addEventListener('click', async () => {
@@ -379,9 +379,28 @@
         await window.bondStorage.recordInteraction(h, {
           type: 'like',
           textSnippet: 'Liked post',
-          isMutual: false
+          isMutual: false,
+          direction: 'outbound'
         });
-        log(`Simulated like on @${h} (+2 pts)`);
+        log(`Simulated like on @${h} (+2 pts, subject to diminishing returns)`);
+        await updateMockProfile(h);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate 5x Likes (Test Diminishing Returns)
+      document.getElementById('btn-simulate-many-likes').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        for (let i = 0; i < 5; i++) {
+          await window.bondStorage.recordInteraction(h, {
+            type: 'like',
+            textSnippet: `Liked post #${i + 1}`,
+            isMutual: false,
+            direction: 'outbound'
+          });
+        }
+        log(`Simulated 5x likes on @${h} (demonstrating diminishing returns: replies > likes)`);
+        await updateMockProfile(h);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
@@ -390,11 +409,45 @@
         const h = cleanHandle(document.getElementById('target-handle-input').value);
         if (!h) return alert('Enter a handle first');
         await window.bondStorage.recordInteraction(h, {
-          type: 'reply_mutual',
-          textSnippet: 'Mutual reply thread exchange',
-          isMutual: true
+          type: 'reply_sent',
+          textSnippet: 'Sent reply on post',
+          isMutual: false,
+          direction: 'outbound'
         });
-        log(`Simulated mutual reply with @${h} (+15 pts + reciprocity bonus)`);
+        log(`Simulated outbound reply to @${h} (+8 pts + 1.5x recency velocity)`);
+        await updateMockProfile(h);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate Thread Reply button (Replies in threads > random likes)
+      document.getElementById('btn-simulate-thread-reply').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordInteraction(h, {
+          type: 'reply_thread',
+          textSnippet: 'In-depth reply in conversational thread',
+          isThread: true,
+          isMutual: true,
+          direction: 'outbound'
+        });
+        log(`Simulated conversational Thread Reply to @${h} (+16 pts base + 35% thread bonus + 1.5x recency)`);
+        await updateMockProfile(h);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate They Reply Back (Bonus if they also engage back with you)
+      document.getElementById('btn-simulate-they-reply').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordInteraction(h, {
+          type: 'reply_received',
+          textSnippet: 'They replied back to your tweet!',
+          isMutual: true,
+          isThread: true,
+          direction: 'inbound'
+        });
+        log(`Simulated @${h} replied back to you! (Inbound effort appreciation + Two-Way Reciprocity Multiplier up to +60%!)`);
+        await updateMockProfile(h);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
@@ -405,9 +458,11 @@
         await window.bondStorage.recordInteraction(h, {
           type: 'dm_sent',
           textSnippet: 'Sent direct message via X chat',
-          isMutual: true
+          isMutual: true,
+          direction: 'outbound'
         });
         log(`Simulated sent direct message to @${h} (+12 pts + CRM boost)`);
+        await updateMockProfile(h);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 

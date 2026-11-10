@@ -338,20 +338,26 @@ class InteractionDetector {
 
     if (targetHandle && targetHandle !== this.currentUser) {
       console.log(`[BondScore] Comment/Reply detected to @${targetHandle}! Incrementing score...`);
+      // Check if replying inside an active tweet thread vs single timeline post
+      const isThread = location.pathname.includes('/status/') || !!document.querySelector('div[aria-label*="Timeline: Conversation"]');
+      const eventType = isThread ? 'reply_thread' : 'reply_sent';
+
       // Check if there is already a dialogue/reciprocal history with this user
       const existingUser = await window.bondStorage.getUser(targetHandle);
       const isMutual = !!(existingUser && (existingUser.stats.repliesReceived > 0 || existingUser.stats.mutualExchanges > 0));
 
-      const pointBoost = isMutual ? 15 : 8;
+      const pointBoost = isMutual ? 18 : (isThread ? 14 : 8);
       if (window.bondUI) {
         window.bondUI.optimisticBoost(targetHandle, pointBoost);
       }
 
       await window.bondStorage.recordInteraction(targetHandle, {
-        type: 'reply_sent',
+        type: eventType,
         timestamp: Date.now(),
         tweetId: `reply_${Date.now()}`,
-        isMutual
+        isMutual,
+        isThread,
+        direction: 'outbound'
       });
 
       if (window.bondUI) {
@@ -451,7 +457,8 @@ class InteractionDetector {
 
       if (isReplyToMe || isMention) {
         this.processedTweetIds.add(tweetId);
-        const type = isReplyToMe ? 'reply_received' : 'mention';
+        const isThread = location.pathname.includes('/status/');
+        const type = isReplyToMe ? (isThread ? 'reply_thread' : 'reply_received') : 'mention';
 
         await window.bondStorage.recordInteraction(author.handle, {
           type,
@@ -459,7 +466,9 @@ class InteractionDetector {
           displayName: author.displayName,
           avatarUrl: author.avatarUrl,
           textSnippet: text.slice(0, 140),
-          isMutual: isReplyToMe
+          isMutual: isReplyToMe,
+          isThread,
+          direction: 'inbound'
         });
 
         if (window.bondUI) {
@@ -508,7 +517,8 @@ class InteractionDetector {
           type,
           tweetId: cellId,
           textSnippet: text.slice(0, 100),
-          isMutual: type === 'reply_received'
+          isMutual: type === 'reply_received',
+          direction: 'inbound'
         });
 
         if (window.bondUI) {

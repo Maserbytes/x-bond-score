@@ -361,6 +361,12 @@ class BondUI {
               ${user.streakDays > 0 ? `<span class="bond-streak-badge">🔥 ${user.streakDays} Day Streak</span>` : ''}
             </div>
             <div class="bond-last-seen">Last Interaction: <strong>${BondScoring.formatTimeAgo(user.lastInteraction)}</strong></div>
+            <!-- Quality & Weighting Multipliers Badge Row -->
+            <div class="bond-badges-row" style="margin-top: 4px; flex-wrap: wrap; justify-content: center; gap: 4px;">
+              ${scoringResult.recencyBoost > 1.0 ? `<span class="bond-status-badge" style="background:rgba(29,155,240,0.18);color:#1d9bf0;" title="Interactions within 24-72 hours receive an active recency momentum boost">⚡ ${scoringResult.recencyBoost}x Recency Boost</span>` : ''}
+              ${scoringResult.twoWayMultiplier > 1.0 ? `<span class="bond-status-badge" style="background:rgba(0,186,124,0.18);color:#00ba7c;" title="Mutual two-way dialogue adds an escalating reciprocity bonus">🤝 +${Math.round((scoringResult.twoWayMultiplier - 1) * 100)}% Reciprocal Return</span>` : ''}
+              ${scoringResult.qualityMetrics && scoringResult.qualityMetrics.threadReplies > 0 ? `<span class="bond-status-badge" style="background:rgba(168,85,247,0.18);color:#a855f7;" title="Replies in conversational threads weighted higher than standalone likes">🧵 Thread Depth</span>` : ''}
+            </div>
           </div>
         </div>
 
@@ -611,6 +617,8 @@ class BondUI {
         return { label: '✉️ Mutual DM', className: 'bond-type-dm-mutual', defaultSnippet: 'Active DM dialogue' };
       case 'reply_mutual':
         return { label: '🤝 Mutual', className: 'bond-type-mutual', defaultSnippet: 'Two-way reply exchange' };
+      case 'reply_thread':
+        return { label: '🧵 Thread Reply', className: 'bond-type-thread', defaultSnippet: 'Conversational reply in thread' };
       case 'reply_sent':
         return { label: '💬 Reply Sent', className: 'bond-type-sent', defaultSnippet: 'Reply sent by you' };
       case 'reply_received':

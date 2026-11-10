@@ -111,23 +111,37 @@ window.deepAnalyzer.setProvider(new RezeroSanctuaryProvider());
 
 ---
 
-## 📐 Scoring Formula & Decay Model
+## 📐 Scoring Formula & Direction + Quality Weighting
 
-Scores are calculated using a **half-life exponential decay** formulation normalized to a **0–100** scale:
+Scores are calculated using a **half-life exponential decay** formulation normalized to a **0–100** scale with five-pillar **Direction & Quality Weighting**:
 
 $$Score = 100 \times \left(1 - e^{-\frac{\text{RawScore}}{45}}\right)$$
 
-### Event Weights
-| Interaction Type | Weight | Notes |
-| :--- | :---: | :--- |
-| **Mutual DM Conversation** | `+20 pts` | Intimate back-and-forth direct messages |
-| **Mutual Reply Exchange** | `+15 pts` | Reciprocal back-and-forth dialogue |
-| **Direct Message (Sent/Recv)** | `+12 pts` | Direct messages on x.com/messages |
-| **Direct Reply (Sent/Received)** | `+8 pts` | Single reply in thread |
-| **Quote Tweet** | `+6 pts` | Public commentary |
-| **Mention** | `+5 pts` | Tagging in post |
-| **Like / Repost** | `+2 pts` | Basic engagement signal |
-| **Two-Way Multiplier** | `× 1.25` | Applied when conversation flows both ways |
+### 1. Direction & Quality Weighting Pillars
+- **💬 Replies > Likes**: Replies carry 8–18 base pts vs 2 pts for likes. Standalone likes feature **diminishing returns** (first 3 likes yield full 2 pts, subsequent likes diminish by $\frac{2}{\sqrt{N-2}}$). Fifty passive likes without conversation cannot artificially create a soulmate bond.
+- **🧵 Replies in Threads > Random Likes**: Replies inside active tweet threads (`reply_thread`) receive a **+35% Thread Depth Multiplier** ($16 \times 1.35 = 21.6\text{ pts}$), weighting substantive dialogue over 10× higher than a random like.
+- **⚡ Recency Velocity**: Recent interactions are weighted higher than stale ones:
+  - **Within 24 hours**: `1.50×` (50% recency momentum boost)
+  - **Within 3 days**: `1.30×` (30% recency boost)
+  - **Within 7 days**: `1.15×` (15% recency boost)
+- **🤝 Bonus if They Engage Back (Two-Way Reciprocity)**:
+  - **Inbound Effort Appreciation**: When they take the time to reply back to you or DM you, inbound actions carry a `+25%` appreciation bonus.
+  - **Escalating Multiplier**: Two-way dialogue activates a `+30%` to `+60%` boost based on interaction balance ratio ($\frac{\min}{\max}$).
+  - **One-Sided Protection Cap**: If you repeatedly engage (4+ likes/replies) but they never engage back with you, raw score is strictly capped at `16` (max ~32–35 Acquaintance), preventing unrequited fan accounts from ranking as Besties.
+
+### Event Base Weights
+| Interaction Type | Base Weight | Multipliers & Conditions | Notes |
+| :--- | :---: | :---: | :--- |
+| **Mutual DM Conversation** | `+22 pts` | Direct intimacy | Private back-and-forth direct messages |
+| **Mutual Reply Exchange** | `+18 pts` | Reciprocal dialogue | High-quality public back-and-forth conversation |
+| **Thread Reply** | `+16 pts` | `× 1.35` Thread Depth | Replies in active conversation threads |
+| **Direct Message Received** | `+15 pts` | Inbound effort | When they initiate or send you a DM |
+| **Direct Message Sent** | `+12 pts` | Outbound DM | Private messages you send |
+| **Reply Received (Inbound)** | `+10 pts` | `+25%` Inbound bonus | They took the time to answer you |
+| **Reply Sent (Outbound)** | `+8 pts` | Outbound effort | Standalone reply to their tweet |
+| **Quote Tweet** | `+6 pts` | Public commentary | Public quote of their tweet |
+| **Mention** | `+5 pts` | Direct ping | Tagging in post |
+| **Like / Repost** | `+2 pts` | Diminishing returns ($N > 3$) | Lightweight engagement signal |
 
 ### Time-Decay Model
 - **Grace Period**: 2 days (no decay for 48 hours following an interaction).
@@ -143,6 +157,8 @@ $$Score = 100 \times \left(1 - e^{-\frac{\text{RawScore}}{45}}\right)$$
 | **One-sided (They lead)**| ⬅️ | Received Ratio ≥ 75% | They engage frequently, you reply rarely |
 | **Acquaintance** | 👋 | Score 5–20 | Occasional light interactions |
 | **Stranger / Cold** | 👤 | Score < 3 | No meaningful interaction history yet |
+
+### Score Tiers
 | Tier | Score Range | Badge | Label |
 | :--- | :---: | :---: | :--- |
 | **Soulmates** | 90–100 | 💎 | Core Bond |

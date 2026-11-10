@@ -105,15 +105,21 @@ class BondScoring {
     let accumulatedRaw = 0;
     let sentCount = 0;
     let receivedCount = 0;
+    let likeCount = 0;
+    let threadReplyCount = 0;
+    let regularReplyCount = 0;
+    let maxRecencyBoost = 1.0;
 
     const sorted = [...events].sort((a, b) => b.timestamp - a.timestamp);
 
     for (const evt of sorted) {
       let baseWeight = 0;
+      const isInbound = evt.direction === 'inbound' || evt.type.includes('received') || evt.type === 'signal_follow_back' || evt.type === 'deep_sync';
+
       switch (evt.type) {
         case 'signal_follow_back':
         case 'signal_mutual_follow':
-          baseWeight = 15;
+          baseWeight = 16;
           sentCount++;
           receivedCount++;
           break;
@@ -127,7 +133,8 @@ class BondScoring {
           baseWeight = 0;
           break;
         case 'dm_mutual':
-          baseWeight = weights.dmMutual || (weights.mutualReply || 15) * 1.35;
+          // Highest intimacy: direct bidirectional private messages
+          baseWeight = weights.dmMutual || 22;
           sentCount++;
           receivedCount++;
           break;
@@ -136,57 +143,108 @@ class BondScoring {
           sentCount++;
           break;
         case 'dm_received':
-          baseWeight = weights.dmReceived || 12;
+          // Bonus for inbound DM effort: they reached out to message you
+          baseWeight = weights.dmReceived || 15;
           receivedCount++;
           break;
         case 'reply_mutual':
-          baseWeight = weights.mutualReply;
+          // High quality: mutual conversation replies
+          baseWeight = weights.mutualReply || 18;
           sentCount++;
           receivedCount++;
+          regularReplyCount++;
+          break;
+        case 'reply_thread':
+          // Replies in threads > random likes: Substantive dialogue inside an active tweet thread
+          baseWeight = 16;
+          if (isInbound) { receivedCount++; } else { sentCount++; }
+          threadReplyCount++;
           break;
         case 'reply_sent':
-          baseWeight = weights.replySent;
+          baseWeight = weights.replySent || 8;
           sentCount++;
+          regularReplyCount++;
           break;
         case 'reply_received':
-          baseWeight = weights.replyReceived;
+          // Inbound reply appreciation: they took the time to answer you (+25% value)
+          baseWeight = (weights.replyReceived || 8) * 1.25;
           receivedCount++;
+          regularReplyCount++;
           break;
         case 'quote':
-          baseWeight = weights.quote;
+          baseWeight = weights.quote || 6;
           sentCount++;
           break;
         case 'mention':
-          baseWeight = weights.mention;
+          baseWeight = weights.mention || 5;
+          receivedCount++;
           break;
         case 'like':
-          baseWeight = weights.like;
-          sentCount++;
+          likeCount++;
+          // Replies > likes: Diminishing returns on random likes.
+          // The first 3 likes give full value (2 pts). Additional likes diminish so 50 likes
+          // without speaking cannot fabricate a soulmate bond.
+          if (likeCount <= 3) {
+            baseWeight = weights.like || 2;
+          } else {
+            baseWeight = Math.max(0.4, (weights.like || 2) / Math.sqrt(likeCount - 2));
+          }
+          if (isInbound) { receivedCount++; } else { sentCount++; }
           break;
         case 'deep_sync':
-          baseWeight = weights.deepSyncExchange;
+          baseWeight = weights.deepSyncExchange || 10;
           receivedCount++;
           break;
         default:
           baseWeight = evt.weight || 2;
+          if (isInbound) { receivedCount++; } else { sentCount++; }
           break;
       }
 
-      if (evt.isMutual) {
-        baseWeight *= 1.35; // 35% reciprocity bonus
+      // 1. Thread Depth Multiplier: Replies inside threads carry extra conversational weight
+      if (evt.isThread || evt.type === 'reply_thread') {
+        baseWeight *= 1.35; // 35% thread dialogue bonus
       }
 
+      // 2. Individual Mutual Flag Multiplier
+      if (evt.isMutual) {
+        baseWeight *= 1.30;
+      }
+
+      // 3. Recent interactions weighted higher than old ones (Recency Velocity)
       const ageMs = Math.max(0, now - evt.timestamp);
       const ageDays = ageMs / msInDay;
+      let recencyBoost = 1.0;
+      if (ageDays <= 1) {
+        recencyBoost = 1.50; // Active within 24 hours: 50% recency momentum boost
+      } else if (ageDays <= 3) {
+        recencyBoost = 1.30; // Active within 3 days: 30% recency boost
+      } else if (ageDays <= 7) {
+        recencyBoost = 1.15; // Active this week: 15% recency boost
+      }
+      if (recencyBoost > maxRecencyBoost) maxRecencyBoost = recencyBoost;
+
+      // 4. Exponential Half-Life Decay for older interactions
       const decayableDays = Math.max(0, ageDays - gracePeriodDays);
       const decayFactor = Math.exp(-lambda * decayableDays);
 
-      accumulatedRaw += baseWeight * decayFactor;
+      accumulatedRaw += baseWeight * recencyBoost * decayFactor;
     }
 
-    // Mutual conversation bonus
+    // 5. Bonus if they also engage back with you (Two-Way Mutual Engagement Multiplier)
+    let twoWayMultiplier = 1.0;
     if (sentCount > 0 && receivedCount > 0) {
-      accumulatedRaw *= 1.25;
+      const minE = Math.min(sentCount, receivedCount);
+      const maxE = Math.max(sentCount, receivedCount);
+      const reciprocityBalance = minE / maxE; // 0.0 to 1.0
+
+      // Escalating bonus from +30% up to +60% when they actively engage back
+      twoWayMultiplier = 1.30 + (0.30 * reciprocityBalance);
+      accumulatedRaw *= twoWayMultiplier;
+    } else if (sentCount >= 4 && receivedCount === 0) {
+      // One-sided protection: If you engage repeatedly but they NEVER engage back with you,
+      // cap the raw score so one-sided fan accounts never exceed Acquaintance (~32-35).
+      accumulatedRaw = Math.min(accumulatedRaw, 16);
     }
 
     const K = 45;
@@ -240,6 +298,15 @@ class BondScoring {
       trend,
       streakDays,
       reciprocity,
+      recencyBoost: maxRecencyBoost,
+      twoWayMultiplier: Math.round(twoWayMultiplier * 100) / 100,
+      qualityMetrics: {
+        threadReplies: threadReplyCount,
+        regularReplies: regularReplyCount,
+        likes: likeCount,
+        sentCount,
+        receivedCount
+      },
       sparklinePoints: sparkline.points,
       sparklineHistory: sparkline.history,
       decayWarning,
