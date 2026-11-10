@@ -5,6 +5,7 @@
  */
 
 const DEFAULT_SETTINGS = {
+  theme: 'system', // 'system' | 'dark' | 'light'
   decayHalfLifeDays: 14,
   gracePeriodDays: 2,
   weights: {

@@ -90,11 +90,44 @@
     input.harness-input:focus {
       border-color: #1d9bf0;
     }
+
+    [data-theme="light"] body {
+      background-color: #f8fafc;
+      color: #0f172a;
+    }
+    [data-theme="light"] .harness-card {
+      background: #ffffff;
+      border-color: #e2e8f0;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    [data-theme="light"] h1, [data-theme="light"] h2, [data-theme="light"] h3, [data-theme="light"] .mock-display-name {
+      color: #0f172a;
+    }
+    [data-theme="light"] input.harness-input {
+      background: #ffffff;
+      border-color: #cbd5e1;
+      color: #0f172a;
+    }
+    [data-theme="light"] #mock-profile-area {
+      background: #f8fafc !important;
+      border-color: #e2e8f0 !important;
+    }
+    [data-theme="light"] #mock-profile-name {
+      color: #0f172a !important;
+    }
+    [data-theme="light"] .mock-tweet {
+      border-bottom-color: #e2e8f0;
+    }
   </style>
 </head>
 <body>
-  <h1>⚡ BondScore for X - Test Harness</h1>
-  <p style="color: #71767b; margin-bottom: 20px;">Interactive testing sandbox to verify scores, decay, real-time live like boosts, and badge injection on any handle.</p>
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <div>
+      <h1 style="margin-bottom: 4px;">⚡ BondScore for X - Test Harness</h1>
+      <p style="color: #71767b;">Interactive testing sandbox with live theme switching (Auto, Dark, Light).</p>
+    </div>
+    <button class="harness-btn" id="harness-theme-toggle" style="background: #242b38; border: 1px solid #384255;">🌓 Theme: Auto</button>
+  </div>
 
   <div class="harness-card">
     <h3>Simulated Controls</h3>
@@ -281,6 +314,27 @@
       document.getElementById('current-user-input').value = current;
       window.interactionDetector.currentUser = current;
       log(`Storage ready. Current User: @${current}`);
+
+      // Harness Theme Toggle
+      let hTheme = 'system';
+      const themeToggleBtn = document.getElementById('harness-theme-toggle');
+      function applyHarnessTheme(t) {
+        hTheme = t;
+        if (t === 'dark') {
+          document.documentElement.setAttribute('data-theme', 'dark');
+          themeToggleBtn.innerText = '🌙 Theme: Dark';
+        } else if (t === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+          themeToggleBtn.innerText = '☀️ Theme: Light';
+        } else {
+          document.documentElement.removeAttribute('data-theme');
+          themeToggleBtn.innerText = '🌓 Theme: Auto';
+        }
+      }
+      themeToggleBtn.addEventListener('click', () => {
+        const next = hTheme === 'system' ? 'dark' : hTheme === 'dark' ? 'light' : 'system';
+        applyHarnessTheme(next);
+      });
 
       // Save user button
       document.getElementById('btn-set-user').addEventListener('click', async () => {

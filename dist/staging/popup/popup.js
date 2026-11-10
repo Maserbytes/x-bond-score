@@ -1,15 +1,101 @@
 /**
- * BondScore for X - Extension Popup Logic (v1.1)
+ * BondScore for X - Extension Popup Logic (v1.2 - Pro Design System)
  * Controls leaderboard, filter pills, solar system orbit view, graphic exporter,
- * settings, UPI/monetization setup, and local backup.
+ * dynamic theme switcher (system auto, dark, light), settings, and CRM analytics.
  */
 
 let cachedUsers = [];
 let currentFilter = 'all';
 let currentUsername = 'you';
+let currentTheme = 'system'; // 'system' | 'dark' | 'light'
+
+function isLightMode() {
+  const dataTheme = document.documentElement.getAttribute('data-theme');
+  if (dataTheme === 'light') return true;
+  if (dataTheme === 'dark') return false;
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+}
+
+function applyTheme(theme) {
+  currentTheme = theme || 'system';
+  const root = document.documentElement;
+
+  if (theme === 'dark') {
+    root.setAttribute('data-theme', 'dark');
+  } else if (theme === 'light') {
+    root.setAttribute('data-theme', 'light');
+  } else {
+    root.removeAttribute('data-theme');
+  }
+
+  // Update header toggle button
+  const iconAuto = document.getElementById('theme-icon-auto');
+  const iconDark = document.getElementById('theme-icon-dark');
+  const iconLight = document.getElementById('theme-icon-light');
+  const label = document.getElementById('theme-toggle-label');
+  const toggleBtn = document.getElementById('theme-toggle-btn');
+
+  if (iconAuto && iconDark && iconLight) {
+    iconAuto.style.display = currentTheme === 'system' ? 'inline-block' : 'none';
+    iconDark.style.display = currentTheme === 'dark' ? 'inline-block' : 'none';
+    iconLight.style.display = currentTheme === 'light' ? 'inline-block' : 'none';
+  }
+  if (label) {
+    label.innerText = currentTheme === 'system' ? 'Auto' : currentTheme === 'dark' ? 'Dark' : 'Light';
+  }
+  if (toggleBtn) {
+    const isDarkNow = !isLightMode();
+    toggleBtn.title = `Theme: ${currentTheme.toUpperCase()} (${isDarkNow ? 'Dark' : 'Light'} active). Click to toggle.`;
+  }
+
+  // Update Settings segmented buttons
+  const segBtns = document.querySelectorAll('.theme-seg-btn');
+  segBtns.forEach(b => {
+    b.classList.toggle('active', b.getAttribute('data-theme') === currentTheme);
+  });
+
+  // Re-render canvas if on orbit tab
+  const activeTab = document.querySelector('.tab-btn.active');
+  if (activeTab && activeTab.dataset.tab === 'tab-orbit') {
+    renderOrbitCanvas();
+  }
+}
+
+async function setThemeAndSave(theme) {
+  applyTheme(theme);
+  await window.bondStorage.updateSettings({ theme });
+}
+
+function setupTheme(initialTheme = 'system') {
+  applyTheme(initialTheme);
+
+  const toggleBtn = document.getElementById('theme-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      let nextTheme = 'dark';
+      if (currentTheme === 'system') nextTheme = 'dark';
+      else if (currentTheme === 'dark') nextTheme = 'light';
+      else if (currentTheme === 'light') nextTheme = 'system';
+      await setThemeAndSave(nextTheme);
+    });
+  }
+
+  // OS preference change listener
+  if (window.matchMedia) {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if (currentTheme === 'system') {
+        applyTheme('system');
+      }
+    });
+  }
+}
 
 document.addEventListener('DOMContentLoaded', async () => {
   await window.bondStorage.init();
+
+  const settings = await window.bondStorage.getSettings();
+  setupTheme(settings.theme || 'system');
 
   // Tab Navigation
   const tabBtns = document.querySelectorAll('.tab-btn');
@@ -61,9 +147,9 @@ async function loadCurrentUserTag() {
   const currentUser = await window.bondStorage.getCurrentUser();
   if (currentUser) {
     currentUsername = currentUser;
-    userTag.innerText = `@${currentUser}`;
+    if (userTag) userTag.innerText = `@${currentUser}`;
   } else {
-    userTag.innerText = 'Browse X to auto-detect';
+    if (userTag) userTag.innerText = 'Browse X to auto-detect';
   }
 }
 
@@ -268,12 +354,19 @@ function renderOrbitCanvas() {
   const centerX = w / 2;
   const centerY = h / 2;
 
-  // Clear & Cosmic Space Background
-  ctx.fillStyle = '#05070a';
+  const isLight = isLightMode();
+
+  // Clear & Canvas Background
+  ctx.fillStyle = isLight ? '#f8fafc' : '#05070a';
   ctx.fillRect(0, 0, w, h);
 
-  // Background stars
-  drawStarfield(ctx, w, h, 60);
+  if (!isLight) {
+    // Background stars for dark mode
+    drawStarfield(ctx, w, h, 60);
+  } else {
+    // Subtle constellation grid dots for light mode
+    drawLightGrid(ctx, w, h);
+  }
 
   // Orbit Radii
   const rCore = 52;
@@ -299,11 +392,22 @@ function renderOrbitCanvas() {
 
   // If no mutuals, draw empty state tip
   if (cachedUsers.length === 0) {
-    ctx.fillStyle = '#71767b';
+    ctx.fillStyle = isLight ? '#64748b' : '#71767b';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Interact with accounts on X to populate your orbit', centerX, centerY + 90);
   }
+}
+
+function drawLightGrid(ctx, w, h) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.05)';
+  for (let x = 15; x < w; x += 26) {
+    for (let y = 15; y < h; y += 26) {
+      ctx.fillRect(x, y, 1.5, 1.5);
+    }
+  }
+  ctx.restore();
 }
 
 function drawStarfield(ctx, w, h, count) {
@@ -324,7 +428,7 @@ function drawOrbitRing(ctx, cx, cy, radius, color, label) {
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
   ctx.strokeStyle = color;
-  ctx.globalAlpha = 0.25;
+  ctx.globalAlpha = isLightMode() ? 0.38 : 0.25;
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   ctx.stroke();
@@ -416,10 +520,10 @@ function distributePlanetsOnRing(ctx, users, cx, cy, radius, color) {
       ctx.drawImage(pfp, px - pfpRadius, py - pfpRadius, pfpRadius * 2, pfpRadius * 2);
       ctx.restore();
     } else {
-      // Fallback: dark planet with colored initial
+      // Fallback: planet with colored initial
       ctx.beginPath();
       ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#16181c';
+      ctx.fillStyle = isLightMode() ? '#e2e8f0' : '#16181c';
       ctx.fill();
 
       ctx.fillStyle = color;
@@ -432,7 +536,7 @@ function distributePlanetsOnRing(ctx, users, cx, cy, radius, color) {
 
     // 3. Planet handle & score pill
     ctx.font = 'bold 9px sans-serif';
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = isLightMode() ? '#0f172a' : '#ffffff';
     ctx.textAlign = 'center';
     const labelY = py > cy ? py + pfpRadius + 11 : py - pfpRadius - 4;
     ctx.fillText(`@${u.handle.slice(0, 9)} (${Math.round(u.currentScore || 0)})`, px, labelY);
@@ -634,11 +738,22 @@ async function loadSettingsForm() {
   weightReplyInput.addEventListener('input', () => weightReplyVal.innerText = `${weightReplyInput.value} pts`);
   weightLikeInput.addEventListener('input', () => weightLikeVal.innerText = `${weightLikeInput.value} pts`);
 
+  // Wire up theme segmented buttons in Settings tab
+  const segBtns = document.querySelectorAll('.theme-seg-btn');
+  segBtns.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const themeVal = btn.getAttribute('data-theme');
+      await setThemeAndSave(themeVal);
+    });
+  });
+
   const saveBtn = document.getElementById('save-settings-btn');
   saveBtn.addEventListener('click', async () => {
     saveBtn.innerText = 'Saving...';
     const current = await window.bondStorage.getSettings();
     await window.bondStorage.updateSettings({
+      theme: currentTheme,
       decayHalfLifeDays: parseInt(halfLifeInput.value, 10),
       gracePeriodDays: parseInt(graceInput.value, 10),
       weights: {

@@ -16,11 +16,19 @@
           </svg>
         </div>
         <div>
-          <h1 class="brand-title">BondScore</h1>
+          <h1 class="brand-title">BondScore <span class="badge-v11">v1.1</span></h1>
           <div class="creator-tag">Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></div>
         </div>
       </div>
-      <div class="header-status-dot" title="Active on X"></div>
+      <div class="header-actions">
+        <button class="theme-toggle-btn" id="theme-toggle-btn" title="Theme: System Default (Click to switch)" aria-label="Toggle Theme">
+          <span class="theme-icon theme-icon-auto" id="theme-icon-auto">🌓</span>
+          <span class="theme-icon theme-icon-dark" id="theme-icon-dark" style="display:none;">🌙</span>
+          <span class="theme-icon theme-icon-light" id="theme-icon-light" style="display:none;">☀️</span>
+          <span class="theme-toggle-label" id="theme-toggle-label">Auto</span>
+        </button>
+        <div class="header-status-dot" title="Active on X"></div>
+      </div>
     </header>
 
     <!-- Nav Tabs -->
@@ -28,7 +36,7 @@
       <button class="tab-btn active" data-tab="tab-leaderboard">🏆 Mutuals</button>
       <button class="tab-btn" data-tab="tab-orbit">🪐 Orbit</button>
       <button class="tab-btn" data-tab="tab-radar">🧠 Memory & Balance</button>
-      <button class="tab-btn" data-tab="tab-settings">⚙️ Decay</button>
+      <button class="tab-btn" data-tab="tab-settings">⚙️ Settings</button>
     </nav>
 
     <!-- Main Content Area -->
@@ -99,8 +107,28 @@
         </div>
       </section>
 
-      <!-- Tab 3: Settings -->
+      <!-- Tab 4: Settings -->
       <section id="tab-settings" class="tab-pane">
+        <!-- Appearance & Theme Selector -->
+        <div class="settings-group">
+          <h3>🎨 Appearance & Theme</h3>
+          <p class="settings-hint">Choose between dark mode, light mode, or automatically follow your device's system appearance.</p>
+          <div class="theme-segmented-control" id="theme-segmented-control">
+            <button class="theme-seg-btn active" data-theme="system" id="theme-btn-system">
+              <span class="theme-seg-icon">🌓</span>
+              <span class="theme-seg-text">System (Auto)</span>
+            </button>
+            <button class="theme-seg-btn" data-theme="dark" id="theme-btn-dark">
+              <span class="theme-seg-icon">🌙</span>
+              <span class="theme-seg-text">Dark Mode</span>
+            </button>
+            <button class="theme-seg-btn" data-theme="light" id="theme-btn-light">
+              <span class="theme-seg-icon">☀️</span>
+              <span class="theme-seg-text">White / Light</span>
+            </button>
+          </div>
+        </div>
+
         <div class="settings-group">
           <h3>Decay Speed & Retention</h3>
           <p class="settings-hint">Scores slowly decay when no interactions happen, keeping your bond score reflective of active relationships.</p>

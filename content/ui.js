@@ -292,6 +292,9 @@ class BondUI {
     const modal = document.createElement('div');
     modal.className = 'bond-modal-backdrop';
     modal.dataset.handle = cleanHandle;
+    if (settings && settings.theme && settings.theme !== 'system') {
+      modal.setAttribute('data-theme', settings.theme);
+    }
     this.activeModal = modal;
 
     modal.innerHTML = `

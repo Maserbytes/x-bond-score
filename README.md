@@ -9,6 +9,10 @@
 ## 🌟 Overview
 
 **BondScore** tracks the strength of your relationships with accounts you interact with on X. It calculates a dynamic **Bond Score (0–100)** that:
+- **Pro Design System & Adaptive Theme Switcher**:
+  - **Device / OS Default (Auto)**: Detects whether your device is in Dark Mode or Light Mode and matches automatically.
+  - **Quick Theme Toggle**: Instantly switch between **🌓 System**, **🌙 Dark**, and **☀️ White / Light** via the header pill or Settings.
+  - **Smooth Physical Craft**: Designed with tactile button press micro-interactions (`transform: scale(0.97)`), glassmorphic surfaces, fluid cubic-bezier animations, and high-contrast WCAG AAA typography.
 - **Tracks every like, reply, and Direct Message (DM) you send** to build a comprehensive relationship history.
 - **Profile Follow Badges**: Displays vibrant, live relationship badges directly on user profiles:
   - `🤝 Mutual`: Both you and the user follow each other.
