@@ -263,17 +263,21 @@ async function setupAccountSwitcher() {
 }
 
 /**
- * Checks if active browser tab is on X and syncs active account.
+ * Checks if active browser tab is on X and auto-detects account on initial run.
+ * Preserves user account selection once established to avoid asynchronous race overrides.
  */
 async function syncActiveTabAccountIfAvailable() {
+  const currentStored = await window.bondStorage.getCurrentUser();
+  if (currentStored) return;
+
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
     try {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs && tabs[0] && tabs[0].url && (tabs[0].url.includes('x.com') || tabs[0].url.includes('twitter.com'))) {
           chrome.tabs.sendMessage(tabs[0].id, { type: 'bondscore:get_active_account' }, async (response) => {
             if (response && response.handle) {
-              const currentStored = await window.bondStorage.getCurrentUser();
-              if (currentStored !== response.handle) {
+              const freshStored = await window.bondStorage.getCurrentUser();
+              if (!freshStored) {
                 await window.bondStorage.switchAccount(response.handle, response.metadata);
                 await setupAccountSwitcher();
                 await loadLeaderboard();

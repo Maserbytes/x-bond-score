@@ -75,10 +75,21 @@ async function performDecayRecalculation() {
     const updates = {};
 
     for (const [key, user] of Object.entries(allData)) {
+      let isUserRecord = false;
+      let eventsKey = '';
+
       if (key.startsWith('user:') && user && user.handle) {
-        const eventsKey = `events:${user.handle}`;
-        const events = allData[eventsKey] || [];
-        if (events.length === 0) continue;
+        isUserRecord = true;
+        eventsKey = `events:${user.handle}`;
+      } else if (key.startsWith('acc:') && key.includes(':user:') && user && user.handle) {
+        // Multi-account scoped keys: acc:<account>:user:<handle> -> acc:<account>:events:<handle>
+        isUserRecord = true;
+        eventsKey = key.replace(':user:', ':events:');
+      }
+
+      if (!isUserRecord) continue;
+      const events = allData[eventsKey] || [];
+      if (events.length === 0) continue;
 
         let accumulatedRaw = 0;
         let sentCount = 0;

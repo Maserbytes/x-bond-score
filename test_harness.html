@@ -237,6 +237,14 @@
               } catch (e) {}
               if (cb) cb();
             },
+            remove: function(keys, cb) {
+              const list = Array.isArray(keys) ? keys : [keys];
+              for (const k of list) delete this._data[k];
+              try {
+                localStorage.setItem('bond_harness_data', JSON.stringify(this._data));
+              } catch (e) {}
+              if (cb) cb();
+            },
             clear: function(cb) {
               this._data = {};
               try {
@@ -351,6 +359,7 @@
         if (!clean) return;
         await window.bondStorage.switchAccount(clean, { displayName: clean });
         window.interactionDetector.currentUser = clean;
+        window.interactionDetector.lastDetectedDomHandle = clean;
         document.getElementById('current-user-input').value = clean;
         const pill = document.getElementById('active-acc-pill');
         if (pill) pill.innerText = `Active: @${clean}`;

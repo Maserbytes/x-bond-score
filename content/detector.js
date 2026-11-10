@@ -6,6 +6,7 @@
 class InteractionDetector {
   constructor() {
     this.currentUser = null;
+    this.lastDetectedDomHandle = null;
     this.processedTweetIds = new Set();
     this.lastDetectedUrl = location.href;
     this.listenersAttached = false;
@@ -19,41 +20,82 @@ class InteractionDetector {
   }
 
   /**
-   * Reads active account identity directly from Twitter's UI elements.
+   * Reads active account identity strictly from authenticated navigation elements.
+   * Completely immune to false positives from visited profiles or tweet authors.
    */
   extractActiveAccountFromDOM() {
-    // 1. Account Switcher Button (Bottom left on desktop web)
+    const RESERVED_PATHS = [
+      'home', 'explore', 'notifications', 'messages', 'settings', 'i',
+      'bookmarks', 'lists', 'search', 'compose', 'communities', 'premium',
+      'verified-choose', 'grok', 'jobs', 'about', 'privacy', 'tos'
+    ];
+
+    // 1. Sidebar Account Switcher Button (Desktop web bottom left)
     const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
     if (accountSwitcher) {
+      // 1A. Try reading @handle from text content (wide screen)
       const text = accountSwitcher.innerText || '';
-      const match = text.match(/@([A-Za-z0-9_]+)/);
-      if (match && match[1]) {
-        const handle = match[1].toLowerCase().trim();
-        const img = accountSwitcher.querySelector('img');
-        const avatarUrl = img ? img.src : '';
+      const textMatch = text.match(/@([A-Za-z0-9_]+)/);
+      const img = accountSwitcher.querySelector('img');
+      const avatarUrl = img ? img.src : '';
+
+      if (textMatch && textMatch[1]) {
+        const handle = textMatch[1].toLowerCase().trim();
         const parts = text.split('@');
         const displayName = parts[0] ? parts[0].trim().split('\n')[0] : handle;
         return { handle, displayName, avatarUrl };
       }
+
+      // 1B. Try avatar container testid: UserAvatar-Container-<handle> (collapsed icon-only sidebar)
+      const avatarContainer = accountSwitcher.querySelector('[data-testid^="UserAvatar-Container-"]');
+      if (avatarContainer) {
+        const tid = avatarContainer.getAttribute('data-testid') || '';
+        const m = tid.match(/UserAvatar-Container-([A-Za-z0-9_]+)/i);
+        if (m && m[1] && !RESERVED_PATHS.includes(m[1].toLowerCase())) {
+          const handle = m[1].toLowerCase().trim();
+          return { handle, displayName: handle, avatarUrl };
+        }
+      }
+
+      // 1C. Try aria-label on button
+      const aria = accountSwitcher.getAttribute('aria-label') || '';
+      const ariaMatch = aria.match(/@([A-Za-z0-9_]+)/);
+      if (ariaMatch && ariaMatch[1]) {
+        const handle = ariaMatch[1].toLowerCase().trim();
+        return { handle, displayName: handle, avatarUrl };
+      }
     }
 
-    // 2. Profile Navigation Link (Sidebar on tablet/desktop)
+    // 2. Profile Navigation Tab Link (Sidebar navigation link to own profile)
+    // On X, AppTabBar_Profile_Link ALWAYS points strictly to the logged-in user, never to visited profiles.
     const profileLink = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
     if (profileLink) {
-      const href = profileLink.getAttribute('href') || '';
-      const match = href.match(/^\/([A-Za-z0-9_]+)$/);
-      if (match && match[1] && !['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'bookmarks', 'lists', 'search'].includes(match[1].toLowerCase())) {
+      const rawHref = profileLink.getAttribute('href') || '';
+      // Clean URL: remove protocol/domain, query parameters, trailing slashes
+      const cleanHref = rawHref.replace(/^https?:\/\/[^\/]+/, '').split('?')[0].split('#')[0].replace(/\/+$/, '');
+      const match = cleanHref.match(/^\/([A-Za-z0-9_]+)$/);
+      if (match && match[1] && !RESERVED_PATHS.includes(match[1].toLowerCase())) {
         const handle = match[1].toLowerCase().trim();
-        const img = profileLink.querySelector('img');
-        return { handle, displayName: handle, avatarUrl: img ? img.src : '' };
+        const switcherImg = accountSwitcher ? accountSwitcher.querySelector('img') : null;
+        const linkImg = profileLink.querySelector('img');
+        const avatarUrl = (switcherImg && switcherImg.src) || (linkImg && linkImg.src) || '';
+        return { handle, displayName: handle, avatarUrl };
       }
     }
 
     // 3. Top Navigation Bar Profile Button (Mobile/responsive header)
-    const topNavProfile = document.querySelector('button[data-testid="TopNavBar_Profile_Button"]');
+    const topNavProfile = document.querySelector('button[data-testid="TopNavBar_Profile_Button"], [data-testid="TopNavBar_Profile_Button"]');
     if (topNavProfile) {
       const img = topNavProfile.querySelector('img');
       const avatarUrl = img ? img.src : '';
+      const avatarContainer = topNavProfile.querySelector('[data-testid^="UserAvatar-Container-"]');
+      if (avatarContainer) {
+        const tid = avatarContainer.getAttribute('data-testid') || '';
+        const m = tid.match(/UserAvatar-Container-([A-Za-z0-9_]+)/i);
+        if (m && m[1] && !RESERVED_PATHS.includes(m[1].toLowerCase())) {
+          return { handle: m[1].toLowerCase().trim(), displayName: m[1], avatarUrl };
+        }
+      }
       const alt = img ? img.getAttribute('alt') || '' : '';
       const match = alt.match(/@([A-Za-z0-9_]+)/);
       if (match && match[1]) {
@@ -61,32 +103,31 @@ class InteractionDetector {
       }
     }
 
-    // 4. Header avatar link
-    const avatarLinks = document.querySelectorAll('header a[role="link"][href^="/"]');
-    for (const a of avatarLinks) {
-      const href = a.getAttribute('href') || '';
-      const match = href.match(/^\/([A-Za-z0-9_]+)$/);
-      if (match && match[1] && !['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'].includes(match[1].toLowerCase())) {
-        const handle = match[1].toLowerCase().trim();
-        const img = a.querySelector('img');
-        return { handle, displayName: handle, avatarUrl: img ? img.src : '' };
-      }
-    }
-
+    // If no authenticated navigation identity element is rendered, return null.
+    // Never fall back to generic links or header tags that could match visited profiles!
     return null;
   }
 
   /**
    * Actively checks if the user has switched Twitter accounts.
-   * If a new handle is detected, switches storage context and triggers UI badge update.
+   * Only triggers an account switch when the DOM identity in this tab actually changes,
+   * completely preventing false triggers or overrides of user selections.
    */
   async checkAccountSwitch() {
     const discovered = this.extractActiveAccountFromDOM();
     if (!discovered || !discovered.handle) return this.currentUser;
 
     const newHandle = discovered.handle.toLowerCase().trim();
-    if (!this.currentUser || this.currentUser !== newHandle) {
+
+    // If this tab already detected this handle in its DOM and matches currentUser, no action needed
+    if (this.lastDetectedDomHandle === newHandle && this.currentUser === newHandle) {
+      return this.currentUser;
+    }
+
+    // Only trigger switch if DOM identity in this tab genuinely transitioned, or initial detection
+    if (this.lastDetectedDomHandle !== newHandle || !this.currentUser) {
       const previousUser = this.currentUser;
+      this.lastDetectedDomHandle = newHandle;
       this.currentUser = newHandle;
       console.log(`[BondScore] Account switch detected on X: ${previousUser ? '@' + previousUser : 'initial'} -> @${newHandle}`);
       await window.bondStorage.switchAccount(newHandle, {
@@ -111,6 +152,7 @@ class InteractionDetector {
     if (fromDOM && fromDOM.handle) {
       const handle = fromDOM.handle.toLowerCase().trim();
       const previous = this.currentUser;
+      this.lastDetectedDomHandle = handle;
       this.currentUser = handle;
       await window.bondStorage.switchAccount(handle, {
         displayName: fromDOM.displayName,

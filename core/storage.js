@@ -159,7 +159,11 @@ class BondStorage {
             await this._setRaw(toSet);
           }
           if (toRemove.length > 0) {
-            chrome.storage.local.remove(toRemove, () => resolve());
+            if (chrome.storage && chrome.storage.local && typeof chrome.storage.local.remove === 'function') {
+              chrome.storage.local.remove(toRemove, () => resolve());
+            } else {
+              resolve();
+            }
           } else {
             resolve();
           }
@@ -238,8 +242,8 @@ class BondStorage {
     });
   }
 
-  async getCurrentUser() {
-    if (!this.currentUser) {
+  async getCurrentUser(forceRefresh = false) {
+    if (!this.currentUser || forceRefresh) {
       const res = await this._getRaw(['currentUser']);
       this.currentUser = (res.currentUser || '').toLowerCase().trim() || null;
     }
@@ -304,13 +308,16 @@ class BondStorage {
   /**
    * Returns list of all known accounts with metadata and active state.
    */
-  async getKnownAccounts() {
-    if (!this.knownAccounts || this.knownAccounts.length === 0) {
+  async getKnownAccounts(forceRefresh = false) {
+    if (!this.knownAccounts || this.knownAccounts.length === 0 || forceRefresh) {
       const data = await this._getRaw(['knownAccounts', 'accountsMetadata', 'currentUser']);
       this.knownAccounts = Array.isArray(data.knownAccounts) ? data.knownAccounts : [];
       this.accountsMetadata = data.accountsMetadata || {};
-      if (data.currentUser && !this.knownAccounts.includes(data.currentUser)) {
-        this.knownAccounts.push(data.currentUser);
+      if (data.currentUser) {
+        this.currentUser = (data.currentUser || '').toLowerCase().trim();
+        if (!this.knownAccounts.includes(this.currentUser)) {
+          this.knownAccounts.push(this.currentUser);
+        }
       }
     }
     const cur = (this.currentUser || '').toLowerCase().trim();
@@ -355,7 +362,10 @@ class BondStorage {
   async getUser(handle, forceRefresh = false, account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
     const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
 
     if (!forceRefresh && isCurrentAcc && this.memoryCache.has(cleanHandle)) {
@@ -384,7 +394,10 @@ class BondStorage {
   async saveUser(handle, userData, account = this.currentUser) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
     const key = this._userKey(cleanHandle, activeAccount);
 
     const existing = (await this.getUser(cleanHandle, false, activeAccount)) || {
@@ -436,7 +449,10 @@ class BondStorage {
   async getEvents(handle, account = this.currentUser) {
     if (!handle) return [];
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
     const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
 
     if (isCurrentAcc && this.eventsCache.has(cleanHandle)) {
@@ -465,7 +481,10 @@ class BondStorage {
   async saveEvents(handle, events, account = this.currentUser) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
     const key = this._eventsKey(cleanHandle, activeAccount);
 
     if (!activeAccount || activeAccount === (this.currentUser || '')) {
@@ -481,7 +500,10 @@ class BondStorage {
   async recordInteraction(handle, eventData, account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
 
     // Prevent tracking self interactions
     if (activeAccount && cleanHandle === activeAccount) {
@@ -613,7 +635,10 @@ class BondStorage {
   async recordRelationshipSignal(handle, data = {}, account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
     const user = (await this.getUser(cleanHandle, false, activeAccount)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
@@ -703,7 +728,10 @@ class BondStorage {
   async removeInteraction(handle, tweetId, type = 'like', account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
     const events = await this.getEvents(cleanHandle, activeAccount);
 
     let idx = -1;
@@ -749,7 +777,7 @@ class BondStorage {
    */
   async getAllUsers(account = this.currentUser) {
     return new Promise((resolve) => {
-      const targetAccount = (account || this.currentUser || '').toLowerCase().trim();
+      let targetAccount = (account || this.currentUser || '').toLowerCase().trim();
 
       if (this._hasChromeStorage()) {
         chrome.storage.local.get(null, (allData) => {
@@ -757,6 +785,24 @@ class BondStorage {
             resolve([]);
             return;
           }
+
+          // If targetAccount was unpopulated, resolve from storage data
+          if (!targetAccount && allData.currentUser) {
+            targetAccount = (allData.currentUser || '').toLowerCase().trim();
+          }
+          if (!targetAccount && Array.isArray(allData.knownAccounts) && allData.knownAccounts.length > 0) {
+            targetAccount = allData.knownAccounts[0].toLowerCase().trim();
+          }
+          if (!targetAccount) {
+            for (const k of Object.keys(allData)) {
+              const m = k.match(/^acc:([^:]+):user:/);
+              if (m && m[1]) {
+                targetAccount = m[1].toLowerCase().trim();
+                break;
+              }
+            }
+          }
+
           const users = [];
           for (const [key, value] of Object.entries(allData)) {
             let isMatch = false;
@@ -788,6 +834,22 @@ class BondStorage {
           resolve(users);
         });
       } else {
+        if (!targetAccount) {
+          try {
+            const raw = localStorage.getItem('bond_currentUser');
+            if (raw) targetAccount = JSON.parse(raw).toLowerCase().trim();
+          } catch (e) {}
+        }
+        if (!targetAccount) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const m = localStorage.key(i).match(/^bond_acc:([^:]+):user:/);
+            if (m && m[1]) {
+              targetAccount = m[1].toLowerCase().trim();
+              break;
+            }
+          }
+        }
+
         const users = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
