@@ -179,6 +179,13 @@ class InteractionDetector {
       this._handleRetweetClick(retweetBtn);
       return;
     }
+
+    // 5. Check for Follow / Unfollow button
+    const followBtn = target.closest('[data-testid$="-follow"], [data-testid$="-unfollow"], [data-testid="confirmationSheetConfirm"]');
+    if (followBtn) {
+      this._handleFollowActionClick(followBtn);
+      return;
+    }
   }
 
   async _handleLikeClick(likeBtn) {
@@ -586,6 +593,109 @@ class InteractionDetector {
       }
     } catch (err) {
       console.warn('[BondScore CRM] Error capturing DM:', err);
+    }
+  }
+
+  /**
+   * Captures follow and unfollow button clicks
+   */
+  async _handleFollowActionClick(btn) {
+    try {
+      let targetHandle = null;
+      let isUnfollow = false;
+
+      const testId = btn.getAttribute('data-testid') || '';
+      if (testId.endsWith('-unfollow') || btn.innerText.includes('Following') || btn.innerText.includes('Unfollow')) {
+        isUnfollow = true;
+      }
+
+      // Check profile page handle
+      const profileMatch = location.pathname.match(/^\/([A-Za-z0-9_]+)$/);
+      if (profileMatch && profileMatch[1]) {
+        const h = profileMatch[1].toLowerCase();
+        const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
+        if (!nonUserPaths.includes(h) && (!this.currentUser || h !== this.currentUser)) {
+          targetHandle = h;
+        }
+      }
+
+      // If in tweet or user card cell
+      if (!targetHandle) {
+        const cell = btn.closest('[data-testid="UserCell"], article[data-testid="tweet"], [data-testid="HoverCard"]');
+        if (cell) {
+          const author = this.extractTweetAuthor(cell);
+          if (author && author.handle) {
+            targetHandle = author.handle;
+          }
+        }
+      }
+
+      if (targetHandle && (!this.currentUser || targetHandle !== this.currentUser)) {
+        console.log(`[BondScore Signals] Detected follow action on @${targetHandle}: ${isUnfollow ? 'Unfollow' : 'Follow'}`);
+        await window.bondStorage.recordInteraction(targetHandle, {
+          type: isUnfollow ? 'signal_you_unfollowed' : 'signal_you_followed',
+          timestamp: Date.now(),
+          textSnippet: isUnfollow ? `You unfollowed @${targetHandle}` : `You followed @${targetHandle}`,
+          isMutual: false
+        });
+
+        const user = await window.bondStorage.getUser(targetHandle);
+        if (user) {
+          user.signals = user.signals || {};
+          user.signals.youFollowThem = !isUnfollow;
+          user.signals.isMutual = !!(user.signals.theyFollowYou && user.signals.youFollowThem);
+          await window.bondStorage.saveUser(targetHandle, user);
+        }
+
+        if (window.bondUI) {
+          window.bondUI.refreshBadgesForUser(targetHandle, true);
+        }
+      }
+    } catch (err) {
+      console.warn('[BondScore Signals] Error capturing follow action:', err);
+    }
+  }
+
+  /**
+   * Observes live relationship signals on profile views (mutuals, follow-back, unfollow, possible blocks)
+   */
+  async observeProfileSignals(handle) {
+    if (!handle) return;
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    if (this.currentUser && cleanHandle === this.currentUser) return;
+
+    try {
+      // 1. Check for Block
+      const emptyState = document.querySelector('[data-testid="empty_state"], [data-testid="emptyState"]');
+      const bodyText = (emptyState ? emptyState.innerText : '') || document.body.innerText || '';
+      const isBlocked = bodyText.includes("You're blocked") || bodyText.includes("You are blocked");
+
+      // 2. Check "Follows you" badge
+      const followIndicator = document.querySelector('[data-testid="userFollowIndicator"]');
+      const theyFollowYou = !!followIndicator && followIndicator.innerText.includes('Follows you');
+
+      // 3. Check if you follow them
+      const unfollowBtn = document.querySelector('[data-testid$="-unfollow"]');
+      const followBtn = document.querySelector('[data-testid$="-follow"]');
+      let youFollowThem = null;
+      if (unfollowBtn) youFollowThem = true;
+      else if (followBtn) youFollowThem = false;
+
+      // Extract avatar and name if present
+      const nameEl = document.querySelector('[data-testid="UserName"]');
+      const displayName = nameEl ? (nameEl.querySelector('span') ? nameEl.querySelector('span').innerText : cleanHandle) : cleanHandle;
+      const avatarEl = document.querySelector('img[src*="profile_images"]');
+      const avatarUrl = avatarEl ? avatarEl.src : '';
+
+      await window.bondStorage.recordRelationshipSignal(cleanHandle, {
+        theyFollowYou,
+        youFollowThem,
+        isBlocked,
+        displayName,
+        avatarUrl
+      });
+    } catch (err) {
+      console.warn('[BondScore Signals] Error observing profile signals:', err);
     }
   }
 }

@@ -335,6 +335,12 @@ class BondStorage {
       const settings = await this.getSettings();
       let minBoost = 0;
       switch (newEvent.type) {
+        case 'signal_follow_back': minBoost = 12; break;
+        case 'signal_mutual_follow': minBoost = 14; break;
+        case 'signal_you_followed': minBoost = 4; break;
+        case 'signal_unfollowed':
+        case 'signal_blocked':
+        case 'signal_you_unfollowed': minBoost = 0; break;
         case 'reply_mutual': minBoost = 12; break;
         case 'dm_mutual': minBoost = 14; break;
         case 'dm_sent': minBoost = 10; break;
@@ -358,6 +364,97 @@ class BondStorage {
       user.reciprocity = reciprocity;
       user.lastCalculated = Date.now();
     }
+
+    await this.saveUser(cleanHandle, user);
+    return user;
+  }
+
+  /**
+   * Observes and logs relationship signals:
+   * - Mutual follow changes
+   * - Follow-backs
+   * - Unfollows
+   * - Possible blocks
+   */
+  async recordRelationshipSignal(handle, data = {}) {
+    if (!handle) return null;
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const user = (await this.getUser(cleanHandle)) || {
+      handle: cleanHandle,
+      displayName: cleanHandle,
+      avatarUrl: '',
+      currentScore: 0,
+      tier: 'dormant',
+      crmStatus: 'Stranger',
+      crmStatusId: 'stranger',
+      streakDays: 0,
+      isPinned: false,
+      note: '',
+      signals: {},
+      stats: { repliesSent: 0, repliesReceived: 0, dmsSent: 0, dmsReceived: 0, mutualExchanges: 0, likes: 0, quotes: 0, deepScans: 0 }
+    };
+
+    const prevSignals = user.signals || {};
+    let signalLogged = false;
+
+    // 1. Possible Block Detected
+    if (data.isBlocked && !prevSignals.isBlocked) {
+      await this.recordInteraction(cleanHandle, {
+        type: 'signal_blocked',
+        timestamp: Date.now(),
+        textSnippet: '🚫 Possible block detected from @' + cleanHandle,
+        isMutual: false
+      });
+      signalLogged = true;
+    }
+
+    // 2. Follow-back Detected (They previously didn't follow you, now they do)
+    if (data.theyFollowYou === true && prevSignals.theyFollowYou === false) {
+      await this.recordInteraction(cleanHandle, {
+        type: 'signal_follow_back',
+        timestamp: Date.now(),
+        textSnippet: '🎉 @' + cleanHandle + ' followed you back!',
+        isMutual: true
+      });
+      signalLogged = true;
+    }
+
+    // 3. Unfollowed Detected (They previously followed you, now they don't)
+    if (data.theyFollowYou === false && prevSignals.theyFollowYou === true) {
+      await this.recordInteraction(cleanHandle, {
+        type: 'signal_unfollowed',
+        timestamp: Date.now(),
+        textSnippet: '⚠️ @' + cleanHandle + ' is no longer following you',
+        isMutual: false
+      });
+      signalLogged = true;
+    }
+
+    // 4. Mutual Follow Established
+    const isNowMutual = !!(data.theyFollowYou && data.youFollowThem);
+    if (isNowMutual && !prevSignals.isMutual) {
+      if (!signalLogged) {
+        await this.recordInteraction(cleanHandle, {
+          type: 'signal_mutual_follow',
+          timestamp: Date.now(),
+          textSnippet: '🤝 Mutual follow active with @' + cleanHandle,
+          isMutual: true
+        });
+        signalLogged = true;
+      }
+    }
+
+    // Update signal metadata on user record
+    user.signals = {
+      theyFollowYou: data.theyFollowYou !== null && data.theyFollowYou !== undefined ? data.theyFollowYou : prevSignals.theyFollowYou,
+      youFollowThem: data.youFollowThem !== null && data.youFollowThem !== undefined ? data.youFollowThem : prevSignals.youFollowThem,
+      isMutual: isNowMutual,
+      isBlocked: !!data.isBlocked,
+      lastCheckedAt: Date.now()
+    };
+
+    if (data.displayName) user.displayName = data.displayName;
+    if (data.avatarUrl) user.avatarUrl = data.avatarUrl;
 
     await this.saveUser(cleanHandle, user);
     return user;

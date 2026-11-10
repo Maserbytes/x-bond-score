@@ -111,6 +111,21 @@ class BondScoring {
     for (const evt of sorted) {
       let baseWeight = 0;
       switch (evt.type) {
+        case 'signal_follow_back':
+        case 'signal_mutual_follow':
+          baseWeight = 15;
+          sentCount++;
+          receivedCount++;
+          break;
+        case 'signal_you_followed':
+          baseWeight = 5;
+          sentCount++;
+          break;
+        case 'signal_unfollowed':
+        case 'signal_blocked':
+        case 'signal_you_unfollowed':
+          baseWeight = 0;
+          break;
         case 'dm_mutual':
           baseWeight = weights.dmMutual || (weights.mutualReply || 15) * 1.35;
           sentCount++;

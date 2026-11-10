@@ -62,16 +62,18 @@
       }
     }
 
-    // 2. Process Profile Page Header
-    const profileHeader = document.querySelector('div[data-testid="UserName"]');
-    if (profileHeader && !profileHeader.querySelector('.bond-badge')) {
-      const match = location.pathname.match(/^\/([A-Za-z0-9_]+)$/);
-      if (match && match[1]) {
-        const profileHandle = match[1].toLowerCase();
-        const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
-        if (!nonUserPaths.includes(profileHandle) && (!currentUser || profileHandle !== currentUser)) {
+    // 3. Process Profile Page Header & Relationship Signals
+    const profileMatch = location.pathname.match(/^\/([A-Za-z0-9_]+)$/);
+    if (profileMatch && profileMatch[1]) {
+      const profileHandle = profileMatch[1].toLowerCase();
+      const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
+      if (!nonUserPaths.includes(profileHandle) && (!currentUser || profileHandle !== currentUser)) {
+        const profileHeader = document.querySelector('div[data-testid="UserName"]');
+        if (profileHeader && !profileHeader.querySelector('.bond-badge')) {
           await window.bondUI.injectBadge(profileHeader, profileHandle, true);
         }
+        // Observe relationship signals (mutuals, follow-back, unfollow, blocks)
+        await window.interactionDetector.observeProfileSignals(profileHandle);
       }
     }
   }

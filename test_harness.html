@@ -111,6 +111,9 @@
       <button class="harness-btn pink" id="btn-simulate-like">❤️ Simulate Like</button>
       <button class="harness-btn" id="btn-simulate-reply">💬 Simulate Reply</button>
       <button class="harness-btn" style="background: #a855f7;" id="btn-simulate-dm">✉️ Simulate DM</button>
+      <button class="harness-btn" style="background: #00ba7c;" id="btn-simulate-followback">🎉 Follow-back</button>
+      <button class="harness-btn" style="background: #ff7a00;" id="btn-simulate-unfollow">⚠️ Unfollow</button>
+      <button class="harness-btn" style="background: #f4212e;" id="btn-simulate-block">🚫 Block</button>
       <button class="harness-btn" id="btn-run-deep">⚡ Run Deep Mode</button>
     </div>
 
@@ -304,6 +307,33 @@
           isMutual: true
         });
         log(`Simulated sent direct message to @${h} (+12 pts + CRM boost)`);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate Follow-back
+      document.getElementById('btn-simulate-followback').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordRelationshipSignal(h, { theyFollowYou: true, youFollowThem: true });
+        log(`Simulated @${h} followed you back! (Mutual follow established)`);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate Unfollow
+      document.getElementById('btn-simulate-unfollow').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordRelationshipSignal(h, { theyFollowYou: false, youFollowThem: true });
+        log(`Simulated @${h} unfollowed you! (Signal logged to private history)`);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate Possible Block
+      document.getElementById('btn-simulate-block').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordRelationshipSignal(h, { isBlocked: true });
+        log(`Simulated block detected on @${h}! (Signal logged to private history)`);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 

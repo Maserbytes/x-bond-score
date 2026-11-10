@@ -697,6 +697,28 @@
 .bond-type-dm-mutual { background: rgba(0, 186, 124, 0.25); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
 .bond-type-default { background: rgba(113, 118, 123, 0.2); color: #71767b; }
 
+/* Relationship Signal Tags & Pills */
+.bond-type-signal-fb { background: rgba(0, 186, 124, 0.25); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.bond-type-signal-mutual { background: rgba(0, 186, 124, 0.25); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.bond-type-signal-unfollow { background: rgba(255, 122, 0, 0.25); color: #ff7a00; border: 1px solid rgba(255, 122, 0, 0.35); }
+.bond-type-signal-blocked { background: rgba(244, 33, 46, 0.25); color: #f4212e; border: 1px solid rgba(244, 33, 46, 0.35); }
+.bond-type-signal-you { background: rgba(29, 155, 240, 0.25); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.35); }
+.bond-type-signal-you-unfollow { background: rgba(113, 118, 123, 0.25); color: #71767b; border: 1px solid rgba(113, 118, 123, 0.35); }
+
+.bond-signal-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.bond-signal-pill.mutual { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.bond-signal-pill.follows-you { background: rgba(236, 72, 153, 0.2); color: #ec4899; border: 1px solid rgba(236, 72, 153, 0.35); }
+.bond-signal-pill.you-follow { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.35); }
+.bond-signal-pill.blocked { background: rgba(244, 33, 46, 0.2); color: #f4212e; border: 1px solid rgba(244, 33, 46, 0.35); }
+
 /* CRM Status Pill on Badges */
 .bond-crm-pill {
   font-size: 8px;

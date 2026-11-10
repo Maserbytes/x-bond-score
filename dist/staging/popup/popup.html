@@ -62,6 +62,7 @@
             <button class="filter-pill" data-filter="mutuals">🤝 Mutuals</button>
             <button class="filter-pill" data-filter="one-sided">➡️ One-sided</button>
             <button class="filter-pill" data-filter="dormant">❄️ Dormant</button>
+            <button class="filter-pill" data-filter="signals">📡 Signals</button>
             <button class="filter-pill" data-filter="stranger">👤 Strangers</button>
             <button class="filter-pill" data-filter="vip">⭐ VIPs</button>
             <button class="filter-pill" data-filter="streaks">🔥 Streaks</button>
@@ -209,6 +210,15 @@
           <p class="settings-hint">Previously active contacts whose bonds are cooling off.</p>
           <div id="dormant-list" class="radar-mini-list">
             <div class="radar-empty">No dormant contacts. All relationships are active!</div>
+          </div>
+        </div>
+
+        <!-- 📡 Relationship Signals (Follow-backs, Unfollows, Blocks) -->
+        <div class="radar-card">
+          <div class="radar-card-title">📡 Relationship Signals (Follow-backs & Blocks)</div>
+          <p class="settings-hint">Observes and logs follow-backs, unfollows, mutuals, and possible blocks.</p>
+          <div id="signals-radar-list" class="radar-mini-list">
+            <div class="radar-empty">No relationship signal alerts detected yet. Browse X to observe!</div>
           </div>
         </div>
 

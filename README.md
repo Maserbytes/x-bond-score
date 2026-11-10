@@ -10,6 +10,7 @@
 
 **BondScore** tracks the strength of your relationships with accounts you interact with on X. It calculates a dynamic **Bond Score (0–100)** that:
 - **Tracks every like, reply, and Direct Message (DM) you send** to build a comprehensive relationship history.
+- **Observes Relationship Signals**: Automatically detects and logs follow-backs, unfollows, mutual follows, and possible blocks into a private history ledger.
 - **Local Engagement Memory**: Shows who engages with you vs. who you engage with, overall reciprocity balance, top supporters, and dormant people.
 - **Relationship CRM Classification**: Automatically categorizes every bond into **💖 Besties**, **🤝 Mutuals**, **➡️ One-sided (You lead / They lead)**, or **👤 Stranger**.
 - **Personal Relationship History Ledger**: View a full filterable timeline of all interactions (DMs, Replies, Likes, Quotes) in the Score Card.

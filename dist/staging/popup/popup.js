@@ -146,6 +146,8 @@ function applyFilterAndRender() {
       const cId = getCRMStatusForUser(u).id;
       return cId === 'one_sided' || cId === 'one_sided_them';
     });
+  } else if (currentFilter === 'signals') {
+    list = list.filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou || u.signals.youFollowThem));
   } else if (currentFilter === 'stranger') {
     list = list.filter(u => {
       const cId = getCRMStatusForUser(u).id;
@@ -187,6 +189,18 @@ function renderUserList(users) {
 
     const item = document.createElement('div');
     item.className = 'mutual-item';
+
+    let signalHtml = '';
+    if (u.signals) {
+      if (u.signals.isBlocked) {
+        signalHtml = `<span class="popup-signal-pill blocked" title="Possible block detected on profile">🚫 Blocked</span>`;
+      } else if (u.signals.isMutual) {
+        signalHtml = `<span class="popup-signal-pill mutual" title="Mutual follow">🤝 Mutual</span>`;
+      } else if (u.signals.theyFollowYou) {
+        signalHtml = `<span class="popup-signal-pill follows-you" title="Follows you on X">📥 Follows you</span>`;
+      }
+    }
+
     item.innerHTML = `
       <div class="mutual-user-info">
         <div class="mutual-avatar-wrap">
@@ -200,6 +214,7 @@ function renderUserList(users) {
           <div class="mutual-name-row">
             <span class="mutual-name">${escapeHtml(u.displayName || u.handle)}</span>
             <span class="popup-crm-pill ${crm.id}" title="${crm.desc}">${crm.emoji} ${crm.label}</span>
+            ${signalHtml}
             ${(u.streakDays || 0) > 1 ? `<span class="mutual-streak-badge">🔥${u.streakDays}d</span>` : ''}
           </div>
           <div class="mutual-handle-sub">
@@ -744,7 +759,40 @@ function renderRadarTab() {
     }
   }
 
-  // 4. Active streaks
+  // 4. Relationship Signals (Follow-backs, Unfollows, Blocks)
+  const signalsRadarList = document.getElementById('signals-radar-list');
+  if (signalsRadarList) {
+    const signalUsers = cachedUsers.filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou !== null)).slice(0, 6);
+    if (signalUsers.length > 0) {
+      signalsRadarList.innerHTML = signalUsers.map(u => {
+        let label = '🤝 Mutual Follow';
+        let color = '#00ba7c';
+        if (u.signals.isBlocked) {
+          label = '🚫 Block Detected';
+          color = '#f4212e';
+        } else if (u.signals.theyFollowYou && !u.signals.youFollowThem) {
+          label = '📥 Follows You';
+          color = '#ec4899';
+        } else if (!u.signals.theyFollowYou && u.signals.youFollowThem) {
+          label = '📤 Not Following Back';
+          color = '#ff7a00';
+        }
+        return `
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+            <div class="radar-item-left">
+              ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
+              <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
+            </div>
+            <span style="font-size:10px;font-weight:700;color:${color};">${label}</span>
+          </div>
+        `;
+      }).join('');
+    } else {
+      signalsRadarList.innerHTML = `<div class="radar-empty">No relationship signals detected yet. Visit profiles on X to observe!</div>`;
+    }
+  }
+
+  // 5. Active streaks
   if (streaksList) {
     const streakUsers = cachedUsers.filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
     if (streakUsers.length > 0) {

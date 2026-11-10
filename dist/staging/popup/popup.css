@@ -372,6 +372,18 @@ body {
 .popup-crm-pill.casual { background: rgba(255, 212, 0, 0.2); color: #ffd400; border: 1px solid rgba(255, 212, 0, 0.35); }
 .popup-crm-pill.stranger { background: rgba(113, 118, 123, 0.2); color: #71767b; border: 1px solid rgba(113, 118, 123, 0.35); }
 
+/* Relationship Signal Pills in Popup */
+.popup-signal-pill {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+.popup-signal-pill.mutual { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.popup-signal-pill.follows-you { background: rgba(236, 72, 153, 0.2); color: #ec4899; border: 1px solid rgba(236, 72, 153, 0.35); }
+.popup-signal-pill.blocked { background: rgba(244, 33, 46, 0.2); color: #f4212e; border: 1px solid rgba(244, 33, 46, 0.35); }
+
 .mutual-dm-count {
   font-size: 10px;
   color: #a855f7;

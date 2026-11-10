@@ -180,11 +180,27 @@ class BondUI {
     const dmEvents = events.filter(e => e.type && e.type.startsWith('dm_'));
     const replyEvents = events.filter(e => e.type && e.type.startsWith('reply_'));
     const likeEvents = events.filter(e => e.type === 'like' || e.type === 'quote');
+    const signalEvents = events.filter(e => e.type && e.type.startsWith('signal_'));
+
+    // Relationship Signals Badge
+    let signalStatusHtml = '';
+    const signals = user.signals || {};
+    if (signals.isBlocked) {
+      signalStatusHtml = `<span class="bond-signal-pill blocked" title="Possible block detected on profile">🚫 Blocked</span>`;
+    } else if (signals.isMutual) {
+      signalStatusHtml = `<span class="bond-signal-pill mutual" title="Mutual follow: You follow each other">🤝 Mutual Follow</span>`;
+    } else if (signals.theyFollowYou && !signals.youFollowThem) {
+      signalStatusHtml = `<span class="bond-signal-pill follows-you" title="Follows you on X">📥 Follows You</span>`;
+    } else if (!signals.theyFollowYou && signals.youFollowThem) {
+      signalStatusHtml = `<span class="bond-signal-pill you-follow" title="You follow them on X">📤 You Follow</span>`;
+    }
 
     // Local Engagement Memory Insight
     let engagementMemoryText = 'Balanced reciprocal interaction';
     const totalExchanges = sSent + sRecv;
-    if (sRecv >= 2 && sRecv > sSent) {
+    if (signals.isBlocked) {
+      engagementMemoryText = `🚫 Possible Block: Profile displays blocked state or restricted access`;
+    } else if (sRecv >= 2 && sRecv > sSent) {
       engagementMemoryText = `🌟 Supporter: They engage with you most (${sRecv} inbound responses vs ${sSent} sent by you)`;
     } else if (sSent >= 2 && sSent > sRecv) {
       engagementMemoryText = `🎯 Outbound Focus: You engage with them more (${sSent} sent by you vs ${sRecv} responses)`;
@@ -194,7 +210,7 @@ class BondUI {
       engagementMemoryText = `👤 Cold / Stranger: No engagement logged yet`;
     }
     const daysSinceInteraction = Math.floor((Date.now() - (user.lastInteraction || Date.now())) / 86400000);
-    if (daysSinceInteraction >= 14 && totalExchanges > 0) {
+    if (daysSinceInteraction >= 14 && totalExchanges > 0 && !signals.isBlocked) {
       engagementMemoryText += ` • ❄️ Dormant for ${daysSinceInteraction}d`;
     }
 
@@ -212,6 +228,7 @@ class BondUI {
             <div class="bond-user-meta">
               <div class="bond-display-name-row">
                 <span class="bond-display-name">${this.escapeHtml(user.displayName || cleanHandle)}</span>
+                ${signalStatusHtml}
                 <button class="bond-pin-btn ${user.isPinned ? 'pinned' : ''}" id="bond-pin-toggle-btn" title="${user.isPinned ? 'Unpin VIP' : 'Pin as VIP'}">
                   ${user.isPinned ? '★ VIP' : '☆ Pin'}
                 </button>
@@ -367,6 +384,7 @@ class BondUI {
               <button class="bond-tl-filter-btn" data-filter="dm">✉️ DMs (${dmEvents.length})</button>
               <button class="bond-tl-filter-btn" data-filter="reply">💬 Replies (${replyEvents.length})</button>
               <button class="bond-tl-filter-btn" data-filter="like">❤️ Likes (${likeEvents.length})</button>
+              <button class="bond-tl-filter-btn" data-filter="signal">📡 Signals (${signalEvents.length})</button>
             </div>
           </div>
           <div class="bond-timeline-list" id="bond-timeline-ledger">
@@ -424,6 +442,8 @@ class BondUI {
           filtered = replyEvents;
         } else if (filterType === 'like') {
           filtered = likeEvents;
+        } else if (filterType === 'signal') {
+          filtered = signalEvents;
         }
         if (ledgerEl) {
           ledgerEl.innerHTML = this.renderTimelineItems(filtered);
@@ -493,6 +513,18 @@ class BondUI {
 
   getEventInfo(type) {
     switch (type) {
+      case 'signal_follow_back':
+        return { label: '🎉 Follow-back', className: 'bond-type-signal-fb', defaultSnippet: 'Followed you back!' };
+      case 'signal_mutual_follow':
+        return { label: '🤝 Mutual Follow', className: 'bond-type-signal-mutual', defaultSnippet: 'Mutual follow established' };
+      case 'signal_unfollowed':
+        return { label: '⚠️ Unfollowed', className: 'bond-type-signal-unfollow', defaultSnippet: 'No longer following you' };
+      case 'signal_blocked':
+        return { label: '🚫 Blocked', className: 'bond-type-signal-blocked', defaultSnippet: 'Possible block detected' };
+      case 'signal_you_followed':
+        return { label: '➕ You Followed', className: 'bond-type-signal-you', defaultSnippet: 'You followed user' };
+      case 'signal_you_unfollowed':
+        return { label: '➖ You Unfollowed', className: 'bond-type-signal-you-unfollow', defaultSnippet: 'You unfollowed user' };
       case 'dm_sent':
         return { label: '✉️ DM Sent', className: 'bond-type-dm-sent', defaultSnippet: 'Direct message sent' };
       case 'dm_received':
