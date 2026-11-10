@@ -181,6 +181,23 @@ class BondUI {
     const replyEvents = events.filter(e => e.type && e.type.startsWith('reply_'));
     const likeEvents = events.filter(e => e.type === 'like' || e.type === 'quote');
 
+    // Local Engagement Memory Insight
+    let engagementMemoryText = 'Balanced reciprocal interaction';
+    const totalExchanges = sSent + sRecv;
+    if (sRecv >= 2 && sRecv > sSent) {
+      engagementMemoryText = `🌟 Supporter: They engage with you most (${sRecv} inbound responses vs ${sSent} sent by you)`;
+    } else if (sSent >= 2 && sSent > sRecv) {
+      engagementMemoryText = `🎯 Outbound Focus: You engage with them more (${sSent} sent by you vs ${sRecv} responses)`;
+    } else if (sSent > 0 && sRecv > 0) {
+      engagementMemoryText = `⚖️ Balanced Bond: Healthy reciprocal back-and-forth dialogue`;
+    } else if (totalExchanges === 0) {
+      engagementMemoryText = `👤 Cold / Stranger: No engagement logged yet`;
+    }
+    const daysSinceInteraction = Math.floor((Date.now() - (user.lastInteraction || Date.now())) / 86400000);
+    if (daysSinceInteraction >= 14 && totalExchanges > 0) {
+      engagementMemoryText += ` • ❄️ Dormant for ${daysSinceInteraction}d`;
+    }
+
     const modal = document.createElement('div');
     modal.className = 'bond-modal-backdrop';
     modal.dataset.handle = cleanHandle;
@@ -205,13 +222,17 @@ class BondUI {
           <button class="bond-close-btn" title="Close" aria-label="Close">&times;</button>
         </div>
 
-        <!-- Relationship CRM Status Banner -->
+        <!-- Relationship CRM & Engagement Memory Banner -->
         <div class="bond-crm-card" style="border-left: 3px solid ${crm.color};">
           <div class="bond-crm-top">
             <span class="bond-crm-pill large bond-crm-${crm.id}">${crm.emoji} ${crm.label}${crm.subLabel ? ` · ${crm.subLabel}` : ''}</span>
             <span class="bond-crm-type-badge">Relationship CRM</span>
           </div>
           <div class="bond-crm-desc">${crm.desc}</div>
+          <div class="bond-crm-memory-row">
+            <span class="bond-crm-memory-icon">🧠</span>
+            <span class="bond-crm-memory-text">${engagementMemoryText}</span>
+          </div>
         </div>
 
         <!-- Inactivity Alert (if bond at risk) -->

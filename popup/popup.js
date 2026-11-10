@@ -120,6 +120,20 @@ function applyFilterAndRender() {
       const daysSince = (Date.now() - (u.lastInteraction || Date.now())) / (1000 * 60 * 60 * 24);
       return daysSince >= 3 && (u.currentScore || 0) >= 20;
     });
+  } else if (currentFilter === 'supporters') {
+    list = list.filter(u => {
+      const s = ((u.stats && u.stats.repliesSent) || 0) + ((u.stats && u.stats.dmsSent) || 0) + ((u.stats && u.stats.likes) || 0);
+      const r = ((u.stats && u.stats.repliesReceived) || 0) + ((u.stats && u.stats.dmsReceived) || 0);
+      return r > 0 && (r >= s || r >= 2);
+    });
+  } else if (currentFilter === 'dormant') {
+    const now = Date.now();
+    list = list.filter(u => {
+      const days = Math.floor((now - (u.lastInteraction || now)) / 86400000);
+      const s = ((u.stats && u.stats.repliesSent) || 0) + ((u.stats && u.stats.dmsSent) || 0) + ((u.stats && u.stats.likes) || 0);
+      const r = ((u.stats && u.stats.repliesReceived) || 0) + ((u.stats && u.stats.dmsReceived) || 0);
+      return days >= 14 && ((u.currentScore || 0) > 5 || (s + r) > 0);
+    });
   } else if (currentFilter === 'besties') {
     list = list.filter(u => getCRMStatusForUser(u).id === 'besties');
   } else if (currentFilter === 'mutuals') {
@@ -630,52 +644,125 @@ async function loadSettingsForm() {
 }
 
 /**
- * ⚡ Render Radar & Streaks Tab
+ * 🧠 Render Local Engagement Memory, Balance, Supporters & Dormant Bonds
  */
 function renderRadarTab() {
   const streaksList = document.getElementById('streaks-list');
-  const atRiskList = document.getElementById('at-risk-list');
-  if (!streaksList || !atRiskList) return;
+  const supportersList = document.getElementById('supporters-list');
+  const outboundList = document.getElementById('outbound-focus-list');
+  const dormantList = document.getElementById('dormant-list');
 
-  // 1. Active streaks
-  const streakUsers = cachedUsers.filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
-  if (streakUsers.length > 0) {
-    streaksList.innerHTML = streakUsers.map(u => `
-      <div class="radar-item">
-        <div class="radar-item-left">
-          ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
-          <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
-        </div>
-        <span class="radar-streak-val">🔥 ${u.streakDays} Day Streak</span>
-      </div>
-    `).join('');
-  } else {
-    streaksList.innerHTML = `<div class="radar-empty">No active reply streaks yet. Chat daily with mutuals to ignite streaks!</div>`;
+  // Compute local engagement memory metrics
+  const memory = BondScoring.analyzeEngagementMemory(cachedUsers);
+
+  // Update Global Balance Card
+  const badgeEl = document.getElementById('eng-balance-badge');
+  const barSent = document.getElementById('eng-bar-sent');
+  const barRecv = document.getElementById('eng-bar-recv');
+  const outVal = document.getElementById('eng-outbound-val');
+  const outPct = document.getElementById('eng-outbound-pct');
+  const inVal = document.getElementById('eng-inbound-val');
+  const inPct = document.getElementById('eng-inbound-pct');
+  const descEl = document.getElementById('eng-balance-desc');
+
+  if (badgeEl) badgeEl.innerText = memory.balanceLabel;
+  if (barSent) barSent.style.width = `${memory.globalSentRatio}%`;
+  if (barRecv) barRecv.style.width = `${memory.globalRecvRatio}%`;
+  if (outVal) outVal.innerText = memory.totalSent;
+  if (outPct) outPct.innerText = `${memory.globalSentRatio}%`;
+  if (inVal) inVal.innerText = memory.totalReceived;
+  if (inPct) inPct.innerText = `${memory.globalRecvRatio}%`;
+  if (descEl) descEl.innerText = memory.balanceDesc;
+
+  // 1. Supporters List (Who engages with you most)
+  if (supportersList) {
+    const topSupporters = memory.supporters.slice(0, 5);
+    if (topSupporters.length > 0) {
+      supportersList.innerHTML = topSupporters.map(u => {
+        const crm = getCRMStatusForUser(u);
+        return `
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X">
+            <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+              ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#ec4899;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
+              <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
+              <span class="popup-crm-pill ${crm.id}">${crm.label}</span>
+            </div>
+            <span class="radar-supporter-val">📥 ${u.received} received</span>
+          </div>
+        `;
+      }).join('');
+    } else {
+      supportersList.innerHTML = `<div class="radar-empty">No supporter data yet. Interact on X to build memory!</div>`;
+    }
   }
 
-  // 2. At-risk bonds (score >= 40 and no reply in 7+ days)
-  const now = Date.now();
-  const atRiskUsers = cachedUsers.filter(u => {
-    const score = u.currentScore || 0;
-    const daysSince = (now - (u.lastInteraction || now)) / (1000 * 60 * 60 * 24);
-    return score >= 40 && daysSince >= 7;
-  });
-
-  if (atRiskUsers.length > 0) {
-    atRiskList.innerHTML = atRiskUsers.map(u => `
-      <div class="radar-item">
-        <div class="radar-item-left">
-          ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#f4212e;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
-          <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
+  // 2. Outbound Focus (Who you engage with most)
+  if (outboundList) {
+    const topOutbound = memory.topEngagedByYou.slice(0, 5);
+    if (topOutbound.length > 0) {
+      outboundList.innerHTML = topOutbound.map(u => `
+        <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X">
+          <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+            ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
+            <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
+          </div>
+          <span class="radar-outbound-val">📤 ${u.sent} sent</span>
         </div>
-        <span style="font-size:10px;color:#f4212e;font-weight:700;">❄️ Decaying soon</span>
-      </div>
-    `).join('');
-  } else {
-    atRiskList.innerHTML = `<div class="radar-empty">All tracked bonds are fresh and active!</div>`;
+      `).join('');
+    } else {
+      outboundList.innerHTML = `<div class="radar-empty">No outbound data yet.</div>`;
+    }
   }
 
-  // 3. Quick deep scanner button
+  // 3. Dormant People (No interactions in 14+ days)
+  if (dormantList) {
+    const topDormant = memory.dormantPeople.slice(0, 5);
+    if (topDormant.length > 0) {
+      dormantList.innerHTML = topDormant.map(u => `
+        <div class="radar-item">
+          <div class="radar-item-left">
+            ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#71767b;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
+            <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
+            <span style="font-size:9px;color:#71767b;">(${Math.round(u.currentScore || 0)} pts)</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:10px;color:#71767b;">❄️ ${u.daysSince}d ago</span>
+            <button class="re-engage-btn" data-handle="${escapeHtml(u.handle)}">Say Hi &rarr;</button>
+          </div>
+        </div>
+      `).join('');
+
+      // Wire up re-engage buttons
+      dormantList.querySelectorAll('.re-engage-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          chrome.tabs.create({ url: `https://x.com/${btn.dataset.handle}` });
+        });
+      });
+    } else {
+      dormantList.innerHTML = `<div class="radar-empty">All tracked bonds are fresh and active!</div>`;
+    }
+  }
+
+  // 4. Active streaks
+  if (streaksList) {
+    const streakUsers = cachedUsers.filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
+    if (streakUsers.length > 0) {
+      streaksList.innerHTML = streakUsers.map(u => `
+        <div class="radar-item">
+          <div class="radar-item-left">
+            ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
+            <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
+          </div>
+          <span class="radar-streak-val">🔥 ${u.streakDays} Day Streak</span>
+        </div>
+      `).join('');
+    } else {
+      streaksList.innerHTML = `<div class="radar-empty">No active reply streaks yet. Chat daily with mutuals to ignite streaks!</div>`;
+    }
+  }
+
+  // 5. Quick deep scanner button
   const deepBtn = document.getElementById('quick-deep-btn');
   const deepInput = document.getElementById('quick-deep-input');
   const deepStatus = document.getElementById('quick-deep-status');

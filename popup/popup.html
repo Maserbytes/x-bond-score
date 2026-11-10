@@ -27,7 +27,7 @@
     <nav class="popup-tabs">
       <button class="tab-btn active" data-tab="tab-leaderboard">🏆 Mutuals</button>
       <button class="tab-btn" data-tab="tab-orbit">🪐 Orbit</button>
-      <button class="tab-btn" data-tab="tab-radar">⚡ Radar & Streaks</button>
+      <button class="tab-btn" data-tab="tab-radar">🧠 Memory & Balance</button>
       <button class="tab-btn" data-tab="tab-settings">⚙️ Decay</button>
     </nav>
 
@@ -57,9 +57,11 @@
           </div>
           <div class="filter-pills">
             <button class="filter-pill active" data-filter="all">All</button>
+            <button class="filter-pill" data-filter="supporters">🌟 Supporters</button>
             <button class="filter-pill" data-filter="besties">💖 Besties</button>
             <button class="filter-pill" data-filter="mutuals">🤝 Mutuals</button>
             <button class="filter-pill" data-filter="one-sided">➡️ One-sided</button>
+            <button class="filter-pill" data-filter="dormant">❄️ Dormant</button>
             <button class="filter-pill" data-filter="stranger">👤 Strangers</button>
             <button class="filter-pill" data-filter="vip">⭐ VIPs</button>
             <button class="filter-pill" data-filter="streaks">🔥 Streaks</button>
@@ -151,11 +153,71 @@
         <button class="save-settings-btn" id="save-settings-btn">Save Preferences</button>
       </section>
 
-      <!-- Tab 4: Mutuals Radar, Streaks & Quick Deep Scan -->
+      <!-- Tab 3: Local Engagement Memory, Balance, Supporters & Dormant Bonds -->
       <section id="tab-radar" class="tab-pane">
         <div class="radar-header-bar">
-          <h3>⚡ Mutuals Radar & Streaks</h3>
-          <p class="settings-hint">Live breakdown of active reply streaks, at-risk bonds, and direct conversation analysis.</p>
+          <h3>🧠 Local Engagement Memory</h3>
+          <p class="settings-hint">Breakdown of who engages with you vs who you engage with, top supporters, balance, and dormant mutuals.</p>
+        </div>
+
+        <!-- Global Engagement Balance Card -->
+        <div class="radar-card engagement-balance-card">
+          <div class="eng-balance-header">
+            <span class="eng-balance-title">⚖️ Overall Engagement Balance</span>
+            <span class="eng-balance-badge" id="eng-balance-badge">Balanced</span>
+          </div>
+          <div class="eng-balance-bar-wrap">
+            <div class="eng-balance-fill-sent" id="eng-bar-sent" style="width: 50%;"></div>
+            <div class="eng-balance-fill-recv" id="eng-bar-recv" style="width: 50%;"></div>
+          </div>
+          <div class="eng-balance-metrics">
+            <div class="eng-metric">
+              <span class="eng-metric-lbl">📤 Outbound (You send)</span>
+              <strong class="eng-metric-val" id="eng-outbound-val">0</strong>
+              <span class="eng-metric-pct" id="eng-outbound-pct">50%</span>
+            </div>
+            <div class="eng-metric right">
+              <span class="eng-metric-lbl">📥 Inbound (They engage)</span>
+              <strong class="eng-metric-val" id="eng-inbound-val">0</strong>
+              <span class="eng-metric-pct" id="eng-inbound-pct">50%</span>
+            </div>
+          </div>
+          <div class="eng-balance-desc" id="eng-balance-desc">Loading engagement memory...</div>
+        </div>
+
+        <!-- 🌟 Top Supporters (Engage With You Most) -->
+        <div class="radar-card">
+          <div class="radar-card-title">🌟 Top Supporters (Engage With You Most)</div>
+          <p class="settings-hint">Accounts that reply to your posts and message you most often.</p>
+          <div id="supporters-list" class="radar-mini-list">
+            <div class="radar-empty">No supporter data yet. Interact on X to build memory!</div>
+          </div>
+        </div>
+
+        <!-- 🎯 You Engage With Most -->
+        <div class="radar-card">
+          <div class="radar-card-title">🎯 You Engage With Most (Your Focus)</div>
+          <p class="settings-hint">Accounts you initiate the most likes, replies, and DMs to.</p>
+          <div id="outbound-focus-list" class="radar-mini-list">
+            <div class="radar-empty">No outbound data yet.</div>
+          </div>
+        </div>
+
+        <!-- ❄️ Dormant People (Fading Bonds) -->
+        <div class="radar-card">
+          <div class="radar-card-title">❄️ Dormant People (No interactions in 14+ days)</div>
+          <p class="settings-hint">Previously active contacts whose bonds are cooling off.</p>
+          <div id="dormant-list" class="radar-mini-list">
+            <div class="radar-empty">No dormant contacts. All relationships are active!</div>
+          </div>
+        </div>
+
+        <!-- Streaks Spotlight -->
+        <div class="radar-card">
+          <div class="radar-card-title">🔥 Daily Reply Streaks</div>
+          <div id="streaks-list" class="radar-mini-list">
+            <div class="radar-empty">No active reply streaks yet. Chat daily with mutuals to ignite streaks!</div>
+          </div>
         </div>
 
         <!-- Direct Quick Deep Scan -->
@@ -167,23 +229,6 @@
             <button class="quick-deep-btn" id="quick-deep-btn">⚡ Analyze</button>
           </div>
           <div id="quick-deep-status" class="quick-deep-status" style="display:none;"></div>
-        </div>
-
-        <!-- Streaks Spotlight -->
-        <div class="radar-card">
-          <div class="radar-card-title">🔥 Daily Reply Streaks</div>
-          <div id="streaks-list" class="radar-mini-list">
-            <div class="radar-empty">No active reply streaks yet. Chat daily with mutuals to ignite streaks!</div>
-          </div>
-        </div>
-
-        <!-- Inactivity Radar (At Risk) -->
-        <div class="radar-card">
-          <div class="radar-card-title">⚠️ At-Risk Bonds (Decay Imminent)</div>
-          <p class="settings-hint">Accounts with scores ≥40 and no replies in 7+ days.</p>
-          <div id="at-risk-list" class="radar-mini-list">
-            <div class="radar-empty">All tracked bonds are fresh and active!</div>
-          </div>
         </div>
       </section>
     </main>

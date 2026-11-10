@@ -485,6 +485,105 @@ class BondScoring {
     const months = Math.floor(days / 30);
     return `${months}mo ago`;
   }
+
+  /**
+   * Analyzes local engagement memory across all tracked users:
+   * - Who engages with you (Supporters) vs who you engage with (Outbound)
+   * - Global reciprocity balance
+   * - Balanced mutuals
+   * - Dormant / fading contacts
+   */
+  static analyzeEngagementMemory(users = []) {
+    let totalSent = 0;
+    let totalReceived = 0;
+    const now = Date.now();
+    const msInDay = 86400000;
+
+    const enriched = users.map(u => {
+      const stats = u.stats || {};
+      const sent = (stats.repliesSent || 0) + (stats.dmsSent || 0) + (stats.likes || 0);
+      const received = (stats.repliesReceived || 0) + (stats.dmsReceived || 0);
+      const total = sent + received;
+      const sentRatio = total > 0 ? Math.round((sent / total) * 100) : 50;
+      const lastTime = u.lastInteraction || u.lastUpdated || (now - 30 * msInDay);
+      const daysSince = Math.floor((now - lastTime) / msInDay);
+
+      totalSent += sent;
+      totalReceived += received;
+
+      // Classify engagement role
+      let role = 'casual';
+      if (received >= 2 && sentRatio <= 40) {
+        role = 'supporter'; // They engage with you more
+      } else if (sent >= 2 && sentRatio >= 60) {
+        role = 'supported_by_you'; // You engage with them more
+      } else if (sent > 0 && received > 0 && sentRatio >= 40 && sentRatio <= 60) {
+        role = 'balanced'; // Balanced dialogue
+      }
+
+      const isDormant = daysSince >= 14 && ((u.currentScore || 0) > 5 || total > 0);
+
+      return {
+        ...u,
+        sent,
+        received,
+        total,
+        sentRatio,
+        daysSince,
+        role,
+        isDormant
+      };
+    });
+
+    // Global balance calculation
+    const globalTotal = totalSent + totalReceived;
+    const globalSentRatio = globalTotal > 0 ? Math.round((totalSent / globalTotal) * 100) : 50;
+    const globalRecvRatio = 100 - globalSentRatio;
+
+    let balanceLabel = 'Balanced ⚖️';
+    let balanceDesc = 'Your outbound engagement matches your inbound responses closely.';
+    if (globalSentRatio >= 65) {
+      balanceLabel = 'Outbound Heavy 📤';
+      balanceDesc = 'You actively initiate more likes, replies, and DMs than you receive back.';
+    } else if (globalSentRatio <= 35) {
+      balanceLabel = 'High Inbound Support 📥';
+      balanceDesc = 'Your community actively reaches out and replies to you frequently.';
+    }
+
+    // Supporters: People who engage with you the most (received > 0, sorted by received desc)
+    const supporters = [...enriched]
+      .filter(u => u.received > 0)
+      .sort((a, b) => b.received - a.received);
+
+    // You engage with most: sorted by sent desc
+    const topEngagedByYou = [...enriched]
+      .filter(u => u.sent > 0)
+      .sort((a, b) => b.sent - a.sent);
+
+    // Balanced true mutuals
+    const balancedMutuals = [...enriched]
+      .filter(u => u.role === 'balanced' && u.total >= 2)
+      .sort((a, b) => (b.currentScore || 0) - (a.currentScore || 0));
+
+    // Dormant people: no interaction in 14+ days
+    const dormantPeople = [...enriched]
+      .filter(u => u.isDormant)
+      .sort((a, b) => b.daysSince - a.daysSince);
+
+    return {
+      totalSent,
+      totalReceived,
+      globalSentRatio,
+      globalRecvRatio,
+      balanceLabel,
+      balanceDesc,
+      supporters,
+      topEngagedByYou,
+      balancedMutuals,
+      dormantPeople,
+      trackedCount: enriched.length
+    };
+  }
 }
 
 window.BondScoring = BondScoring;

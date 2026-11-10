@@ -752,6 +752,26 @@
   line-height: 1.3;
 }
 
+.bond-crm-memory-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.bond-crm-memory-icon {
+  font-size: 11px;
+}
+
+.bond-crm-memory-text {
+  font-size: 10px;
+  color: #1d9bf0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
 /* CRM Ledger Filters */
 .bond-timeline-header-wrap {
   display: flex;
