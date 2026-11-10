@@ -45,10 +45,14 @@ class BondUI {
     const tier = BondScoring.getTier(user.currentScore);
     const scoreVal = Math.round(user.currentScore || 0);
 
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+    const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
+
     const badge = document.createElement('span');
     badge.className = `bond-badge ${isProfileHeader ? 'bond-badge-profile' : ''}`;
     badge.setAttribute('data-bond-handle', cleanHandle);
-    badge.title = `BondScore: ${scoreVal} (${tier.name})${user.streakDays > 1 ? ` • 🔥 ${user.streakDays}d streak` : ''} - Click for details`;
+    badge.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
     badge.style.setProperty('--bond-color', tier.color);
     badge.style.setProperty('--bond-bg', tier.bg);
 
@@ -60,6 +64,7 @@ class BondUI {
         ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
         <span class="bond-emoji">${tier.emoji}</span>
         <span class="bond-score-num">${scoreVal}</span>
+        ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
         ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
         ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
       </span>
@@ -110,17 +115,22 @@ class BondUI {
     const scoreVal = Math.round(user.currentScore || 0);
     const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
 
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+    const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
+
     const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
     badges.forEach((b) => {
       b.style.setProperty('--bond-color', tier.color);
       b.style.setProperty('--bond-bg', tier.bg);
-      b.title = `BondScore: ${scoreVal} (${tier.name})${user.streakDays > 1 ? ` • 🔥 ${user.streakDays}d streak` : ''} - Click for details`;
+      b.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
       const inner = b.querySelector('.bond-badge-inner');
       if (inner) {
         inner.innerHTML = `
           ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
           <span class="bond-emoji">${tier.emoji}</span>
           <span class="bond-score-num">${scoreVal}</span>
+          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
           ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
           ${trendSymbol ? `<span class="bond-trend trend-${user.trend}">${trendSymbol}</span>` : ''}
         `;
@@ -163,6 +173,14 @@ class BondUI {
     const scoreVal = Math.round(user.currentScore || scoringResult.score || 0);
     const reciprocity = scoringResult.reciprocity;
 
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+    const crm = scoringResult.crmStatus || user.crmStatusData || BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0);
+
+    const dmEvents = events.filter(e => e.type && e.type.startsWith('dm_'));
+    const replyEvents = events.filter(e => e.type && e.type.startsWith('reply_'));
+    const likeEvents = events.filter(e => e.type === 'like' || e.type === 'quote');
+
     const modal = document.createElement('div');
     modal.className = 'bond-modal-backdrop';
     modal.dataset.handle = cleanHandle;
@@ -185,6 +203,15 @@ class BondUI {
             </div>
           </div>
           <button class="bond-close-btn" title="Close" aria-label="Close">&times;</button>
+        </div>
+
+        <!-- Relationship CRM Status Banner -->
+        <div class="bond-crm-card" style="border-left: 3px solid ${crm.color};">
+          <div class="bond-crm-top">
+            <span class="bond-crm-pill large bond-crm-${crm.id}">${crm.emoji} ${crm.label}${crm.subLabel ? ` · ${crm.subLabel}` : ''}</span>
+            <span class="bond-crm-type-badge">Relationship CRM</span>
+          </div>
+          <div class="bond-crm-desc">${crm.desc}</div>
         </div>
 
         <!-- Inactivity Alert (if bond at risk) -->
@@ -231,8 +258,8 @@ class BondUI {
             <div class="bond-reciprocity-fill" style="width: ${reciprocity.ratio}%;"></div>
           </div>
           <div class="bond-reciprocity-sub">
-            <span>Sent: ${user.stats.repliesSent || 0} (${reciprocity.ratio}%)</span>
-            <span>Received: ${user.stats.repliesReceived || 0} (${100 - reciprocity.ratio}%)</span>
+            <span>You sent: ${(user.stats.repliesSent || 0) + (user.stats.dmsSent || 0)} (${reciprocity.ratio}%)</span>
+            <span>They replied: ${(user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0)} (${100 - reciprocity.ratio}%)</span>
           </div>
         </div>
 
@@ -254,23 +281,31 @@ class BondUI {
           </div>
         </div>
 
-        <!-- Stats Grid -->
+        <!-- Stats Grid (CRM Breakdown) -->
         <div class="bond-stats-grid">
           <div class="bond-stat-item">
+            <div class="bond-stat-val">${(user.stats.dmsSent || 0) + (user.stats.dmsReceived || 0)}</div>
+            <div class="bond-stat-lbl">✉️ Direct Messages</div>
+          </div>
+          <div class="bond-stat-item">
             <div class="bond-stat-val">${user.stats.mutualExchanges || 0}</div>
-            <div class="bond-stat-lbl">Mutual Replies</div>
+            <div class="bond-stat-lbl">🤝 Mutual Replies</div>
           </div>
           <div class="bond-stat-item">
-            <div class="bond-stat-val">${user.stats.repliesSent || 0}</div>
-            <div class="bond-stat-lbl">Sent by You</div>
+            <div class="bond-stat-val">${(user.stats.repliesSent || 0) + (user.stats.dmsSent || 0)}</div>
+            <div class="bond-stat-lbl">📤 Sent by You</div>
           </div>
           <div class="bond-stat-item">
-            <div class="bond-stat-val">${user.stats.repliesReceived || 0}</div>
-            <div class="bond-stat-lbl">Received</div>
+            <div class="bond-stat-val">${(user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0)}</div>
+            <div class="bond-stat-lbl">📥 Received</div>
           </div>
           <div class="bond-stat-item">
             <div class="bond-stat-val">${(user.stats.likes || 0) + (user.stats.quotes || 0)}</div>
-            <div class="bond-stat-lbl">Likes & Quotes</div>
+            <div class="bond-stat-lbl">❤️ Likes & Quotes</div>
+          </div>
+          <div class="bond-stat-item">
+            <div class="bond-stat-val">${user.streakDays || 0}d</div>
+            <div class="bond-stat-lbl">🔥 Reply Streak</div>
           </div>
         </div>
 
@@ -302,18 +337,19 @@ class BondUI {
           </button>
         </div>
 
-        <!-- Recent Interactions -->
+        <!-- Personal Relationship History Ledger -->
         <div class="bond-timeline-preview">
-          <div class="bond-timeline-title">Recent Interactions (${events.length})</div>
-          <div class="bond-timeline-list">
-            ${events.length === 0 ? `<div class="bond-empty-events">No interactions recorded yet. Reply or click Deep Analysis!</div>` : ''}
-            ${events.slice(-5).reverse().map(e => `
-              <div class="bond-event-row">
-                <span class="bond-event-tag ${e.type}">${this.formatEventType(e.type)}</span>
-                <span class="bond-event-snippet">${e.textSnippet ? this.escapeHtml(e.textSnippet) : 'Interaction logged'}</span>
-                <span class="bond-event-time">${BondScoring.formatTimeAgo(e.timestamp)}</span>
-              </div>
-            `).join('')}
+          <div class="bond-timeline-header-wrap">
+            <div class="bond-timeline-title">📜 Relationship History Ledger (${events.length})</div>
+            <div class="bond-timeline-filters" id="bond-timeline-filters">
+              <button class="bond-tl-filter-btn active" data-filter="all">All (${events.length})</button>
+              <button class="bond-tl-filter-btn" data-filter="dm">✉️ DMs (${dmEvents.length})</button>
+              <button class="bond-tl-filter-btn" data-filter="reply">💬 Replies (${replyEvents.length})</button>
+              <button class="bond-tl-filter-btn" data-filter="like">❤️ Likes (${likeEvents.length})</button>
+            </div>
+          </div>
+          <div class="bond-timeline-list" id="bond-timeline-ledger">
+            ${this.renderTimelineItems(events)}
           </div>
         </div>
       </div>
@@ -352,6 +388,28 @@ class BondUI {
       setTimeout(() => { noteSaveBtn.innerText = 'Save'; }, 1200);
     });
 
+    // CRM Timeline Filter Buttons
+    const tlFilters = modal.querySelectorAll('.bond-tl-filter-btn');
+    const ledgerEl = modal.querySelector('#bond-timeline-ledger');
+    tlFilters.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        tlFilters.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const filterType = btn.dataset.filter;
+        let filtered = events;
+        if (filterType === 'dm') {
+          filtered = dmEvents;
+        } else if (filterType === 'reply') {
+          filtered = replyEvents;
+        } else if (filterType === 'like') {
+          filtered = likeEvents;
+        }
+        if (ledgerEl) {
+          ledgerEl.innerHTML = this.renderTimelineItems(filtered);
+        }
+      });
+    });
+
     // Deep Analysis Button Trigger
     const deepBtn = modal.querySelector('#bond-run-deep-btn');
     const progressBar = modal.querySelector('.bond-deep-progress-bar');
@@ -388,6 +446,55 @@ class BondUI {
     });
   }
 
+  renderTimelineItems(items) {
+    if (!items || items.length === 0) {
+      return `<div class="bond-empty-events">No interactions recorded in this category yet.</div>`;
+    }
+    const sorted = [...items].sort((a, b) => b.timestamp - a.timestamp);
+    return sorted.map(e => {
+      const typeInfo = this.getEventInfo(e.type);
+      return `
+        <div class="bond-event-row ${e.type}">
+          <div class="bond-event-type-wrap">
+            <span class="bond-event-tag ${typeInfo.className}">${typeInfo.label}</span>
+          </div>
+          <div class="bond-event-content-wrap">
+            <span class="bond-event-snippet">${e.textSnippet ? this.escapeHtml(e.textSnippet) : typeInfo.defaultSnippet}</span>
+            <div class="bond-event-meta-sub">
+              <span class="bond-event-time">${BondScoring.formatTimeAgo(e.timestamp)}</span>
+              ${e.tweetId && !e.tweetId.startsWith('dm_') ? `<span class="bond-event-id">• ID ${this.escapeHtml(e.tweetId.slice(0, 10))}</span>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  getEventInfo(type) {
+    switch (type) {
+      case 'dm_sent':
+        return { label: '✉️ DM Sent', className: 'bond-type-dm-sent', defaultSnippet: 'Direct message sent' };
+      case 'dm_received':
+        return { label: '✉️ DM Recv', className: 'bond-type-dm-recv', defaultSnippet: 'Direct message received' };
+      case 'dm_mutual':
+        return { label: '✉️ Mutual DM', className: 'bond-type-dm-mutual', defaultSnippet: 'Active DM dialogue' };
+      case 'reply_mutual':
+        return { label: '🤝 Mutual', className: 'bond-type-mutual', defaultSnippet: 'Two-way reply exchange' };
+      case 'reply_sent':
+        return { label: '💬 Reply Sent', className: 'bond-type-sent', defaultSnippet: 'Reply sent by you' };
+      case 'reply_received':
+        return { label: '💬 Reply Recv', className: 'bond-type-recv', defaultSnippet: 'Reply received from user' };
+      case 'like':
+        return { label: '❤️ Liked', className: 'bond-type-like', defaultSnippet: 'Liked tweet' };
+      case 'quote':
+        return { label: '🔁 Quoted', className: 'bond-type-quote', defaultSnippet: 'Quote tweet' };
+      case 'deep_sync':
+        return { label: '🔍 Deep Scan', className: 'bond-type-scan', defaultSnippet: 'Archived conversation' };
+      default:
+        return { label: '⚡ Active', className: 'bond-type-default', defaultSnippet: 'Interaction logged' };
+    }
+  }
+
   async updateModalContent(handle) {
     if (!this.activeModal) return;
     this.closeScoreCard();
@@ -406,15 +513,7 @@ class BondUI {
   }
 
   formatEventType(type) {
-    switch (type) {
-      case 'reply_mutual': return 'Mutual';
-      case 'reply_sent': return 'Sent';
-      case 'reply_received': return 'Received';
-      case 'like': return 'Like';
-      case 'quote': return 'Quote';
-      case 'deep_sync': return 'Deep Scan';
-      default: return 'Active';
-    }
+    return this.getEventInfo(type).label;
   }
 
   escapeHtml(str) {

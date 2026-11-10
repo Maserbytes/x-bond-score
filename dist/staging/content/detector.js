@@ -116,12 +116,23 @@ class InteractionDetector {
       } catch (err) {}
     }, true);
 
-    // Keyboard shortcut (Ctrl+Enter / Cmd+Enter) to submit comments
+    // Keyboard shortcut (Ctrl+Enter / Cmd+Enter / Enter) to submit comments or DMs
     document.addEventListener('keydown', (e) => {
       try {
+        const composer = e.target.closest('[data-testid*="tweetTextarea"], [data-testid="dmComposerTextInput"], [role="textbox"], [contenteditable="true"]');
+        if (!composer) return;
+
+        // Check if inside DM conversation
+        const isDM = !!composer.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], [data-testid="dmComposerTextInput"], [aria-label*="Direct message" i]');
+        if (isDM && e.key === 'Enter' && !e.shiftKey) {
+          this._handleDMSubmit(composer);
+          return;
+        }
+
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-          const composer = e.target.closest('[data-testid*="tweetTextarea"], [role="textbox"], [contenteditable="true"]');
-          if (composer) {
+          if (isDM) {
+            this._handleDMSubmit(composer);
+          } else {
             const submitBtn = document.querySelector('[data-testid="tweetButtonInline"], [data-testid="tweetButton"], [data-testid*="tweetButton"]');
             this._handleReplySubmit(submitBtn || composer);
           }
@@ -133,6 +144,13 @@ class InteractionDetector {
   _handleClickEvent(e) {
     const target = e.target;
     if (!target) return;
+
+    // 0. Check for DM Send Button
+    const dmSendBtn = target.closest('[data-testid="dmComposerSendButton"]');
+    if (dmSendBtn) {
+      this._handleDMSubmit(dmSendBtn);
+      return;
+    }
 
     // 1. Check for Like button
     const likeBtn = target.closest('[data-testid="like"]');
@@ -492,6 +510,82 @@ class InteractionDetector {
       }
     } catch (e) {
       // ignore
+    }
+  }
+
+  /**
+   * Captures outgoing DMs sent to another account in direct messages
+   */
+  async _handleDMSubmit(el) {
+    try {
+      let targetHandle = null;
+      let displayName = '';
+      let avatarUrl = '';
+
+      // 1. Look for DM header profile link or conversation header
+      const conversationContainer = el.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], [role="main"]') || document.body;
+      const dmHeaderLinks = conversationContainer.querySelectorAll('[data-testid="conversation-header"] a[href^="/"], [data-testid="DmRecipientName"] a[href^="/"], a[href^="/"]');
+      
+      for (const link of dmHeaderLinks) {
+        const href = link.getAttribute('href') || '';
+        const match = href.match(/^\/([A-Za-z0-9_]+)$/);
+        if (match && match[1] && !['messages', 'home', 'explore', 'notifications', 'i'].includes(match[1].toLowerCase())) {
+          const h = match[1].toLowerCase();
+          if (!this.currentUser || h !== this.currentUser) {
+            targetHandle = h;
+            displayName = link.innerText.trim() || h;
+            break;
+          }
+        }
+      }
+
+      // 2. Check current URL if it has /messages/<id>-<handle>
+      if (!targetHandle && location.pathname.startsWith('/messages/')) {
+        const urlMatch = location.pathname.match(/\/messages\/\d+-([A-Za-z0-9_]+)/i);
+        if (urlMatch && urlMatch[1]) {
+          targetHandle = urlMatch[1].toLowerCase();
+        }
+      }
+
+      // 3. Fallback: Check any handle text inside the active DM drawer/window
+      if (!targetHandle) {
+        const text = conversationContainer.innerText || '';
+        const handleMatch = text.match(/@([A-Za-z0-9_]{1,15})/);
+        if (handleMatch && handleMatch[1]) {
+          const h = handleMatch[1].toLowerCase();
+          if (!this.currentUser || h !== this.currentUser) {
+            targetHandle = h;
+          }
+        }
+      }
+
+      if (targetHandle && targetHandle !== this.currentUser) {
+        console.log(`[BondScore CRM] Direct Message sent to @${targetHandle}! Incrementing relationship score...`);
+        
+        // Optimistic boost
+        if (window.bondUI) {
+          window.bondUI.optimisticBoost(targetHandle, 10);
+        }
+
+        const composer = el.closest('[role="textbox"]') || conversationContainer.querySelector('[data-testid="dmComposerTextInput"]') || el;
+        const textSnippet = composer && composer.innerText ? composer.innerText.slice(0, 140) : 'Direct Message sent';
+
+        await window.bondStorage.recordInteraction(targetHandle, {
+          type: 'dm_sent',
+          timestamp: Date.now(),
+          tweetId: `dm_${Date.now()}`,
+          textSnippet,
+          displayName,
+          avatarUrl,
+          isMutual: true
+        });
+
+        if (window.bondUI) {
+          window.bondUI.refreshBadgesForUser(targetHandle, true);
+        }
+      }
+    } catch (err) {
+      console.warn('[BondScore CRM] Error capturing DM:', err);
     }
   }
 }

@@ -100,6 +100,13 @@ function setupFilterPills() {
   });
 }
 
+function getCRMStatusForUser(u) {
+  if (u.crmStatusData) return u.crmStatusData;
+  const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likes || 0))) || 0;
+  const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0))) || 0;
+  return BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
+}
+
 function applyFilterAndRender() {
   const q = (document.getElementById('mutual-search-input').value || '').toLowerCase().trim();
   let list = cachedUsers;
@@ -112,6 +119,23 @@ function applyFilterAndRender() {
     list = list.filter(u => {
       const daysSince = (Date.now() - (u.lastInteraction || Date.now())) / (1000 * 60 * 60 * 24);
       return daysSince >= 3 && (u.currentScore || 0) >= 20;
+    });
+  } else if (currentFilter === 'besties') {
+    list = list.filter(u => getCRMStatusForUser(u).id === 'besties');
+  } else if (currentFilter === 'mutuals') {
+    list = list.filter(u => {
+      const cId = getCRMStatusForUser(u).id;
+      return cId === 'mutuals' || cId === 'besties';
+    });
+  } else if (currentFilter === 'one-sided') {
+    list = list.filter(u => {
+      const cId = getCRMStatusForUser(u).id;
+      return cId === 'one_sided' || cId === 'one_sided_them';
+    });
+  } else if (currentFilter === 'stranger') {
+    list = list.filter(u => {
+      const cId = getCRMStatusForUser(u).id;
+      return cId === 'stranger' || cId === 'casual';
     });
   }
 
@@ -134,7 +158,7 @@ function renderUserList(users) {
       <div class="empty-state">
         <div class="empty-icon">🤝</div>
         <h3>No mutuals match</h3>
-        <p>${currentFilter === 'all' ? 'Browse X, reply to mutuals, or run <strong>Deep Analysis</strong> on any profile to calculate your first Bond Score.' : 'No mutuals found matching this filter.'}</p>
+        <p>${currentFilter === 'all' ? 'Browse X, reply to mutuals, or run <strong>Deep Analysis</strong> on any profile to calculate your first Bond Score.' : 'No contacts found matching this filter.'}</p>
       </div>
     `;
     return;
@@ -144,6 +168,8 @@ function renderUserList(users) {
     const tier = BondScoring.getTier(u.currentScore);
     const scoreVal = Math.round(u.currentScore || 0);
     const isPinned = !!u.isPinned;
+    const crm = getCRMStatusForUser(u);
+    const dmsTotal = ((u.stats && u.stats.dmsSent) || 0) + ((u.stats && u.stats.dmsReceived) || 0);
 
     const item = document.createElement('div');
     item.className = 'mutual-item';
@@ -159,10 +185,12 @@ function renderUserList(users) {
         <div class="mutual-names">
           <div class="mutual-name-row">
             <span class="mutual-name">${escapeHtml(u.displayName || u.handle)}</span>
+            <span class="popup-crm-pill ${crm.id}" title="${crm.desc}">${crm.emoji} ${crm.label}</span>
             ${(u.streakDays || 0) > 1 ? `<span class="mutual-streak-badge">🔥${u.streakDays}d</span>` : ''}
           </div>
           <div class="mutual-handle-sub">
             <span>@${escapeHtml(u.handle)}</span>
+            ${dmsTotal > 0 ? `<span class="mutual-dm-count" title="${dmsTotal} direct messages tracked">✉️ ${dmsTotal} DMs</span>` : ''}
             ${u.note ? `<span class="mutual-note-snippet" title="${escapeHtml(u.note)}">📝 ${escapeHtml(u.note)}</span>` : ''}
           </div>
         </div>

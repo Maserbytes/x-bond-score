@@ -684,32 +684,164 @@
   text-transform: uppercase;
 }
 
-.bond-event-tag.reply_mutual { background: rgba(0, 186, 124, 0.2); color: #00ba7c; }
-.bond-event-tag.reply_sent { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; }
-.bond-event-tag.reply_received { background: rgba(249, 24, 128, 0.2); color: #f91880; }
-.bond-event-tag.like { background: rgba(249, 24, 128, 0.2); color: #f91880; }
-.bond-event-tag.quote { background: rgba(0, 186, 124, 0.2); color: #00ba7c; }
-.bond-event-tag.deep_sync { background: rgba(255, 212, 0, 0.2); color: #ffd400; }
+.bond-event-tag.reply_mutual, .bond-type-mutual { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.3); }
+.bond-event-tag.reply_sent, .bond-type-sent { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.3); }
+.bond-event-tag.reply_received, .bond-type-recv { background: rgba(249, 24, 128, 0.2); color: #f91880; border: 1px solid rgba(249, 24, 128, 0.3); }
+.bond-event-tag.like, .bond-type-like { background: rgba(249, 24, 128, 0.2); color: #f91880; border: 1px solid rgba(249, 24, 128, 0.3); }
+.bond-event-tag.quote, .bond-type-quote { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.3); }
+.bond-event-tag.deep_sync, .bond-type-scan { background: rgba(255, 212, 0, 0.2); color: #ffd400; border: 1px solid rgba(255, 212, 0, 0.3); }
+
+/* DM Specific Tag Styling */
+.bond-type-dm-sent { background: rgba(121, 75, 196, 0.25); color: #a855f7; border: 1px solid rgba(168, 85, 247, 0.35); }
+.bond-type-dm-recv { background: rgba(236, 72, 153, 0.25); color: #ec4899; border: 1px solid rgba(236, 72, 153, 0.35); }
+.bond-type-dm-mutual { background: rgba(0, 186, 124, 0.25); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.bond-type-default { background: rgba(113, 118, 123, 0.2); color: #71767b; }
+
+/* CRM Status Pill on Badges */
+.bond-crm-pill {
+  font-size: 8px;
+  padding: 1px 5px;
+  border-radius: 9999px;
+  font-weight: 700;
+  letter-spacing: -0.1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.bond-crm-pill.bond-crm-besties { background: rgba(249, 24, 128, 0.2); color: #f91880; border: 1px solid rgba(249, 24, 128, 0.35); }
+.bond-crm-pill.bond-crm-mutuals { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.bond-crm-pill.bond-crm-one_sided { background: rgba(255, 122, 0, 0.2); color: #ff7a00; border: 1px solid rgba(255, 122, 0, 0.35); }
+.bond-crm-pill.bond-crm-one_sided_them { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.35); }
+.bond-crm-pill.bond-crm-casual { background: rgba(255, 212, 0, 0.2); color: #ffd400; border: 1px solid rgba(255, 212, 0, 0.35); }
+.bond-crm-pill.bond-crm-stranger { background: rgba(113, 118, 123, 0.2); color: #71767b; border: 1px solid rgba(113, 118, 123, 0.35); }
+
+/* CRM Status Card inside Modal */
+.bond-crm-card {
+  background-color: var(--bond-card-surface, #16181c);
+  border: 1px solid var(--bond-card-border, #2f3336);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.bond-crm-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.bond-crm-pill.large {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.bond-crm-type-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--bond-card-subtext, #71767b);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.bond-crm-desc {
+  font-size: 11px;
+  color: var(--bond-card-subtext, #71767b);
+  line-height: 1.3;
+}
+
+/* CRM Ledger Filters */
+.bond-timeline-header-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.bond-timeline-filters {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+}
+
+.bond-tl-filter-btn {
+  background: var(--bond-card-surface, #16181c);
+  border: 1px solid var(--bond-card-border, #2f3336);
+  color: var(--bond-card-subtext, #71767b);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.bond-tl-filter-btn:hover {
+  color: var(--bond-card-text, #e7e9ea);
+  border-color: #536471;
+}
+
+.bond-tl-filter-btn.active {
+  background: rgba(29, 155, 240, 0.18);
+  color: #1d9bf0;
+  border-color: #1d9bf0;
+}
+
+/* Ledger Items */
+.bond-event-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.bond-event-type-wrap {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.bond-event-content-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
 
 .bond-event-snippet {
-  flex: 1;
-  color: #e7e9ea;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--bond-card-text, #e7e9ea);
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.bond-event-meta-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  color: var(--bond-card-subtext, #71767b);
 }
 
 .bond-event-time {
-  color: #71767b;
-  font-size: 9px;
-  white-space: nowrap;
+  color: var(--bond-card-subtext, #71767b);
+}
+
+.bond-event-id {
+  color: rgba(113, 118, 123, 0.7);
 }
 
 .bond-empty-events {
-  font-size: 10px;
-  color: #71767b;
+  font-size: 11px;
+  color: var(--bond-card-subtext, #71767b);
   text-align: center;
-  padding: 6px 0;
+  padding: 12px 0;
 }
 
 /* Real-Time Score Bump Pulse Animation */

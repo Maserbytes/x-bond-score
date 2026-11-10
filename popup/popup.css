@@ -356,6 +356,32 @@ body {
   font-weight: 700;
 }
 
+/* CRM Status Pill in Popup */
+.popup-crm-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.popup-crm-pill.besties { background: rgba(249, 24, 128, 0.2); color: #f91880; border: 1px solid rgba(249, 24, 128, 0.35); }
+.popup-crm-pill.mutuals { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
+.popup-crm-pill.one_sided { background: rgba(255, 122, 0, 0.2); color: #ff7a00; border: 1px solid rgba(255, 122, 0, 0.35); }
+.popup-crm-pill.one_sided_them { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.35); }
+.popup-crm-pill.casual { background: rgba(255, 212, 0, 0.2); color: #ffd400; border: 1px solid rgba(255, 212, 0, 0.35); }
+.popup-crm-pill.stranger { background: rgba(113, 118, 123, 0.2); color: #71767b; border: 1px solid rgba(113, 118, 123, 0.35); }
+
+.mutual-dm-count {
+  font-size: 10px;
+  color: #a855f7;
+  background: rgba(168, 85, 247, 0.15);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  padding: 0 4px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
 .mutual-handle-sub {
   font-size: 11px;
   color: var(--text-secondary);

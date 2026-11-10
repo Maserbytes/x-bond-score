@@ -6,41 +6,51 @@
 const BondTiers = {
   SOULMATES: {
     id: 'soulmates',
-    name: 'Core Bond',
-    minScore: 90,
-    emoji: '💎',
-    color: '#00BA7C', // Twitter emerald
-    bg: 'rgba(0, 186, 124, 0.15)'
+    name: 'Besties (Core Bond)',
+    shortName: 'Bestie',
+    crmStatus: 'Besties',
+    minScore: 75,
+    emoji: '💖',
+    color: '#F91880', // Hot pink / emerald
+    bg: 'rgba(249, 24, 128, 0.15)'
   },
   CLOSE_FRIENDS: {
     id: 'close_friends',
-    name: 'Inner Circle',
-    minScore: 70,
+    name: 'Mutual Circle',
+    shortName: 'Mutual',
+    crmStatus: 'Mutuals',
+    minScore: 45,
     emoji: '🔥',
-    color: '#F91880', // Twitter hot pink
-    bg: 'rgba(249, 24, 128, 0.15)'
+    color: '#00BA7C', // Emerald
+    bg: 'rgba(0, 186, 124, 0.15)'
   },
   CONVERSANT: {
     id: 'conversant',
-    name: 'Mutual Conversant',
-    minScore: 40,
+    name: 'Active Acquaintance',
+    shortName: 'Acquaintance',
+    crmStatus: 'Acquaintance',
+    minScore: 20,
     emoji: '🤝',
     color: '#1D9BF0', // Twitter blue
     bg: 'rgba(29, 155, 240, 0.15)'
   },
   ACQUAINTANCE: {
     id: 'acquaintance',
-    name: 'Acquaintance',
-    minScore: 15,
+    name: 'Occasional Contact',
+    shortName: 'Casual',
+    crmStatus: 'Casual',
+    minScore: 5,
     emoji: '👋',
     color: '#FFD400', // Twitter yellow
     bg: 'rgba(255, 212, 0, 0.15)'
   },
   DORMANT: {
     id: 'dormant',
-    name: 'Dormant',
+    name: 'Stranger / Cold',
+    shortName: 'Stranger',
+    crmStatus: 'Stranger',
     minScore: 0,
-    emoji: '❄️',
+    emoji: '👤',
     color: '#71767B', // Twitter gray
     bg: 'rgba(113, 118, 123, 0.12)'
   }
@@ -101,6 +111,19 @@ class BondScoring {
     for (const evt of sorted) {
       let baseWeight = 0;
       switch (evt.type) {
+        case 'dm_mutual':
+          baseWeight = weights.dmMutual || (weights.mutualReply || 15) * 1.35;
+          sentCount++;
+          receivedCount++;
+          break;
+        case 'dm_sent':
+          baseWeight = weights.dmSent || 12;
+          sentCount++;
+          break;
+        case 'dm_received':
+          baseWeight = weights.dmReceived || 12;
+          receivedCount++;
+          break;
         case 'reply_mutual':
           baseWeight = weights.mutualReply;
           sentCount++;
@@ -123,6 +146,7 @@ class BondScoring {
           break;
         case 'like':
           baseWeight = weights.like;
+          sentCount++;
           break;
         case 'deep_sync':
           baseWeight = weights.deepSyncExchange;
@@ -181,6 +205,9 @@ class BondScoring {
     // Reciprocity Radar
     const reciprocity = this.calculateReciprocity(sentCount, receivedCount);
 
+    // CRM Relationship Status (Besties / Mutuals / One-sided / Stranger)
+    const crmStatus = this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays);
+
     // 30-Day Trend Sparkline
     const sparkline = this.generate30DaySparkline(sorted, settings, K);
 
@@ -194,6 +221,7 @@ class BondScoring {
     return {
       score: finalScore,
       tier,
+      crmStatus,
       trend,
       streakDays,
       reciprocity,
@@ -232,6 +260,100 @@ class BondScoring {
     }
 
     return streak;
+  }
+
+  /**
+   * Computes relationship status CRM classification:
+   * "Besties", "Mutuals", "One-sided (You lead)", "One-sided (They lead)", or "Stranger"
+   */
+  static calculateCRMStatus(score, sentCount, receivedCount, streakDays = 0) {
+    const total = sentCount + receivedCount;
+    const finalScore = Math.round(score || 0);
+
+    if (total === 0 || finalScore < 3) {
+      return {
+        id: 'stranger',
+        label: 'Stranger',
+        emoji: '👤',
+        desc: 'No meaningful interaction history yet',
+        color: '#71767B',
+        badgeBg: 'rgba(113, 118, 123, 0.15)'
+      };
+    }
+
+    // Besties: High score (>=65) with balanced reciprocal exchanges or active streaks
+    if (finalScore >= 65 && sentCount > 0 && receivedCount > 0) {
+      return {
+        id: 'besties',
+        label: 'Besties',
+        emoji: '💖',
+        desc: 'Deep two-way bond with active exchanges',
+        color: '#F91880',
+        badgeBg: 'rgba(249, 24, 128, 0.18)'
+      };
+    }
+
+    const sentRatio = total > 0 ? (sentCount / total) * 100 : 50;
+
+    // One-sided (You lead): You send a lot, but they rarely or never engage back
+    if (sentCount >= 2 && sentRatio >= 75) {
+      return {
+        id: 'one_sided',
+        label: 'One-sided',
+        subLabel: 'You lead',
+        emoji: '➡️',
+        desc: 'You send likes/replies, low engagement back',
+        color: '#FF7A00',
+        badgeBg: 'rgba(255, 122, 0, 0.18)'
+      };
+    }
+
+    // One-sided (They lead): They engage with you frequently, you rarely reply
+    if (receivedCount >= 2 && sentRatio <= 25) {
+      return {
+        id: 'one_sided_them',
+        label: 'One-sided',
+        subLabel: 'They lead',
+        emoji: '⬅️',
+        desc: 'They engage frequently, you reply rarely',
+        color: '#1D9BF0',
+        badgeBg: 'rgba(29, 155, 240, 0.18)'
+      };
+    }
+
+    // If score is decent with both sides active: Mutuals
+    if (sentCount > 0 && receivedCount > 0) {
+      return {
+        id: 'mutuals',
+        label: 'Mutuals',
+        emoji: '🤝',
+        desc: 'Two-way balanced conversation',
+        color: '#00BA7C',
+        badgeBg: 'rgba(0, 186, 124, 0.18)'
+      };
+    }
+
+    // If score >= 20 but only 1 side so far
+    if (finalScore >= 20) {
+      return {
+        id: 'one_sided',
+        label: 'One-sided',
+        subLabel: 'You lead',
+        emoji: '➡️',
+        desc: 'Active from your side',
+        color: '#FF7A00',
+        badgeBg: 'rgba(255, 122, 0, 0.18)'
+      };
+    }
+
+    return {
+      id: 'casual',
+      label: 'Acquaintance',
+      emoji: '👋',
+      desc: 'Occasional light interactions',
+      color: '#FFD400',
+      badgeBg: 'rgba(255, 212, 0, 0.18)'
+    };
   }
 
   /**

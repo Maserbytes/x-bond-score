@@ -9,10 +9,13 @@
 ## 🌟 Overview
 
 **BondScore** tracks the strength of your relationships with accounts you interact with on X. It calculates a dynamic **Bond Score (0–100)** that:
-- **Rises** with frequent mutual replies, quote tweets, comments, and likes.
+- **Tracks every like, reply, and Direct Message (DM) you send** to build a comprehensive relationship history.
+- **Relationship CRM Classification**: Automatically categorizes every bond into **💖 Besties**, **🤝 Mutuals**, **➡️ One-sided (You lead / They lead)**, or **👤 Stranger**.
+- **Personal Relationship History Ledger**: View a full filterable timeline of all interactions (DMs, Replies, Likes, Quotes) in the Score Card.
+- **Rises** with frequent mutual replies, quote tweets, comments, DMs, and likes.
 - **Smoothly decays** over time if you and the other account stop interacting.
 - **Displays subtly** right next to handles on timelines, profile pages, and tweet threads.
-- **Provides an interactive Score Card** when you click any badge, showing conversation breakdowns, reply ratios, and recency.
+- **Provides an interactive Score Card** when you click any badge, showing conversation breakdowns, reply ratios, reciprocity radar, and notes.
 - **Supports Deep Mode**: On-demand deep search through mutual tweet histories without requiring Twitter's official paid API.
 
 ---
@@ -105,7 +108,9 @@ $$Score = 100 \times \left(1 - e^{-\frac{\text{RawScore}}{45}}\right)$$
 ### Event Weights
 | Interaction Type | Weight | Notes |
 | :--- | :---: | :--- |
+| **Mutual DM Conversation** | `+20 pts` | Intimate back-and-forth direct messages |
 | **Mutual Reply Exchange** | `+15 pts` | Reciprocal back-and-forth dialogue |
+| **Direct Message (Sent/Recv)** | `+12 pts` | Direct messages on x.com/messages |
 | **Direct Reply (Sent/Received)** | `+8 pts` | Single reply in thread |
 | **Quote Tweet** | `+6 pts` | Public commentary |
 | **Mention** | `+5 pts` | Tagging in post |
@@ -117,7 +122,15 @@ $$Score = 100 \times \left(1 - e^{-\frac{\text{RawScore}}{45}}\right)$$
 - **Decay Rate**: Exponential half-life ($\lambda = \frac{\ln 2}{14 \text{ days}}$ by default).
 - Configurable via the **Extension Popup > Decay & Weights** sliders.
 
-### Relationship Tiers
+### Relationship CRM Statuses
+| Status | Badge | Condition | Description |
+| :--- | :---: | :--- | :--- |
+| **Besties** | 💖 | Score ≥ 65 + Active 2-Way | Deep two-way bond with active exchanges & streaks |
+| **Mutuals** | 🤝 | Active Reciprocity | Balanced two-way interaction |
+| **One-sided (You lead)** | ➡️ | Sent Ratio ≥ 75% | You send likes/replies/DMs, low engagement back |
+| **One-sided (They lead)**| ⬅️ | Received Ratio ≥ 75% | They engage frequently, you reply rarely |
+| **Acquaintance** | 👋 | Score 5–20 | Occasional light interactions |
+| **Stranger / Cold** | 👤 | Score < 3 | No meaningful interaction history yet |
 | Tier | Score Range | Badge | Label |
 | :--- | :---: | :---: | :--- |
 | **Soulmates** | 90–100 | 💎 | Core Bond |

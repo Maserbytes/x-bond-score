@@ -9,6 +9,9 @@ const DEFAULT_SETTINGS = {
   gracePeriodDays: 2,
   weights: {
     mutualReply: 15,
+    dmMutual: 20,
+    dmSent: 12,
+    dmReceived: 12,
     replySent: 8,
     replyReceived: 8,
     quote: 6,
@@ -296,12 +299,16 @@ class BondStorage {
       avatarUrl: eventData.avatarUrl || '',
       currentScore: 0,
       tier: 'dormant',
+      crmStatus: 'Stranger',
+      crmStatusId: 'stranger',
       streakDays: 0,
       isPinned: false,
       note: '',
       stats: {
         repliesSent: 0,
         repliesReceived: 0,
+        dmsSent: 0,
+        dmsReceived: 0,
         mutualExchanges: 0,
         likes: 0,
         quotes: 0,
@@ -311,9 +318,12 @@ class BondStorage {
 
     if (eventData.displayName) user.displayName = eventData.displayName;
     if (eventData.avatarUrl) user.avatarUrl = eventData.avatarUrl;
+    if (!user.stats) user.stats = {};
 
     if (newEvent.type === 'reply_sent') user.stats.repliesSent = (user.stats.repliesSent || 0) + 1;
     if (newEvent.type === 'reply_received') user.stats.repliesReceived = (user.stats.repliesReceived || 0) + 1;
+    if (newEvent.type === 'dm_sent') user.stats.dmsSent = (user.stats.dmsSent || 0) + 1;
+    if (newEvent.type === 'dm_received') user.stats.dmsReceived = (user.stats.dmsReceived || 0) + 1;
     if (newEvent.type === 'like') user.stats.likes = (user.stats.likes || 0) + 1;
     if (newEvent.type === 'quote') user.stats.quotes = (user.stats.quotes || 0) + 1;
     if (newEvent.isMutual) user.stats.mutualExchanges = (user.stats.mutualExchanges || 0) + 1;
@@ -326,6 +336,9 @@ class BondStorage {
       let minBoost = 0;
       switch (newEvent.type) {
         case 'reply_mutual': minBoost = 12; break;
+        case 'dm_mutual': minBoost = 14; break;
+        case 'dm_sent': minBoost = 10; break;
+        case 'dm_received': minBoost = 10; break;
         case 'reply_sent': minBoost = newEvent.isMutual ? 12 : 8; break;
         case 'reply_received': minBoost = 8; break;
         case 'quote': minBoost = 6; break;
@@ -334,9 +347,12 @@ class BondStorage {
         default: minBoost = 2; break;
       }
       const previousScore = user.currentScore || 0;
-      const { score, tier, trend, streakDays, reciprocity } = BondScoring.calculateUserScore(events, settings, previousScore, minBoost);
+      const { score, tier, crmStatus, trend, streakDays, reciprocity } = BondScoring.calculateUserScore(events, settings, previousScore, minBoost);
       user.currentScore = score;
       user.tier = tier.id;
+      user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
+      user.crmStatusId = crmStatus ? crmStatus.id : 'stranger';
+      user.crmStatusData = crmStatus || null;
       user.trend = trend;
       user.streakDays = streakDays;
       user.reciprocity = reciprocity;
@@ -409,7 +425,14 @@ class BondStorage {
           for (const [key, value] of Object.entries(allData)) {
             if (key.startsWith('user:') && value && value.handle) {
               const h = value.handle.toLowerCase().trim();
-              if (h && h !== myHandle && h !== 'masersuspended' && h !== 'maserbyte') {
+              if (h && (!myHandle || h !== myHandle)) {
+                if (!value.crmStatusData && typeof BondScoring !== 'undefined') {
+                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likes || 0))) || 0;
+                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0))) || 0;
+                  value.crmStatusData = BondScoring.calculateCRMStatus(value.currentScore || 0, sSent, sRecv, value.streakDays || 0);
+                  value.crmStatus = value.crmStatusData.label;
+                  value.crmStatusId = value.crmStatusData.id;
+                }
                 users.push(value);
               }
             }
@@ -431,7 +454,14 @@ class BondStorage {
               const u = JSON.parse(localStorage.getItem(k));
               if (u && u.handle) {
                 const h = u.handle.toLowerCase().trim();
-                if (h && h !== myHandle && h !== 'masersuspended' && h !== 'maserbyte') {
+                if (h && (!myHandle || h !== myHandle)) {
+                  if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
+                    const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likes || 0))) || 0;
+                    const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0))) || 0;
+                    u.crmStatusData = BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
+                    u.crmStatus = u.crmStatusData.label;
+                    u.crmStatusId = u.crmStatusData.id;
+                  }
                   users.push(u);
                 }
               }

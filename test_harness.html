@@ -110,6 +110,7 @@
       <button class="harness-btn" id="btn-create-post">+ Create Post</button>
       <button class="harness-btn pink" id="btn-simulate-like">❤️ Simulate Like</button>
       <button class="harness-btn" id="btn-simulate-reply">💬 Simulate Reply</button>
+      <button class="harness-btn" style="background: #a855f7;" id="btn-simulate-dm">✉️ Simulate DM</button>
       <button class="harness-btn" id="btn-run-deep">⚡ Run Deep Mode</button>
     </div>
 
@@ -290,6 +291,19 @@
           isMutual: true
         });
         log(`Simulated mutual reply with @${h} (+15 pts + reciprocity bonus)`);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate DM button
+      document.getElementById('btn-simulate-dm').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordInteraction(h, {
+          type: 'dm_sent',
+          textSnippet: 'Sent direct message via X chat',
+          isMutual: true
+        });
+        log(`Simulated sent direct message to @${h} (+12 pts + CRM boost)`);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
