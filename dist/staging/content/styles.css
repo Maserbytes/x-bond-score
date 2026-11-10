@@ -35,6 +35,14 @@
   line-height: 1;
 }
 
+/* Hard safeguard: Never display duplicate sibling badges */
+.bond-badge ~ .bond-badge {
+  display: none !important;
+}
+.bond-follow-badge ~ .bond-follow-badge {
+  display: none !important;
+}
+
 .bond-badge:hover {
   transform: scale(1.06);
 }
