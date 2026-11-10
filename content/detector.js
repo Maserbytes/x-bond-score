@@ -813,6 +813,14 @@ class InteractionDetector {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
     if (this.currentUser && cleanHandle === this.currentUser) return;
 
+    // Throttle checks per profile to prevent redundant DOM parsing & storage writes
+    this._profileSignalTimes = this._profileSignalTimes || new Map();
+    const lastCheck = this._profileSignalTimes.get(cleanHandle) || 0;
+    if (Date.now() - lastCheck < 30000) {
+      return;
+    }
+    this._profileSignalTimes.set(cleanHandle, Date.now());
+
     try {
       // 1. Check for Block
       const emptyState = document.querySelector('[data-testid="empty_state"], [data-testid="emptyState"]');

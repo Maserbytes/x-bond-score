@@ -31,7 +31,7 @@
   cursor: pointer;
   user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  transition: transform 0.15s cubic-bezier(0.2, 0, 0, 1), opacity 0.15s ease;
+  transition: opacity 0.15s ease, filter 0.15s ease;
   line-height: 1;
 }
 
@@ -44,7 +44,7 @@
 }
 
 .bond-badge:hover {
-  transform: scale(1.06);
+  filter: brightness(1.12);
 }
 
 .bond-badge-inner {

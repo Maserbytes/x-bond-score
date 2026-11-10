@@ -753,6 +753,19 @@ class BondStorage {
       }
     }
 
+    // Only persist if signals actually changed or a new signal event was logged
+    const prevSignalsObj = user.signals || {};
+    const signalsUnchanged = (
+      prevSignalsObj.theyFollowYou === resolvedTheyFollow &&
+      prevSignalsObj.youFollowThem === resolvedYouFollow &&
+      prevSignalsObj.isMutual === isNowMutual &&
+      prevSignalsObj.isBlocked === !!data.isBlocked
+    );
+
+    if (signalsUnchanged && !signalLogged) {
+      return user;
+    }
+
     // Update signal metadata on user record
     user.signals = {
       theyFollowYou: resolvedTheyFollow,

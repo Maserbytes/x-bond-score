@@ -14,7 +14,7 @@ class BondUI {
     window.addEventListener('bondscore:updated', (e) => {
       const handle = e.detail && e.detail.handle;
       if (handle) {
-        this.refreshBadgesForUser(handle);
+        this.refreshBadgesForUser(handle, false);
       }
     });
 
@@ -258,13 +258,14 @@ class BondUI {
       b.classList.remove('bond-badge-bump');
       void b.offsetWidth;
       b.classList.add('bond-badge-bump');
+      b.addEventListener('animationend', () => b.classList.remove('bond-badge-bump'), { once: true });
     });
   }
 
   /**
    * Refreshes all visible badges for a specific handle
    */
-  async refreshBadgesForUser(handle, shouldAnimate = true) {
+  async refreshBadgesForUser(handle, shouldAnimate = false) {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
     const user = (await window.bondStorage.getUser(cleanHandle)) || {
       handle: cleanHandle,
@@ -312,6 +313,7 @@ class BondUI {
         b.classList.remove('bond-badge-bump');
         void b.offsetWidth;
         b.classList.add('bond-badge-bump');
+        b.addEventListener('animationend', () => b.classList.remove('bond-badge-bump'), { once: true });
       }
     });
 
