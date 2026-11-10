@@ -272,6 +272,76 @@ class DeepAnalyzerManager {
       this.activeScans.delete(cleanTarget);
     }
   }
+
+  /**
+   * Looks up tweet interactions between ANY two handles (e.g. handleA and handleB)
+   * and reports whether they have ever interacted via tweets, direction, and snippet history.
+   */
+  async lookupInteraction(handleA, handleB, onProgress = () => {}) {
+    const cleanA = (handleA || '').replace(/^@/, '').toLowerCase().trim();
+    const cleanB = (handleB || '').replace(/^@/, '').toLowerCase().trim();
+
+    if (!cleanA || !cleanB) {
+      throw new Error('Please enter two handles to check interactions.');
+    }
+
+    if (cleanA === cleanB) {
+      throw new Error('Please enter two different handles.');
+    }
+
+    onProgress({ percent: 15, stage: `Searching tweets between @${cleanA} and @${cleanB}...`, itemsFound: 0 });
+
+    let events = [];
+    try {
+      events = await this.provider.analyze(cleanA, cleanB, onProgress);
+    } catch (e) {
+      console.warn('[BondScore] Search query lookup notice:', e);
+    }
+
+    // Also check local storage records for any cached interactions involving either account
+    if (window.bondStorage) {
+      try {
+        const localA = await window.bondStorage.getEvents(cleanA);
+        const localB = await window.bondStorage.getEvents(cleanB);
+        for (const evt of [...localA, ...localB]) {
+          const text = (evt.textSnippet || '').toLowerCase();
+          if (text.includes(`@${cleanA}`) || text.includes(`@${cleanB}`)) {
+            if (!events.some(r => r.tweetId && r.tweetId === evt.tweetId)) {
+              events.push(evt);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    // Sort by timestamp descending
+    events.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const countAtoB = events.filter(e => e.type === 'reply_sent' || (e.textSnippet && e.textSnippet.toLowerCase().includes(`@${cleanB}`))).length;
+    const countBtoA = events.filter(e => e.type === 'reply_received' || (e.textSnippet && e.textSnippet.toLowerCase().includes(`@${cleanA}`))).length;
+    const hasInteracted = events.length > 0;
+
+    const query = `(from:${cleanA} to:${cleanB}) OR (from:${cleanB} to:${cleanA})`;
+    const searchUrl = `https://x.com/search?q=${encodeURIComponent(query)}&f=live`;
+
+    onProgress({
+      percent: 100,
+      stage: hasInteracted ? `Found ${events.length} interaction(s)!` : 'No tweet interactions found.',
+      itemsFound: events.length
+    });
+
+    return {
+      handleA: cleanA,
+      handleB: cleanB,
+      hasInteracted,
+      totalCount: events.length,
+      countAtoB,
+      countBtoA,
+      events,
+      lastInteraction: events[0] ? events[0].timestamp : null,
+      searchUrl
+    };
+  }
 }
 
 window.deepAnalyzer = new DeepAnalyzerManager();

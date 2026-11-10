@@ -40,6 +40,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupFilterPills();
   setupSearchHandler();
   setupOrbitExporter();
+  setupTwoHandleLookup();
 
   // Storage change listener to keep popup in sync live with browser actions
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
@@ -847,6 +848,98 @@ function renderRadarTab() {
       }
     });
   }
+}
+
+/**
+ * Sets up the Two-Handle Interaction Lookup component
+ */
+function setupTwoHandleLookup() {
+  const btnSearch = document.getElementById('btn-two-handle-search');
+  const btnOpen = document.getElementById('btn-two-handle-open');
+  const inputA = document.getElementById('two-handle-a');
+  const inputB = document.getElementById('two-handle-b');
+  const statusEl = document.getElementById('two-handle-status');
+  const resultsEl = document.getElementById('two-handle-results');
+
+  if (!btnSearch || btnSearch.dataset.bound) return;
+  btnSearch.dataset.bound = 'true';
+
+  let currentSearchUrl = '';
+
+  btnSearch.addEventListener('click', async () => {
+    const handleA = (inputA.value || '').trim().replace(/^@/, '');
+    const handleB = (inputB.value || '').trim().replace(/^@/, '');
+
+    if (!handleA || !handleB) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = '<span style="color:#f4212e;">⚠️ Please enter both handles.</span>';
+      return;
+    }
+
+    if (handleA.toLowerCase() === handleB.toLowerCase()) {
+      statusEl.style.display = 'block';
+      statusEl.innerHTML = '<span style="color:#f4212e;">⚠️ Please enter two different handles.</span>';
+      return;
+    }
+
+    btnSearch.disabled = true;
+    btnSearch.innerText = 'Searching...';
+    btnOpen.style.display = 'none';
+    statusEl.style.display = 'block';
+    statusEl.innerText = `Searching tweets between @${handleA} and @${handleB}...`;
+    resultsEl.style.display = 'none';
+    resultsEl.innerHTML = '';
+
+    try {
+      const res = await window.deepAnalyzer.lookupInteraction(handleA, handleB, ({ stage }) => {
+        statusEl.innerText = stage;
+      });
+
+      currentSearchUrl = res.searchUrl;
+      btnOpen.style.display = 'inline-block';
+
+      if (res.hasInteracted) {
+        statusEl.innerHTML = `<span style="color:#00ba7c;font-weight:700;">✓ Found ${res.totalCount} tweet interaction${res.totalCount > 1 ? 's' : ''}!</span>`;
+        resultsEl.style.display = 'flex';
+        resultsEl.innerHTML = `
+          <div class="two-handle-summary">
+            <span>@${escapeHtml(res.handleA)}: ${res.countAtoB}</span>
+            <span>•</span>
+            <span>@${escapeHtml(res.handleB)}: ${res.countBtoA}</span>
+            ${res.lastInteraction ? `<span class="two-handle-last-time">Last: ${BondScoring.formatTimeAgo(res.lastInteraction)}</span>` : ''}
+          </div>
+          <div class="two-handle-tweets-list">
+            ${res.events.slice(0, 5).map(e => `
+              <div class="two-handle-tweet-item">
+                <span class="two-handle-tweet-type">${e.type === 'reply_sent' ? `@${escapeHtml(res.handleA)} 💬` : e.type === 'quote' ? '🔁 Quote' : '💬 Tweet'}</span>
+                <span class="two-handle-tweet-text">${escapeHtml(e.textSnippet || 'Tweet interaction')}</span>
+                <span class="two-handle-tweet-time">${BondScoring.formatTimeAgo(e.timestamp)}</span>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      } else {
+        statusEl.innerHTML = `<span style="color:#71767b;">❄️ No tweet interactions found between @${escapeHtml(res.handleA)} and @${escapeHtml(res.handleB)}.</span>`;
+        resultsEl.style.display = 'flex';
+        resultsEl.innerHTML = `
+          <div class="two-handle-empty-hint">
+            No public tweet replies found in archives. Click "Open Live on X" to run a live real-time query on X.
+          </div>
+        `;
+      }
+    } catch (err) {
+      statusEl.innerHTML = `<span style="color:#f4212e;">Error: ${escapeHtml(err.message || 'Lookup failed')}</span>`;
+    } finally {
+      btnSearch.disabled = false;
+      btnSearch.innerText = '⚡ Check Tweets';
+    }
+  });
+
+  btnOpen.addEventListener('click', () => {
+    if (currentSearchUrl) {
+      chrome.tabs.create({ url: currentSearchUrl });
+    }
+  });
 }
 
 function escapeHtml(str) {

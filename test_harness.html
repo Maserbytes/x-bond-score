@@ -124,6 +124,19 @@
   </div>
 
   <div class="harness-card">
+    <h3>🔍 Two-Handle Interaction Lookup Sandbox</h3>
+    <p style="color:#71767b; font-size: 12px; margin-bottom: 8px;">Check if any two handles have ever interacted via tweets.</p>
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <input type="text" class="harness-input" id="harness-lookup-a" placeholder="First handle (e.g. elonmusk)" style="width: 170px;">
+      <span style="color:#71767b;">↔️</span>
+      <input type="text" class="harness-input" id="harness-lookup-b" placeholder="Second handle (e.g. sama)" style="width: 170px;">
+      <button class="harness-btn" id="btn-harness-lookup">⚡ Check Tweets</button>
+      <button class="harness-btn" style="background:#1d9bf0; display:none;" id="btn-harness-live">Open Live on X ↗</button>
+    </div>
+    <div id="harness-lookup-result" style="margin-top: 10px; font-size: 13px; color: #e7e9ea;"></div>
+  </div>
+
+  <div class="harness-card">
     <h3>Timeline</h3>
     <div id="timeline-posts">
       <div class="empty-state" id="empty-state">No posts on screen. Type any handle above and click "+ Create Post" to generate a live interactive post.</div>
@@ -368,6 +381,61 @@
           window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: u.handle } }));
         }
         log('Decay applied to all tracked accounts.');
+      });
+
+      // Two-Handle Interaction Lookup
+      const btnLookup = document.getElementById('btn-harness-lookup');
+      const btnLive = document.getElementById('btn-harness-live');
+      const inputA = document.getElementById('harness-lookup-a');
+      const inputB = document.getElementById('harness-lookup-b');
+      const resultEl = document.getElementById('harness-lookup-result');
+
+      btnLookup.addEventListener('click', async () => {
+        const hA = cleanHandle(inputA.value);
+        const hB = cleanHandle(inputB.value);
+        if (!hA || !hB) return alert('Enter both handles to lookup interactions');
+        if (hA === hB) return alert('Enter two different handles');
+
+        btnLookup.disabled = true;
+        btnLookup.innerText = 'Searching...';
+        btnLive.style.display = 'none';
+        resultEl.innerText = `Searching tweets between @${hA} and @${hB}...`;
+
+        try {
+          const res = await window.deepAnalyzer.lookupInteraction(hA, hB, ({ stage }) => {
+            resultEl.innerText = stage;
+          });
+
+          btnLive.style.display = 'inline-block';
+          btnLive.onclick = () => window.open(res.searchUrl, '_blank');
+
+          if (res.hasInteracted) {
+            resultEl.innerHTML = `
+              <div style="color: #00ba7c; font-weight: 700; margin-bottom: 6px;">
+                ✓ Found ${res.totalCount} tweet interaction${res.totalCount > 1 ? 's' : ''} between @${hA} and @${hB}!
+              </div>
+              <div style="font-size: 11px; color: #71767b; margin-bottom: 8px;">
+                @${hA}: ${res.countAtoB} tweets • @${hB}: ${res.countBtoA} tweets
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 4px;">
+                ${res.events.slice(0, 3).map(e => `
+                  <div style="background: #16181c; border: 1px solid #2f3336; border-radius: 6px; padding: 6px 10px; font-size: 11px;">
+                    <span style="color:#1d9bf0; font-weight:700;">${e.type}:</span> ${e.textSnippet}
+                  </div>
+                `).join('')}
+              </div>
+            `;
+            log(`Found ${res.totalCount} tweet interactions between @${hA} and @${hB}.`);
+          } else {
+            resultEl.innerHTML = `<span style="color: #71767b;">❄️ No tweet interactions found in archives between @${hA} and @${hB}. Use "Open Live on X" to search live.</span>`;
+            log(`No tweet interactions found between @${hA} and @${hB}.`);
+          }
+        } catch (err) {
+          resultEl.innerText = `Error: ${err.message || 'Lookup failed'}`;
+        } finally {
+          btnLookup.disabled = false;
+          btnLookup.innerText = '⚡ Check Tweets';
+        }
       });
 
       // Reset storage

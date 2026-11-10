@@ -893,6 +893,133 @@ input[type="range"]::-webkit-slider-thumb {
   font-weight: 600;
 }
 
+/* Two-Handle Interaction Lookup Styles */
+.two-handle-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.two-handle-row input {
+  flex: 1;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 9999px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 11px;
+  outline: none;
+}
+
+.two-handle-row input:focus {
+  border-color: var(--accent-blue);
+}
+
+.two-handle-sep {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.two-handle-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.two-handle-open-btn {
+  background: rgba(29, 155, 240, 0.15);
+  color: var(--accent-blue);
+  border: 1px solid rgba(29, 155, 240, 0.3);
+  border-radius: 9999px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.two-handle-open-btn:hover {
+  background: var(--accent-blue);
+  color: #fff;
+}
+
+.two-handle-status {
+  font-size: 11px;
+  color: var(--text-primary);
+  padding: 4px 0;
+  font-weight: 600;
+}
+
+.two-handle-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 4px;
+}
+
+.two-handle-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 4px;
+}
+
+.two-handle-last-time {
+  margin-left: auto;
+  color: var(--accent-blue);
+}
+
+.two-handle-tweets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.two-handle-tweet-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 10px;
+  line-height: 1.35;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 4px;
+}
+
+.two-handle-tweet-type {
+  font-weight: 700;
+  color: var(--accent-blue);
+  white-space: nowrap;
+}
+
+.two-handle-tweet-text {
+  flex: 1;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.two-handle-tweet-time {
+  color: var(--text-secondary);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.two-handle-empty-hint {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
 .radar-mini-list {
   display: flex;
   flex-direction: column;

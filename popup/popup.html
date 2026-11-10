@@ -230,6 +230,23 @@
           </div>
         </div>
 
+        <!-- 🔍 Two-Handle Tweet Interaction Lookup -->
+        <div class="radar-card">
+          <div class="radar-card-title">🔍 Two-Handle Tweet Lookup</div>
+          <p class="settings-hint">Look up ANY two handles on X and see if they have ever interacted via tweets.</p>
+          <div class="two-handle-row">
+            <input type="text" id="two-handle-a" placeholder="First @handle (e.g. elonmusk)">
+            <span class="two-handle-sep">↔️</span>
+            <input type="text" id="two-handle-b" placeholder="Second @handle (e.g. sama)">
+          </div>
+          <div class="two-handle-actions">
+            <button class="quick-deep-btn" id="btn-two-handle-search">⚡ Check Tweets</button>
+            <button class="two-handle-open-btn" id="btn-two-handle-open" style="display:none;">Open Live on X ↗</button>
+          </div>
+          <div id="two-handle-status" class="two-handle-status" style="display:none;"></div>
+          <div id="two-handle-results" class="two-handle-results" style="display:none;"></div>
+        </div>
+
         <!-- Direct Quick Deep Scan -->
         <div class="radar-card">
           <div class="radar-card-title">🔍 Quick Deep Analysis</div>
@@ -252,6 +269,7 @@
 
   <script src="../core/storage.js"></script>
   <script src="../core/scoring.js"></script>
+  <script src="../core/deep-analyzer.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
