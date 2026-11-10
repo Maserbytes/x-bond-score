@@ -108,19 +108,42 @@
     <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
       <input type="text" class="harness-input" id="target-handle-input" placeholder="Enter target handle..." style="flex: 1; min-width: 200px;">
       <button class="harness-btn" id="btn-create-post">+ Create Post</button>
-      <button class="harness-btn pink" id="btn-simulate-like">❤️ Simulate Like</button>
-      <button class="harness-btn" id="btn-simulate-reply">💬 Simulate Reply</button>
-      <button class="harness-btn" style="background: #a855f7;" id="btn-simulate-dm">✉️ Simulate DM</button>
-      <button class="harness-btn" style="background: #00ba7c;" id="btn-simulate-followback">🎉 Follow-back</button>
-      <button class="harness-btn" style="background: #ff7a00;" id="btn-simulate-unfollow">⚠️ Unfollow</button>
+      <button class="harness-btn pink" id="btn-simulate-like">❤️ Like</button>
+      <button class="harness-btn" id="btn-simulate-reply">💬 Reply</button>
+      <button class="harness-btn" style="background: #a855f7;" id="btn-simulate-dm">✉️ DM</button>
+      <button class="harness-btn" style="background: #00ba7c;" id="btn-simulate-mutual">🤝 Mutual</button>
+      <button class="harness-btn" style="background: #f59e0b;" id="btn-simulate-oneway">➡️ One-Way</button>
+      <button class="harness-btn" style="background: #1d9bf0;" id="btn-simulate-follower">📥 Follower</button>
       <button class="harness-btn" style="background: #f4212e;" id="btn-simulate-block">🚫 Block</button>
-      <button class="harness-btn" id="btn-run-deep">⚡ Run Deep Mode</button>
+      <button class="harness-btn" id="btn-run-deep">⚡ Deep Mode</button>
     </div>
 
     <div class="btn-row" style="margin-top: 12px;">
       <button class="harness-btn green" id="btn-fast-forward">⏩ Fast Forward 10 Days (Test Decay)</button>
       <button class="harness-btn" style="background: #333;" id="btn-reset-data">🗑️ Reset Storage</button>
     </div>
+  </div>
+
+  <div class="harness-card">
+    <h3>👤 Mock Profile Header Sandbox</h3>
+    <p style="color:#71767b; font-size: 12px; margin-bottom: 8px;">Simulates visiting an X profile with live follow badges (🤝 Mutual, ➡️ One-Way Follow, 📥 Just a Follower, 🚫 Blocked).</p>
+    <div id="mock-profile-area" style="background: #000; border: 1px solid #2f3336; border-radius: 12px; padding: 16px; margin-top: 8px;">
+      <div style="display: flex; gap: 14px; align-items: flex-start;">
+        <div style="width: 52px; height: 52px; border-radius: 50%; background: #1d9bf0; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700;" id="mock-profile-pfp">M</div>
+        <div style="flex: 1;">
+          <div data-testid="UserName" id="mock-profile-username" style="display: flex; flex-direction: column;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 18px; font-weight: 800; color: #e7e9ea;" id="mock-profile-name">MaserBytes</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 2px;">
+              <span style="font-size: 14px; color: #71767b;" id="mock-profile-handle">@maserbytes</span>
+              <span id="mock-profile-follows-you-pill" style="display: none; background: #2f3336; color: #71767b; font-size: 11px; padding: 1px 4px; border-radius: 4px;" data-testid="userFollowIndicator">Follows you</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   </div>
 
   <div class="harness-card">
@@ -271,6 +294,14 @@
         }
       });
 
+      // Target handle input updates mock profile
+      const targetInput = document.getElementById('target-handle-input');
+      targetInput.value = 'maserbytes';
+      targetInput.addEventListener('input', (e) => {
+        const h = cleanHandle(e.target.value);
+        if (h) updateMockProfile(h);
+      });
+
       // Create post button
       document.getElementById('btn-create-post').addEventListener('click', () => {
         const h = document.getElementById('target-handle-input').value;
@@ -280,6 +311,9 @@
       // Allow Enter key in target handle input
       document.getElementById('target-handle-input').addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
+          createPost(e.target.value);
+        }
+      });
           createPost(e.target.value);
         }
       });
@@ -323,21 +357,60 @@
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
-      // Simulate Follow-back
-      document.getElementById('btn-simulate-followback').addEventListener('click', async () => {
+      async function updateMockProfile(handle) {
+        if (!handle) return;
+        const container = document.getElementById('mock-profile-username');
+        const nameEl = document.getElementById('mock-profile-name');
+        const handleEl = document.getElementById('mock-profile-handle');
+        const pfpEl = document.getElementById('mock-profile-pfp');
+        const followsPill = document.getElementById('mock-profile-follows-you-pill');
+
+        nameEl.innerText = handle;
+        handleEl.innerText = '@' + handle;
+        pfpEl.innerText = handle.charAt(0).toUpperCase();
+
+        const user = await window.bondStorage.getUser(handle);
+        const signals = user ? user.signals : null;
+        if (followsPill) {
+          followsPill.style.display = (signals && signals.theyFollowYou) ? 'inline-block' : 'none';
+        }
+
+        // Clear previous mock badges
+        const prevBadge = container.querySelector('.bond-badge');
+        if (prevBadge) prevBadge.remove();
+        const prevFollowBadge = container.querySelector('.bond-follow-badge');
+        if (prevFollowBadge) prevFollowBadge.remove();
+
+        await window.bondUI.injectBadge(container, handle, true);
+      }
+
+      // Simulate Mutual Follow
+      document.getElementById('btn-simulate-mutual').addEventListener('click', async () => {
         const h = cleanHandle(document.getElementById('target-handle-input').value);
         if (!h) return alert('Enter a handle first');
         await window.bondStorage.recordRelationshipSignal(h, { theyFollowYou: true, youFollowThem: true });
-        log(`Simulated @${h} followed you back! (Mutual follow established)`);
+        log(`Simulated Mutual follow with @${h}! (🤝 Mutual badge active)`);
+        await updateMockProfile(h);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
-      // Simulate Unfollow
-      document.getElementById('btn-simulate-unfollow').addEventListener('click', async () => {
+      // Simulate One-Way Follow (You follow them, they don't follow you)
+      document.getElementById('btn-simulate-oneway').addEventListener('click', async () => {
         const h = cleanHandle(document.getElementById('target-handle-input').value);
         if (!h) return alert('Enter a handle first');
         await window.bondStorage.recordRelationshipSignal(h, { theyFollowYou: false, youFollowThem: true });
-        log(`Simulated @${h} unfollowed you! (Signal logged to private history)`);
+        log(`Simulated One-way follow on @${h}! (➡️ One-Way Follow badge active)`);
+        await updateMockProfile(h);
+        window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
+      });
+
+      // Simulate Just a Follower (They follow you, you don't follow back)
+      document.getElementById('btn-simulate-follower').addEventListener('click', async () => {
+        const h = cleanHandle(document.getElementById('target-handle-input').value);
+        if (!h) return alert('Enter a handle first');
+        await window.bondStorage.recordRelationshipSignal(h, { theyFollowYou: true, youFollowThem: false });
+        log(`Simulated @${h} is just a follower! (📥 Just a Follower badge active)`);
+        await updateMockProfile(h);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
@@ -346,7 +419,8 @@
         const h = cleanHandle(document.getElementById('target-handle-input').value);
         if (!h) return alert('Enter a handle first');
         await window.bondStorage.recordRelationshipSignal(h, { isBlocked: true });
-        log(`Simulated block detected on @${h}! (Signal logged to private history)`);
+        log(`Simulated block detected on @${h}! (🚫 Blocked badge active)`);
+        await updateMockProfile(h);
         window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: h } }));
       });
 
@@ -444,6 +518,9 @@
         log('Cleared all data. Reloading...');
         setTimeout(() => location.reload(), 500);
       });
+
+      // Initialize mock profile header
+      await updateMockProfile('maserbytes');
     }
 
     if (document.readyState === 'loading') {

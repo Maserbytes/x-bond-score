@@ -649,6 +649,9 @@ class InteractionDetector {
 
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(targetHandle, true);
+          if (window.bondUI.updateProfileFollowBadge) {
+            window.bondUI.updateProfileFollowBadge(targetHandle, user ? user.signals : null);
+          }
         }
       }
     } catch (err) {
@@ -670,13 +673,20 @@ class InteractionDetector {
       const bodyText = (emptyState ? emptyState.innerText : '') || document.body.innerText || '';
       const isBlocked = bodyText.includes("You're blocked") || bodyText.includes("You are blocked");
 
-      // 2. Check "Follows you" badge
+      // 2. Check "Follows you" badge (they follow you)
       const followIndicator = document.querySelector('[data-testid="userFollowIndicator"]');
-      const theyFollowYou = !!followIndicator && followIndicator.innerText.includes('Follows you');
+      const theyFollowYou = !!followIndicator && (
+        followIndicator.innerText.includes('Follows you') ||
+        followIndicator.textContent.includes('Follows you') ||
+        followIndicator.getAttribute('data-testid') === 'userFollowIndicator'
+      );
 
-      // 3. Check if you follow them
-      const unfollowBtn = document.querySelector('[data-testid$="-unfollow"]');
-      const followBtn = document.querySelector('[data-testid$="-follow"]');
+      // 3. Check if you follow them (unfollow button indicates you are currently following them)
+      const unfollowBtn = document.querySelector('[data-testid$="-unfollow"]') ||
+                          document.querySelector('button[aria-label*="Following @"]') ||
+                          document.querySelector('button[aria-label*="Unfollow @"]');
+      const followBtn = document.querySelector('[data-testid$="-follow"]') ||
+                        document.querySelector('button[aria-label*="Follow @"]');
       let youFollowThem = null;
       if (unfollowBtn) youFollowThem = true;
       else if (followBtn) youFollowThem = false;
@@ -687,13 +697,18 @@ class InteractionDetector {
       const avatarEl = document.querySelector('img[src*="profile_images"]');
       const avatarUrl = avatarEl ? avatarEl.src : '';
 
-      await window.bondStorage.recordRelationshipSignal(cleanHandle, {
+      const updatedUser = await window.bondStorage.recordRelationshipSignal(cleanHandle, {
         theyFollowYou,
         youFollowThem,
         isBlocked,
         displayName,
         avatarUrl
       });
+
+      // Update follow relationship badge immediately on profile
+      if (window.bondUI && window.bondUI.updateProfileFollowBadge) {
+        await window.bondUI.updateProfileFollowBadge(cleanHandle, updatedUser ? updatedUser.signals : { theyFollowYou, youFollowThem, isBlocked });
+      }
     } catch (err) {
       console.warn('[BondScore Signals] Error observing profile signals:', err);
     }

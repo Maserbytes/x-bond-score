@@ -29,7 +29,13 @@ class BondUI {
     const currentUser = await window.bondStorage.getCurrentUser();
     if (currentUser && cleanHandle === currentUser) return;
 
-    if (containerEl.querySelector('.bond-badge')) return;
+    if (containerEl.querySelector('.bond-badge')) {
+      if (isProfileHeader) {
+        const user = await window.bondStorage.getUser(cleanHandle);
+        this.injectOrUpdateFollowBadge(containerEl, cleanHandle, user ? user.signals : null);
+      }
+      return;
+    }
 
     const user = (await window.bondStorage.getUser(cleanHandle)) || {
       handle: cleanHandle,
@@ -77,6 +83,75 @@ class BondUI {
     });
 
     containerEl.appendChild(badge);
+
+    // If on a profile header, inject or update the dedicated Follow Relationship Badge
+    if (isProfileHeader) {
+      this.injectOrUpdateFollowBadge(containerEl, cleanHandle, user.signals);
+    }
+  }
+
+  /**
+   * Injects or updates the follow relationship badge on a profile:
+   * - Mutual: 🤝 Mutual
+   * - One-Way Follow: ➡️ One-Way Follow
+   * - Just a Follower: 📥 Just a Follower
+   * - Blocked: 🚫 Blocked
+   */
+  injectOrUpdateFollowBadge(containerEl, handle, signals) {
+    if (!containerEl || !handle) return;
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const followRel = typeof BondScoring !== 'undefined' && BondScoring.getFollowRelationship
+      ? BondScoring.getFollowRelationship(signals)
+      : null;
+
+    let followBadge = containerEl.querySelector(`.bond-follow-badge[data-bond-follow-handle="${cleanHandle}"]`) ||
+                      containerEl.querySelector('.bond-follow-badge');
+
+    if (!followRel) {
+      if (followBadge) followBadge.remove();
+      return;
+    }
+
+    if (!followBadge) {
+      followBadge = document.createElement('span');
+      followBadge.setAttribute('data-bond-follow-handle', cleanHandle);
+      followBadge.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openScoreCard(cleanHandle, followBadge);
+      });
+      containerEl.appendChild(followBadge);
+    }
+
+    followBadge.className = `bond-follow-badge ${followRel.className}`;
+    followBadge.title = `${followRel.label}: ${followRel.desc} - Click for details`;
+    followBadge.innerHTML = followRel.badgeText;
+  }
+
+  /**
+   * Scans and updates follow relationship badges for a user across profile headers
+   */
+  async updateProfileFollowBadge(handle, signals = null) {
+    if (!handle) return;
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    if (!signals) {
+      const user = await window.bondStorage.getUser(cleanHandle);
+      signals = user ? user.signals : null;
+    }
+
+    // Look for profile header UserName container
+    const profileHeaders = document.querySelectorAll('div[data-testid="UserName"]');
+    profileHeaders.forEach(header => {
+      this.injectOrUpdateFollowBadge(header, cleanHandle, signals);
+    });
+
+    // Also look for existing standalone follow badges with this handle
+    const existingBadges = document.querySelectorAll(`.bond-follow-badge[data-bond-follow-handle="${cleanHandle}"]`);
+    existingBadges.forEach(b => {
+      if (b.parentElement) {
+        this.injectOrUpdateFollowBadge(b.parentElement, cleanHandle, signals);
+      }
+    });
   }
 
   /**
@@ -142,6 +217,9 @@ class BondUI {
       }
     });
 
+    // Also update follow relationship badge on profile header
+    await this.updateProfileFollowBadge(cleanHandle, user.signals);
+
     if (this.activeModal && this.activeModal.dataset.handle === cleanHandle) {
       this.updateModalContent(cleanHandle);
     }
@@ -182,21 +260,18 @@ class BondUI {
     const likeEvents = events.filter(e => e.type === 'like' || e.type === 'quote');
     const signalEvents = events.filter(e => e.type && e.type.startsWith('signal_'));
 
-    // Relationship Signals Badge
+    // Relationship Signals Follow Badge (Mutual, One-Way Follow, Just a Follower, Blocked)
+    const followRel = typeof BondScoring !== 'undefined' && BondScoring.getFollowRelationship
+      ? BondScoring.getFollowRelationship(user.signals)
+      : null;
     let signalStatusHtml = '';
-    const signals = user.signals || {};
-    if (signals.isBlocked) {
-      signalStatusHtml = `<span class="bond-signal-pill blocked" title="Possible block detected on profile">🚫 Blocked</span>`;
-    } else if (signals.isMutual) {
-      signalStatusHtml = `<span class="bond-signal-pill mutual" title="Mutual follow: You follow each other">🤝 Mutual Follow</span>`;
-    } else if (signals.theyFollowYou && !signals.youFollowThem) {
-      signalStatusHtml = `<span class="bond-signal-pill follows-you" title="Follows you on X">📥 Follows You</span>`;
-    } else if (!signals.theyFollowYou && signals.youFollowThem) {
-      signalStatusHtml = `<span class="bond-signal-pill you-follow" title="You follow them on X">📤 You Follow</span>`;
+    if (followRel) {
+      signalStatusHtml = `<span class="bond-follow-badge ${followRel.className}" title="${followRel.desc}">${followRel.badgeText}</span>`;
     }
 
     // Local Engagement Memory Insight
     let engagementMemoryText = 'Balanced reciprocal interaction';
+    const signals = user.signals || {};
     const totalExchanges = sSent + sRecv;
     if (signals.isBlocked) {
       engagementMemoryText = `🚫 Possible Block: Profile displays blocked state or restricted access`;

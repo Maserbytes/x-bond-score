@@ -381,7 +381,9 @@ body {
   white-space: nowrap;
 }
 .popup-signal-pill.mutual { background: rgba(0, 186, 124, 0.2); color: #00ba7c; border: 1px solid rgba(0, 186, 124, 0.35); }
-.popup-signal-pill.follows-you { background: rgba(236, 72, 153, 0.2); color: #ec4899; border: 1px solid rgba(236, 72, 153, 0.35); }
+.popup-signal-pill.oneway { background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.35); }
+.popup-signal-pill.just-follower { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.35); }
+.popup-signal-pill.follows-you { background: rgba(29, 155, 240, 0.2); color: #1d9bf0; border: 1px solid rgba(29, 155, 240, 0.35); }
 .popup-signal-pill.blocked { background: rgba(244, 33, 46, 0.2); color: #f4212e; border: 1px solid rgba(244, 33, 46, 0.35); }
 
 .mutual-dm-count {

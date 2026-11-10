@@ -431,7 +431,9 @@ class BondStorage {
     }
 
     // 4. Mutual Follow Established
-    const isNowMutual = !!(data.theyFollowYou && data.youFollowThem);
+    const resolvedTheyFollow = data.theyFollowYou !== null && data.theyFollowYou !== undefined ? data.theyFollowYou : !!prevSignals.theyFollowYou;
+    const resolvedYouFollow = data.youFollowThem !== null && data.youFollowThem !== undefined ? data.youFollowThem : !!prevSignals.youFollowThem;
+    const isNowMutual = !!(resolvedTheyFollow && resolvedYouFollow);
     if (isNowMutual && !prevSignals.isMutual) {
       if (!signalLogged) {
         await this.recordInteraction(cleanHandle, {
@@ -446,8 +448,8 @@ class BondStorage {
 
     // Update signal metadata on user record
     user.signals = {
-      theyFollowYou: data.theyFollowYou !== null && data.theyFollowYou !== undefined ? data.theyFollowYou : prevSignals.theyFollowYou,
-      youFollowThem: data.youFollowThem !== null && data.youFollowThem !== undefined ? data.youFollowThem : prevSignals.youFollowThem,
+      theyFollowYou: resolvedTheyFollow,
+      youFollowThem: resolvedYouFollow,
       isMutual: isNowMutual,
       isBlocked: !!data.isBlocked,
       lastCheckedAt: Date.now()

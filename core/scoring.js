@@ -599,6 +599,76 @@ class BondScoring {
       trackedCount: enriched.length
     };
   }
+
+  /**
+   * Calculates follow relationship badge status for profile headers:
+   * - Mutual: You follow each other (🤝 Mutual)
+   * - One-Way Follow: You follow them, but they don't follow back (➡️ One-Way Follow)
+   * - Just a Follower: They follow you, but you don't follow back (📥 Just a Follower)
+   * - Blocked: Possible block detected (🚫 Blocked)
+   */
+  static getFollowRelationship(signals = {}) {
+    if (!signals) return null;
+    if (signals.isBlocked) {
+      return {
+        id: 'blocked',
+        label: 'Blocked',
+        badgeText: '🚫 Blocked',
+        emoji: '🚫',
+        className: 'bond-follow-blocked',
+        color: '#f4212e',
+        bg: 'rgba(244, 33, 46, 0.15)',
+        desc: 'Possible block detected on profile'
+      };
+    }
+
+    const theyFollow = signals.theyFollowYou === true;
+    const youFollow = signals.youFollowThem === true;
+
+    // 1. Mutual Follow: Both follow each other
+    if (signals.isMutual || (theyFollow && youFollow)) {
+      return {
+        id: 'mutual',
+        label: 'Mutual',
+        badgeText: '🤝 Mutual',
+        emoji: '🤝',
+        className: 'bond-follow-mutual',
+        color: '#00ba7c',
+        bg: 'rgba(0, 186, 124, 0.15)',
+        desc: 'Mutual follow: You follow each other'
+      };
+    }
+
+    // 2. One-Way Follow: You follow them, but they don't follow back
+    if (youFollow && !theyFollow) {
+      return {
+        id: 'oneway',
+        label: 'One-Way Follow',
+        badgeText: '➡️ One-Way Follow',
+        emoji: '➡️',
+        className: 'bond-follow-oneway',
+        color: '#f59e0b',
+        bg: 'rgba(245, 158, 11, 0.15)',
+        desc: "One-way follow: You follow them, but they don't follow you back"
+      };
+    }
+
+    // 3. Just a Follower: They follow you, but you don't follow back
+    if (theyFollow && !youFollow) {
+      return {
+        id: 'just_follower',
+        label: 'Just a Follower',
+        badgeText: '📥 Just a Follower',
+        emoji: '📥',
+        className: 'bond-follow-just-follower',
+        color: '#1d9bf0',
+        bg: 'rgba(29, 155, 240, 0.15)',
+        desc: "Just a follower: Follows you, but you don't follow back"
+      };
+    }
+
+    return null;
+  }
 }
 
 window.BondScoring = BondScoring;

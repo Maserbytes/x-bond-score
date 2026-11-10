@@ -192,14 +192,11 @@ function renderUserList(users) {
     item.className = 'mutual-item';
 
     let signalHtml = '';
-    if (u.signals) {
-      if (u.signals.isBlocked) {
-        signalHtml = `<span class="popup-signal-pill blocked" title="Possible block detected on profile">🚫 Blocked</span>`;
-      } else if (u.signals.isMutual) {
-        signalHtml = `<span class="popup-signal-pill mutual" title="Mutual follow">🤝 Mutual</span>`;
-      } else if (u.signals.theyFollowYou) {
-        signalHtml = `<span class="popup-signal-pill follows-you" title="Follows you on X">📥 Follows you</span>`;
-      }
+    const followRel = typeof BondScoring !== 'undefined' && BondScoring.getFollowRelationship
+      ? BondScoring.getFollowRelationship(u.signals)
+      : null;
+    if (followRel) {
+      signalHtml = `<span class="popup-signal-pill ${followRel.id}" title="${followRel.desc}">${followRel.badgeText}</span>`;
     }
 
     item.innerHTML = `
@@ -766,18 +763,11 @@ function renderRadarTab() {
     const signalUsers = cachedUsers.filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou !== null)).slice(0, 6);
     if (signalUsers.length > 0) {
       signalsRadarList.innerHTML = signalUsers.map(u => {
-        let label = '🤝 Mutual Follow';
-        let color = '#00ba7c';
-        if (u.signals.isBlocked) {
-          label = '🚫 Block Detected';
-          color = '#f4212e';
-        } else if (u.signals.theyFollowYou && !u.signals.youFollowThem) {
-          label = '📥 Follows You';
-          color = '#ec4899';
-        } else if (!u.signals.theyFollowYou && u.signals.youFollowThem) {
-          label = '📤 Not Following Back';
-          color = '#ff7a00';
-        }
+        const fRel = typeof BondScoring !== 'undefined' && BondScoring.getFollowRelationship
+          ? BondScoring.getFollowRelationship(u.signals)
+          : null;
+        let label = fRel ? fRel.badgeText : '🤝 Mutual Follow';
+        let color = fRel ? fRel.color : '#00ba7c';
         return `
           <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
             <div class="radar-item-left">

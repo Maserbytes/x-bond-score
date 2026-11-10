@@ -79,6 +79,59 @@
   border-width: 1.5px;
 }
 
+/* Dedicated Follow Relationship Badges on Profile Header */
+.bond-follow-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 5px 11px;
+  border-radius: 9999px;
+  margin-top: 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  box-sizing: border-box;
+}
+
+.bond-follow-badge:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.15);
+}
+
+.bond-follow-badge.bond-follow-mutual {
+  background: rgba(0, 186, 124, 0.16);
+  color: #00ba7c;
+  border: 1.5px solid rgba(0, 186, 124, 0.45);
+  box-shadow: 0 0 12px rgba(0, 186, 124, 0.2);
+}
+
+.bond-follow-badge.bond-follow-oneway {
+  background: rgba(245, 158, 11, 0.16);
+  color: #f59e0b;
+  border: 1.5px solid rgba(245, 158, 11, 0.45);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.2);
+}
+
+.bond-follow-badge.bond-follow-just-follower {
+  background: rgba(29, 155, 240, 0.16);
+  color: #1d9bf0;
+  border: 1.5px solid rgba(29, 155, 240, 0.45);
+  box-shadow: 0 0 12px rgba(29, 155, 240, 0.2);
+}
+
+.bond-follow-badge.bond-follow-blocked {
+  background: rgba(244, 33, 46, 0.16);
+  color: #f4212e;
+  border: 1.5px solid rgba(244, 33, 46, 0.45);
+  box-shadow: 0 0 12px rgba(244, 33, 46, 0.2);
+}
+
 .bond-emoji {
   font-size: 11px;
   line-height: 1;

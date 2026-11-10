@@ -10,6 +10,11 @@
 
 **BondScore** tracks the strength of your relationships with accounts you interact with on X. It calculates a dynamic **Bond Score (0–100)** that:
 - **Tracks every like, reply, and Direct Message (DM) you send** to build a comprehensive relationship history.
+- **Profile Follow Badges**: Displays vibrant, live relationship badges directly on user profiles:
+  - `🤝 Mutual`: Both you and the user follow each other.
+  - `➡️ One-Way Follow`: You follow them, but they do not follow you back.
+  - `📥 Just a Follower`: They follow you, but you do not follow them back.
+  - `🚫 Blocked`: Block or restricted profile state detected.
 - **Two-Handle Tweet Lookup**: Enter any two handles on X to instantly check if they have ever interacted via tweets, see reply direction breakdown, and inspect tweet snippets.
 - **Observes Relationship Signals**: Automatically detects and logs follow-backs, unfollows, mutual follows, and possible blocks into a private history ledger.
 - **Local Engagement Memory**: Shows who engages with you vs. who you engage with, overall reciprocity balance, top supporters, and dormant people.
