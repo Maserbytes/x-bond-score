@@ -72,15 +72,18 @@ class BondUI {
 
   /**
    * Injects a badge next to a user handle on tweets or profile headers.
+   * Completely immune to async race duplication.
    */
   async injectBadge(containerEl, handle, isProfileHeader = false) {
     if (!containerEl || !handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
 
-    const currentUser = await window.bondStorage.getCurrentUser();
-    if (currentUser && cleanHandle === currentUser) return;
-
-    if (containerEl.querySelector('.bond-badge')) {
+    // 1. Immediate synchronous deduplication: if badge(s) already exist, keep only 1 and exit
+    const existingBadges = containerEl.querySelectorAll('.bond-badge');
+    if (existingBadges.length > 0) {
+      for (let i = 1; i < existingBadges.length; i++) {
+        existingBadges[i].remove();
+      }
       if (isProfileHeader) {
         const user = await window.bondStorage.getUser(cleanHandle);
         this.injectOrUpdateFollowBadge(containerEl, cleanHandle, user ? user.signals : null);
@@ -88,56 +91,85 @@ class BondUI {
       return;
     }
 
-    const user = (await window.bondStorage.getUser(cleanHandle)) || {
-      handle: cleanHandle,
-      currentScore: 0,
-      tier: 'dormant',
-      streakDays: 0,
-      isPinned: false
-    };
+    // 2. Synchronous lock to prevent multiple concurrent async invocations on the same container
+    if (containerEl.getAttribute('data-bond-pending') === cleanHandle) {
+      return;
+    }
+    containerEl.setAttribute('data-bond-pending', cleanHandle);
 
-    const settings = await window.bondStorage.getSettings();
-    if (!settings.showBadgesOnTimeline && !isProfileHeader) return;
+    try {
+      const currentUser = await window.bondStorage.getCurrentUser();
+      if (currentUser && cleanHandle === currentUser) {
+        containerEl.removeAttribute('data-bond-pending');
+        return;
+      }
 
-    const tier = BondScoring.getTier(user.currentScore);
-    const scoreVal = Math.round(user.currentScore || 0);
+      const user = (await window.bondStorage.getUser(cleanHandle)) || {
+        handle: cleanHandle,
+        currentScore: 0,
+        tier: 'dormant',
+        streakDays: 0,
+        isPinned: false
+      };
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
-    const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
+      const settings = await window.bondStorage.getSettings();
+      if (!settings.showBadgesOnTimeline && !isProfileHeader) {
+        containerEl.removeAttribute('data-bond-pending');
+        return;
+      }
 
-    const badge = document.createElement('span');
-    badge.className = `bond-badge ${isProfileHeader ? 'bond-badge-profile' : ''}`;
-    badge.setAttribute('data-bond-handle', cleanHandle);
-    badge.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
-    badge.style.setProperty('--bond-color', tier.color);
-    badge.style.setProperty('--bond-bg', tier.bg);
+      // 3. Re-verify right before appending in case another async task completed first
+      const checkAgain = containerEl.querySelectorAll('.bond-badge');
+      if (checkAgain.length > 0) {
+        for (let i = 1; i < checkAgain.length; i++) {
+          checkAgain[i].remove();
+        }
+        containerEl.removeAttribute('data-bond-pending');
+        return;
+      }
 
-    const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
-    const trendClass = user.trend ? `trend-${user.trend}` : '';
+      const tier = BondScoring.getTier(user.currentScore);
+      const scoreVal = Math.round(user.currentScore || 0);
 
-    badge.innerHTML = `
-      <span class="bond-badge-inner">
-        ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
-        <span class="bond-emoji">${tier.emoji}</span>
-        <span class="bond-score-num">${scoreVal}</span>
-        ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
-        ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
-        ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
-      </span>
-    `;
+      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
+      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+      const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
-    badge.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      this.openScoreCard(cleanHandle, badge);
-    });
+      const badge = document.createElement('span');
+      badge.className = `bond-badge ${isProfileHeader ? 'bond-badge-profile' : ''}`;
+      badge.setAttribute('data-bond-handle', cleanHandle);
+      badge.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
+      badge.style.setProperty('--bond-color', tier.color);
+      badge.style.setProperty('--bond-bg', tier.bg);
 
-    containerEl.appendChild(badge);
+      const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
+      const trendClass = user.trend ? `trend-${user.trend}` : '';
 
-    // If on a profile header, inject or update the dedicated Follow Relationship Badge
-    if (isProfileHeader) {
-      this.injectOrUpdateFollowBadge(containerEl, cleanHandle, user.signals);
+      badge.innerHTML = `
+        <span class="bond-badge-inner">
+          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
+          <span class="bond-emoji">${tier.emoji}</span>
+          <span class="bond-score-num">${scoreVal}</span>
+          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
+          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
+          ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
+        </span>
+      `;
+
+      badge.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openScoreCard(cleanHandle, badge);
+      });
+
+      containerEl.appendChild(badge);
+
+      // If on a profile header, inject or update the dedicated Follow Relationship Badge
+      if (isProfileHeader) {
+        this.injectOrUpdateFollowBadge(containerEl, cleanHandle, user.signals);
+      }
+    } finally {
+      containerEl.removeAttribute('data-bond-pending');
     }
   }
 
@@ -253,7 +285,15 @@ class BondUI {
     const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
     const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
+    const seenParents = new Set();
     badges.forEach((b) => {
+      if (b.parentElement) {
+        if (seenParents.has(b.parentElement)) {
+          b.remove();
+          return;
+        }
+        seenParents.add(b.parentElement);
+      }
       b.style.setProperty('--bond-color', tier.color);
       b.style.setProperty('--bond-bg', tier.bg);
       b.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;

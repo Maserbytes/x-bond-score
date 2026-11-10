@@ -110,7 +110,7 @@ class InteractionDetector {
 
   /**
    * Actively checks if the user has switched Twitter accounts.
-   * Only triggers an account switch when the DOM identity in this tab actually changes,
+   * Only triggers an account switch when the DOM identity in this tab genuinely transitions,
    * completely preventing false triggers or overrides of user selections.
    */
   async checkAccountSwitch() {
@@ -119,16 +119,23 @@ class InteractionDetector {
 
     const newHandle = discovered.handle.toLowerCase().trim();
 
-    // If this tab already detected this handle in its DOM and matches currentUser, no action needed
-    if (this.lastDetectedDomHandle === newHandle && this.currentUser === newHandle) {
+    // If matches currentUser, keep lock in sync and do not trigger a reset
+    if (this.currentUser === newHandle) {
+      this.lastDetectedDomHandle = newHandle;
+      if (window.bondStorage && !window.bondStorage.currentUser) {
+        window.bondStorage.currentUser = newHandle;
+      }
       return this.currentUser;
     }
 
-    // Only trigger switch if DOM identity in this tab genuinely transitioned, or initial detection
-    if (this.lastDetectedDomHandle !== newHandle || !this.currentUser) {
+    // Only genuinely trigger switch if DOM identity in this tab changed to a different handle
+    if (this.currentUser !== newHandle) {
       const previousUser = this.currentUser;
       this.lastDetectedDomHandle = newHandle;
       this.currentUser = newHandle;
+      if (window.bondStorage) {
+        window.bondStorage.currentUser = newHandle;
+      }
       console.log(`[BondScore] Account switch detected on X: ${previousUser ? '@' + previousUser : 'initial'} -> @${newHandle}`);
       await window.bondStorage.switchAccount(newHandle, {
         displayName: discovered.displayName,
@@ -154,12 +161,20 @@ class InteractionDetector {
       const previous = this.currentUser;
       this.lastDetectedDomHandle = handle;
       this.currentUser = handle;
-      await window.bondStorage.switchAccount(handle, {
-        displayName: fromDOM.displayName,
-        avatarUrl: fromDOM.avatarUrl
-      });
-      if (previous && previous !== handle && window.bondUI) {
-        await window.bondUI.handleAccountSwitched(handle, previous);
+      if (window.bondStorage) {
+        window.bondStorage.currentUser = handle;
+      }
+      if (previous && previous !== handle) {
+        await window.bondStorage.switchAccount(handle, {
+          displayName: fromDOM.displayName,
+          avatarUrl: fromDOM.avatarUrl
+        });
+        if (window.bondUI) {
+          await window.bondUI.handleAccountSwitched(handle, previous);
+        }
+      } else {
+        // Same account, ensure storage pointer is initialized without flushing caches
+        await window.bondStorage.getCurrentUser();
       }
       return handle;
     }
@@ -169,6 +184,7 @@ class InteractionDetector {
       const stored = await window.bondStorage.getCurrentUser();
       if (stored) {
         this.currentUser = stored;
+        this.lastDetectedDomHandle = stored;
         return stored;
       }
     }
@@ -327,7 +343,7 @@ class InteractionDetector {
       displayName: author.displayName,
       avatarUrl: author.avatarUrl,
       isMutual: false
-    });
+    }, this.currentUser);
 
     if (window.bondUI) {
       window.bondUI.refreshBadgesForUser(author.handle, true);
@@ -342,7 +358,7 @@ class InteractionDetector {
     if (!author || (this.currentUser && author.handle === this.currentUser)) return;
 
     const tweetId = this.extractTweetId(tweetEl);
-    await window.bondStorage.removeInteraction(author.handle, tweetId, 'like');
+    await window.bondStorage.removeInteraction(author.handle, tweetId, 'like', this.currentUser);
 
     if (window.bondUI) {
       window.bondUI.refreshBadgesForUser(author.handle, true);
@@ -367,7 +383,7 @@ class InteractionDetector {
       displayName: author.displayName,
       avatarUrl: author.avatarUrl,
       isMutual: false
-    });
+    }, this.currentUser);
 
     if (window.bondUI) {
       window.bondUI.refreshBadgesForUser(author.handle, true);
@@ -478,7 +494,7 @@ class InteractionDetector {
         isMutual,
         isThread,
         direction: 'outbound'
-      });
+      }, this.currentUser);
 
       if (window.bondUI) {
         window.bondUI.refreshBadgesForUser(targetHandle, true);
@@ -589,7 +605,7 @@ class InteractionDetector {
           isMutual: isReplyToMe,
           isThread,
           direction: 'inbound'
-        });
+        }, this.currentUser);
 
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(author.handle, true);
@@ -639,7 +655,7 @@ class InteractionDetector {
           textSnippet: text.slice(0, 100),
           isMutual: type === 'reply_received',
           direction: 'inbound'
-        });
+        }, this.currentUser);
 
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(handle, true);
@@ -715,7 +731,7 @@ class InteractionDetector {
           displayName,
           avatarUrl,
           isMutual: true
-        });
+        }, this.currentUser);
 
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(targetHandle, true);
@@ -767,14 +783,14 @@ class InteractionDetector {
           timestamp: Date.now(),
           textSnippet: isUnfollow ? `You unfollowed @${targetHandle}` : `You followed @${targetHandle}`,
           isMutual: false
-        });
+        }, this.currentUser);
 
-        const user = await window.bondStorage.getUser(targetHandle);
+        const user = await window.bondStorage.getUser(targetHandle, false, this.currentUser);
         if (user) {
           user.signals = user.signals || {};
           user.signals.youFollowThem = !isUnfollow;
           user.signals.isMutual = !!(user.signals.theyFollowYou && user.signals.youFollowThem);
-          await window.bondStorage.saveUser(targetHandle, user);
+          await window.bondStorage.saveUser(targetHandle, user, this.currentUser);
         }
 
         if (window.bondUI) {

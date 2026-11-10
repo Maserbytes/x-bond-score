@@ -133,9 +133,25 @@ class BondStorage {
     }
   }
 
+  _resolveActiveAccount(account = null) {
+    if (account) return account.replace(/^@/, '').toLowerCase().trim();
+    if (this.currentUser) return this.currentUser.replace(/^@/, '').toLowerCase().trim();
+    if (typeof window !== 'undefined' && window.interactionDetector && window.interactionDetector.currentUser) {
+      this.currentUser = window.interactionDetector.currentUser.replace(/^@/, '').toLowerCase().trim();
+      return this.currentUser;
+    }
+    return '';
+  }
+
+  _getScoringEngine() {
+    if (typeof BondScoring !== 'undefined') return BondScoring;
+    if (typeof window !== 'undefined' && window.BondScoring) return window.BondScoring;
+    return null;
+  }
+
   /**
    * Seamlessly migrates legacy un-scoped user: and events: keys into acc:<currentUser>:
-   * Ensures zero data loss when upgrading to multi-account architecture.
+   * Ensures zero data loss and safely merges without deleting uncommitted data.
    */
   async _migrateLegacyDataIfNeeded(account) {
     if (!account) return;
@@ -145,32 +161,30 @@ class BondStorage {
         chrome.storage.local.get(null, async (allData) => {
           if (!allData) return resolve();
           const toSet = {};
-          const toRemove = [];
           for (const [key, val] of Object.entries(allData)) {
             if (!key.startsWith('acc:') && (key.startsWith('user:') || key.startsWith('events:'))) {
               const newKey = `acc:${cleanAccount}:${key}`;
-              if (!allData[newKey]) {
+              if (key.startsWith('events:') && Array.isArray(val)) {
+                const existingEvents = allData[newKey] || [];
+                const merged = [...existingEvents];
+                for (const e of val) {
+                  if (!merged.some(m => m.id === e.id || (m.tweetId && m.tweetId === e.tweetId))) {
+                    merged.push(e);
+                  }
+                }
+                toSet[newKey] = merged;
+              } else if (!allData[newKey]) {
                 toSet[newKey] = val;
               }
-              toRemove.push(key);
             }
           }
           if (Object.keys(toSet).length > 0) {
             await this._setRaw(toSet);
           }
-          if (toRemove.length > 0) {
-            if (chrome.storage && chrome.storage.local && typeof chrome.storage.local.remove === 'function') {
-              chrome.storage.local.remove(toRemove, () => resolve());
-            } else {
-              resolve();
-            }
-          } else {
-            resolve();
-          }
+          resolve();
         });
       } else {
         const toSet = {};
-        const toRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           if (k.startsWith('bond_user:') || k.startsWith('bond_events:')) {
@@ -179,7 +193,6 @@ class BondStorage {
               try {
                 const val = JSON.parse(localStorage.getItem(k));
                 toSet[`acc:${cleanAccount}:${rawKey}`] = val;
-                toRemove.push(k);
               } catch (e) {}
             }
           }
@@ -187,7 +200,6 @@ class BondStorage {
         for (const [k, v] of Object.entries(toSet)) {
           localStorage.setItem(`bond_${k}`, JSON.stringify(v));
         }
-        toRemove.forEach(k => localStorage.removeItem(k));
         resolve();
       }
     });
@@ -347,22 +359,22 @@ class BondStorage {
     return this.settingsCache;
   }
 
-  _userKey(handle, account = this.currentUser) {
-    const h = handle.toLowerCase().trim();
-    const acc = (account || this.currentUser || '').toLowerCase().trim();
+  _userKey(handle, account = null) {
+    const h = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    const acc = this._resolveActiveAccount(account);
     return acc ? `acc:${acc}:user:${h}` : `user:${h}`;
   }
 
-  _eventsKey(handle, account = this.currentUser) {
-    const h = handle.toLowerCase().trim();
-    const acc = (account || this.currentUser || '').toLowerCase().trim();
+  _eventsKey(handle, account = null) {
+    const h = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    const acc = this._resolveActiveAccount(account);
     return acc ? `acc:${acc}:events:${h}` : `events:${h}`;
   }
 
-  async getUser(handle, forceRefresh = false, account = this.currentUser) {
+  async getUser(handle, forceRefresh = false, account = null) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
@@ -372,16 +384,33 @@ class BondStorage {
       return this.memoryCache.get(cleanHandle);
     }
 
+    // 1. Primary lookup under active account
     const key = this._userKey(cleanHandle, activeAccount);
     const res = await this._getRaw([key]);
     let user = res[key] || null;
 
-    // Fallback to legacy un-scoped key if not yet migrated
-    if (!user && activeAccount) {
+    // 2. Fallback to legacy un-scoped key
+    if (!user) {
       const legacyKey = `user:${cleanHandle}`;
       const legacyRes = await this._getRaw([legacyKey]);
       if (legacyRes[legacyKey]) {
         user = legacyRes[legacyKey];
+        if (activeAccount) {
+          await this._setRaw({ [key]: user });
+        }
+      }
+    }
+
+    // 3. Fallback to search across storage ONLY if no active account is resolved yet
+    if (!user && !activeAccount && this._hasChromeStorage()) {
+      const allData = await new Promise((resolve) => {
+        chrome.storage.local.get(null, (d) => resolve(d || {}));
+      });
+      for (const [k, v] of Object.entries(allData)) {
+        if (k.endsWith(`:user:${cleanHandle}`) && v && v.handle) {
+          user = v;
+          break;
+        }
       }
     }
 
@@ -391,10 +420,10 @@ class BondStorage {
     return user;
   }
 
-  async saveUser(handle, userData, account = this.currentUser) {
+  async saveUser(handle, userData, account = null) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
@@ -446,10 +475,10 @@ class BondStorage {
     return updated;
   }
 
-  async getEvents(handle, account = this.currentUser) {
+  async getEvents(handle, account = null) {
     if (!handle) return [];
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
@@ -459,16 +488,33 @@ class BondStorage {
       return this.eventsCache.get(cleanHandle);
     }
 
+    // 1. Primary lookup
     const key = this._eventsKey(cleanHandle, activeAccount);
     const res = await this._getRaw([key]);
     let events = res[key] || [];
 
-    // Fallback to legacy un-scoped key if not yet migrated
-    if ((!events || events.length === 0) && activeAccount) {
+    // 2. Fallback to legacy un-scoped key
+    if ((!events || events.length === 0)) {
       const legacyKey = `events:${cleanHandle}`;
       const legacyRes = await this._getRaw([legacyKey]);
       if (legacyRes[legacyKey] && legacyRes[legacyKey].length > 0) {
         events = legacyRes[legacyKey];
+        if (activeAccount) {
+          await this._setRaw({ [key]: events });
+        }
+      }
+    }
+
+    // 3. Fallback across all accounts ONLY if no active account is resolved yet
+    if ((!events || events.length === 0) && !activeAccount && this._hasChromeStorage()) {
+      const allData = await new Promise((resolve) => {
+        chrome.storage.local.get(null, (d) => resolve(d || {}));
+      });
+      for (const [k, v] of Object.entries(allData)) {
+        if (k.endsWith(`:events:${cleanHandle}`) && Array.isArray(v) && v.length > 0) {
+          events = v;
+          break;
+        }
       }
     }
 
@@ -478,10 +524,10 @@ class BondStorage {
     return events;
   }
 
-  async saveEvents(handle, events, account = this.currentUser) {
+  async saveEvents(handle, events, account = null) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
@@ -497,10 +543,10 @@ class BondStorage {
    * Records a new interaction event, deduplicating by event ID or tweet ID.
    * Isolated to the active account.
    */
-  async recordInteraction(handle, eventData, account = this.currentUser) {
+  async recordInteraction(handle, eventData, account = null) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    let activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
@@ -583,7 +629,8 @@ class BondStorage {
     user.lastInteraction = Math.max(user.lastInteraction || 0, newEvent.timestamp);
 
     // Recalculate score & streaks with guaranteed upward continuation
-    if (typeof BondScoring !== 'undefined') {
+    const scoringEngine = this._getScoringEngine();
+    if (scoringEngine) {
       const settings = await this.getSettings();
       let minBoost = 0;
       switch (newEvent.type) {
@@ -606,7 +653,7 @@ class BondStorage {
         default: minBoost = 2; break;
       }
       const previousScore = user.currentScore || 0;
-      const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } = BondScoring.calculateUserScore(events, settings, previousScore, minBoost);
+      const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } = scoringEngine.calculateUserScore(events, settings, previousScore, minBoost);
       user.currentScore = score;
       user.tier = tier.id;
       user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
@@ -754,9 +801,10 @@ class BondStorage {
       const user = await this.getUser(cleanHandle, false, activeAccount);
       if (user) {
         if (type === 'like' && user.stats.likes > 0) user.stats.likes--;
-        if (typeof BondScoring !== 'undefined') {
+        const scoringEngine = this._getScoringEngine();
+        if (scoringEngine) {
           const settings = await this.getSettings();
-          const { score, tier, trend, streakDays, reciprocity } = BondScoring.calculateUserScore(events, settings, user.currentScore);
+          const { score, tier, trend, streakDays, reciprocity } = scoringEngine.calculateUserScore(events, settings, user.currentScore);
           user.currentScore = score;
           user.tier = tier.id;
           user.trend = trend;
