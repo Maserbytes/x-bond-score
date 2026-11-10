@@ -19,58 +19,119 @@ class InteractionDetector {
   }
 
   /**
-   * Identifies current user's Twitter handle from navigation or profile elements.
+   * Reads active account identity directly from Twitter's UI elements.
    */
-  async detectCurrentUser() {
-    if (this.currentUser) return this.currentUser;
-
-    // Check stored user first
-    const stored = await window.bondStorage.getCurrentUser();
-    if (stored) {
-      this.currentUser = stored;
-      return stored;
-    }
-
-    // 1. Look for bottom/sidebar profile link
-    const profileLink = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
-    if (profileLink) {
-      const href = profileLink.getAttribute('href') || '';
-      const match = href.match(/^\/([A-Za-z0-9_]+)$/);
-      if (match && match[1] && match[1].toLowerCase() !== 'explore') {
-        const handle = match[1].toLowerCase();
-        this.currentUser = handle;
-        await window.bondStorage.setCurrentUser(handle);
-        return handle;
-      }
-    }
-
-    // 2. Look for account switcher button
+  extractActiveAccountFromDOM() {
+    // 1. Account Switcher Button (Bottom left on desktop web)
     const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
     if (accountSwitcher) {
       const text = accountSwitcher.innerText || '';
       const match = text.match(/@([A-Za-z0-9_]+)/);
       if (match && match[1]) {
-        const handle = match[1].toLowerCase();
-        this.currentUser = handle;
-        await window.bondStorage.setCurrentUser(handle);
-        return handle;
+        const handle = match[1].toLowerCase().trim();
+        const img = accountSwitcher.querySelector('img');
+        const avatarUrl = img ? img.src : '';
+        const parts = text.split('@');
+        const displayName = parts[0] ? parts[0].trim().split('\n')[0] : handle;
+        return { handle, displayName, avatarUrl };
       }
     }
 
-    // 3. Look for avatar with profile link
+    // 2. Profile Navigation Link (Sidebar on tablet/desktop)
+    const profileLink = document.querySelector('a[data-testid="AppTabBar_Profile_Link"]');
+    if (profileLink) {
+      const href = profileLink.getAttribute('href') || '';
+      const match = href.match(/^\/([A-Za-z0-9_]+)$/);
+      if (match && match[1] && !['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'bookmarks', 'lists', 'search'].includes(match[1].toLowerCase())) {
+        const handle = match[1].toLowerCase().trim();
+        const img = profileLink.querySelector('img');
+        return { handle, displayName: handle, avatarUrl: img ? img.src : '' };
+      }
+    }
+
+    // 3. Top Navigation Bar Profile Button (Mobile/responsive header)
+    const topNavProfile = document.querySelector('button[data-testid="TopNavBar_Profile_Button"]');
+    if (topNavProfile) {
+      const img = topNavProfile.querySelector('img');
+      const avatarUrl = img ? img.src : '';
+      const alt = img ? img.getAttribute('alt') || '' : '';
+      const match = alt.match(/@([A-Za-z0-9_]+)/);
+      if (match && match[1]) {
+        return { handle: match[1].toLowerCase().trim(), displayName: match[1], avatarUrl };
+      }
+    }
+
+    // 4. Header avatar link
     const avatarLinks = document.querySelectorAll('header a[role="link"][href^="/"]');
     for (const a of avatarLinks) {
       const href = a.getAttribute('href') || '';
       const match = href.match(/^\/([A-Za-z0-9_]+)$/);
-      if (match && match[1] && !['home', 'explore', 'notifications', 'messages', 'settings', 'i'].includes(match[1].toLowerCase())) {
-        const handle = match[1].toLowerCase();
-        this.currentUser = handle;
-        await window.bondStorage.setCurrentUser(handle);
-        return handle;
+      if (match && match[1] && !['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'].includes(match[1].toLowerCase())) {
+        const handle = match[1].toLowerCase().trim();
+        const img = a.querySelector('img');
+        return { handle, displayName: handle, avatarUrl: img ? img.src : '' };
       }
     }
 
     return null;
+  }
+
+  /**
+   * Actively checks if the user has switched Twitter accounts.
+   * If a new handle is detected, switches storage context and triggers UI badge update.
+   */
+  async checkAccountSwitch() {
+    const discovered = this.extractActiveAccountFromDOM();
+    if (!discovered || !discovered.handle) return this.currentUser;
+
+    const newHandle = discovered.handle.toLowerCase().trim();
+    if (!this.currentUser || this.currentUser !== newHandle) {
+      const previousUser = this.currentUser;
+      this.currentUser = newHandle;
+      console.log(`[BondScore] Account switch detected on X: ${previousUser ? '@' + previousUser : 'initial'} -> @${newHandle}`);
+      await window.bondStorage.switchAccount(newHandle, {
+        displayName: discovered.displayName,
+        avatarUrl: discovered.avatarUrl
+      });
+      if (window.bondUI && typeof window.bondUI.handleAccountSwitched === 'function') {
+        await window.bondUI.handleAccountSwitched(newHandle, previousUser);
+      }
+      return newHandle;
+    }
+    return this.currentUser;
+  }
+
+  /**
+   * Identifies current user's Twitter handle from navigation or profile elements.
+   */
+  async detectCurrentUser(forceFresh = false) {
+    if (!forceFresh && this.currentUser) return this.currentUser;
+
+    const fromDOM = this.extractActiveAccountFromDOM();
+    if (fromDOM && fromDOM.handle) {
+      const handle = fromDOM.handle.toLowerCase().trim();
+      const previous = this.currentUser;
+      this.currentUser = handle;
+      await window.bondStorage.switchAccount(handle, {
+        displayName: fromDOM.displayName,
+        avatarUrl: fromDOM.avatarUrl
+      });
+      if (previous && previous !== handle && window.bondUI) {
+        await window.bondUI.handleAccountSwitched(handle, previous);
+      }
+      return handle;
+    }
+
+    // Check stored user if DOM elements haven't rendered yet
+    if (!this.currentUser) {
+      const stored = await window.bondStorage.getCurrentUser();
+      if (stored) {
+        this.currentUser = stored;
+        return stored;
+      }
+    }
+
+    return this.currentUser;
   }
 
   /**
@@ -83,6 +144,15 @@ class InteractionDetector {
     // Track active reply target whenever reply icon is clicked or composer focused
     document.addEventListener('click', (e) => {
       try {
+        // Detect clicks on account switcher button or account switch menu items
+        const isAccountAction = e.target.closest(
+          '[data-testid="SideNav_AccountSwitcher_Button"], [data-testid="AccountSwitcher_Menu"], [data-testid^="UserAvatar-Container"], [role="menuitem"]'
+        );
+        if (isAccountAction) {
+          setTimeout(() => this.checkAccountSwitch(), 350);
+          setTimeout(() => this.checkAccountSwitch(), 1200);
+        }
+
         const replyIcon = e.target.closest('[data-testid="reply"]');
         if (replyIcon) {
           const tweetEl = replyIcon.closest('article[data-testid="tweet"], [data-testid="tweet"], [data-testid="cellInnerDiv"]');
@@ -95,6 +165,14 @@ class InteractionDetector {
         console.warn('[BondScore] Event capture error:', err);
       }
     }, true);
+
+    // Sync if account switched from popup or another tab
+    window.addEventListener('bondscore:account_switched', (e) => {
+      const acc = e.detail && e.detail.currentAccount;
+      if (acc && acc !== this.currentUser) {
+        this.currentUser = acc;
+      }
+    });
 
     // Track composer focus
     document.addEventListener('focusin', (e) => {

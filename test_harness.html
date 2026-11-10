@@ -131,10 +131,14 @@
 
   <div class="harness-card">
     <h3>Simulated Controls</h3>
-    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px;">
-      <label style="font-size: 13px; color: #71767b;">Current User Handle:</label>
-      <input type="text" class="harness-input" id="current-user-input" placeholder="e.g. your_handle" style="width: 160px; color: #1d9bf0; font-weight: 700;">
-      <button class="harness-btn" id="btn-set-user" style="padding: 6px 14px; font-size: 13px;">Save</button>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; background: rgba(29, 155, 240, 0.08); padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(29, 155, 240, 0.2);">
+      <label style="font-size: 13px; font-weight: 700; color: #1d9bf0;">👥 Multi-Account Switcher:</label>
+      <button class="harness-btn" id="btn-switch-acc1" style="background: #1d9bf0; font-size: 12px; padding: 5px 12px;">👤 Switch to @main_user</button>
+      <button class="harness-btn" id="btn-switch-acc2" style="background: #8b5cf6; font-size: 12px; padding: 5px 12px;">👤 Switch to @alt_creator</button>
+      <span style="font-size: 12px; color: #71767b;">or Custom:</span>
+      <input type="text" class="harness-input" id="current-user-input" placeholder="e.g. handle" style="width: 140px; color: #1d9bf0; font-weight: 700; padding: 4px 10px;">
+      <button class="harness-btn" id="btn-set-user" style="padding: 4px 12px; font-size: 12px;">Set</button>
+      <span id="active-acc-pill" style="font-size: 11px; background: #00ba7c22; color: #00ba7c; border: 1px solid #00ba7c44; border-radius: 9999px; padding: 2px 8px; font-weight: 700;">Active: @main_user</span>
       <span id="user-status-msg" style="font-size: 12px; color: #00ba7c;"></span>
     </div>
 
@@ -313,9 +317,11 @@
       await window.bondStorage.init();
       await window.interactionDetector.init();
 
-      const current = await window.bondStorage.getCurrentUser() || 'user';
+      const current = await window.bondStorage.getCurrentUser() || 'main_user';
       document.getElementById('current-user-input').value = current;
       window.interactionDetector.currentUser = current;
+      const pill = document.getElementById('active-acc-pill');
+      if (pill) pill.innerText = `Active: @${current}`;
       log(`Storage ready. Current User: @${current}`);
 
       // Harness Theme Toggle
@@ -339,16 +345,25 @@
         applyHarnessTheme(next);
       });
 
-      // Save user button
-      document.getElementById('btn-set-user').addEventListener('click', async () => {
-        const h = cleanHandle(document.getElementById('current-user-input').value);
-        if (h) {
-          await window.bondStorage.setCurrentUser(h);
-          window.interactionDetector.currentUser = h;
-          document.getElementById('user-status-msg').innerText = '✓ Saved';
-          setTimeout(() => document.getElementById('user-status-msg').innerText = '', 2000);
-          log(`Updated current user to @${h}`);
-        }
+      // Account Switcher Function
+      async function switchActiveAccount(handle) {
+        const clean = cleanHandle(handle);
+        if (!clean) return;
+        await window.bondStorage.switchAccount(clean, { displayName: clean });
+        window.interactionDetector.currentUser = clean;
+        document.getElementById('current-user-input').value = clean;
+        const pill = document.getElementById('active-acc-pill');
+        if (pill) pill.innerText = `Active: @${clean}`;
+        const targetHandle = cleanHandle(document.getElementById('target-handle-input').value) || 'maserbytes';
+        await updateMockProfile(targetHandle);
+        log(`🔀 Switched active account to @${clean}! Scores & interaction ledger now isolated to this account.`);
+      }
+
+      document.getElementById('btn-switch-acc1').addEventListener('click', () => switchActiveAccount('main_user'));
+      document.getElementById('btn-switch-acc2').addEventListener('click', () => switchActiveAccount('alt_creator'));
+      document.getElementById('btn-set-user').addEventListener('click', () => {
+        const h = document.getElementById('current-user-input').value;
+        switchActiveAccount(h);
       });
 
       // Target handle input updates mock profile

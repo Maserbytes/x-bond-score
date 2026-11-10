@@ -31,6 +31,34 @@
       </div>
     </header>
 
+    <!-- Active Account Bar & Switcher -->
+    <div class="account-bar" id="account-bar">
+      <div class="account-selector-wrapper">
+        <button class="account-selector-btn" id="account-selector-btn" title="Click to view or switch account" aria-haspopup="true" aria-expanded="false">
+          <span class="account-dot" title="Active Account"></span>
+          <span class="account-avatar-mini" id="account-avatar-mini">👤</span>
+          <span class="account-handle-text" id="account-handle-text">@you</span>
+          <span class="account-chevron" id="account-chevron">▾</span>
+        </button>
+        <!-- Account Switcher Dropdown Menu -->
+        <div class="account-dropdown" id="account-dropdown" style="display: none;">
+          <div class="account-dropdown-header">
+            <span>SWITCH ACCOUNT</span>
+            <span class="account-dropdown-count" id="account-dropdown-count">1 account</span>
+          </div>
+          <div class="account-dropdown-list" id="account-dropdown-list">
+            <!-- Dynamically populated accounts -->
+          </div>
+          <div class="account-dropdown-footer">
+            <span class="account-dropdown-hint">💡 Scores & CRM data are strictly isolated per account.</span>
+          </div>
+        </div>
+      </div>
+      <div class="account-badge-pill" id="account-badge-pill" title="Interactions & CRM data are strictly isolated for this account">
+        Isolated CRM
+      </div>
+    </div>
+
     <!-- Nav Tabs -->
     <nav class="popup-tabs">
       <button class="tab-btn active" data-tab="tab-leaderboard">🏆 Mutuals</button>

@@ -13,6 +13,11 @@
   - **Device / OS Default (Auto)**: Detects whether your device is in Dark Mode or Light Mode and matches automatically.
   - **Quick Theme Toggle**: Instantly switch between **🌓 System**, **🌙 Dark**, and **☀️ White / Light** via the header pill or Settings.
   - **Smooth Physical Craft**: Designed with tactile button press micro-interactions (`transform: scale(0.97)`), glassmorphic surfaces, fluid cubic-bezier animations, and high-contrast WCAG AAA typography.
+- **👥 Multi-Account Isolation & Instant Auto-Switching**:
+  - **100% Isolated Data Per Account**: Interactions, CRM statuses, leaderboards, and scores are strictly isolated per account (`acc:<handle>:*`). Your main account, alt accounts, and project accounts each maintain their own independent relationship universes.
+  - **Automatic Switch Detection on X**: Detects whenever you switch accounts on X (via the bottom-left account switcher or navigation) and instantly recalculates and swaps all badges on your timeline, profiles, and ScoreCard with zero page reload.
+  - **Popup Account Dropdown Switcher**: Click the account selector in the popup header to toggle between any detected account and view its separate CRM leaderboard, solar orbit, and engagement memory.
+  - **Lossless Auto-Migration**: Automatically migrates existing single-account scores into your detected account on first launch.
 - **Tracks every like, reply, and Direct Message (DM) you send** to build a comprehensive relationship history.
 - **Profile Follow Badges**: Displays vibrant, live relationship badges directly on user profiles:
   - `🤝 Mutual`: Both you and the user follow each other.

@@ -119,7 +119,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Load Initial State
-  await loadCurrentUserTag();
+  await setupAccountSwitcher();
+  await syncActiveTabAccountIfAvailable();
   await loadLeaderboard();
   await loadSettingsForm();
   renderRadarTab();
@@ -130,7 +131,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Storage change listener to keep popup in sync live with browser actions
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    chrome.storage.onChanged.addListener(() => {
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.currentUser || changes.knownAccounts) {
+        setupAccountSwitcher();
+      }
       loadLeaderboard();
       const activeTab = document.querySelector('.tab-btn.active');
       if (activeTab && activeTab.dataset.tab === 'tab-orbit') {
@@ -141,6 +145,149 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 });
+
+/**
+ * Sets up the multi-account dropdown switcher in the popup header.
+ * Allows viewing separate scores and interaction CRM per account.
+ */
+async function setupAccountSwitcher() {
+  const selectorBtn = document.getElementById('account-selector-btn');
+  const dropdown = document.getElementById('account-dropdown');
+  const listEl = document.getElementById('account-dropdown-list');
+  const countEl = document.getElementById('account-dropdown-count');
+  const handleTextEl = document.getElementById('account-handle-text');
+  const avatarMiniEl = document.getElementById('account-avatar-mini');
+
+  if (!selectorBtn || !dropdown || !listEl) return;
+
+  const { activeAccount, accounts } = await window.bondStorage.getKnownAccounts();
+  const currentAcc = activeAccount || 'you';
+  currentUsername = currentAcc;
+
+  // Update header button text and avatar
+  if (handleTextEl) {
+    handleTextEl.innerText = activeAccount ? `@${activeAccount}` : 'Browse X';
+  }
+  if (avatarMiniEl) {
+    const activeMeta = accounts.find(a => a.handle === activeAccount);
+    if (activeMeta && activeMeta.avatarUrl) {
+      avatarMiniEl.innerHTML = `<img src="${activeMeta.avatarUrl}" alt="${activeAccount}">`;
+    } else {
+      avatarMiniEl.innerText = activeAccount ? activeAccount.charAt(0).toUpperCase() : '👤';
+    }
+  }
+
+  // Populate dropdown list
+  if (countEl) {
+    countEl.innerText = `${accounts.length} ${accounts.length === 1 ? 'account' : 'accounts'}`;
+  }
+
+  listEl.innerHTML = '';
+  if (accounts.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'account-dropdown-item active';
+    empty.innerHTML = `
+      <div class="account-item-left">
+        <div class="account-item-avatar">👤</div>
+        <div class="account-item-names">
+          <span class="account-item-display">Current Session</span>
+          <span class="account-item-handle">Browse X to detect</span>
+        </div>
+      </div>
+      <span class="account-item-check">✓</span>
+    `;
+    listEl.appendChild(empty);
+  } else {
+    accounts.forEach(acc => {
+      const item = document.createElement('div');
+      item.className = `account-dropdown-item ${acc.isActive ? 'active' : ''}`;
+      item.innerHTML = `
+        <div class="account-item-left">
+          <div class="account-item-avatar">
+            ${acc.avatarUrl ? `<img src="${acc.avatarUrl}" alt="${acc.handle}">` : acc.handle.charAt(0).toUpperCase()}
+          </div>
+          <div class="account-item-names">
+            <span class="account-item-display">${acc.displayName || acc.handle}</span>
+            <span class="account-item-handle">@${acc.handle}</span>
+          </div>
+        </div>
+        ${acc.isActive ? `<span class="account-item-check">✓</span>` : ''}
+      `;
+
+      item.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        dropdown.style.display = 'none';
+        selectorBtn.classList.remove('open');
+        selectorBtn.setAttribute('aria-expanded', 'false');
+
+        if (!acc.isActive) {
+          await window.bondStorage.switchAccount(acc.handle);
+          await setupAccountSwitcher();
+          await loadLeaderboard();
+          const activeTab = document.querySelector('.tab-btn.active');
+          if (activeTab && activeTab.dataset.tab === 'tab-orbit') {
+            renderOrbitCanvas();
+          } else if (activeTab && activeTab.dataset.tab === 'tab-radar') {
+            renderRadarTab();
+          }
+        }
+      });
+
+      listEl.appendChild(item);
+    });
+  }
+
+  // Dropdown toggle logic
+  selectorBtn.onclick = (e) => {
+    e.stopPropagation();
+    const isOpen = dropdown.style.display !== 'none';
+    if (isOpen) {
+      dropdown.style.display = 'none';
+      selectorBtn.classList.remove('open');
+      selectorBtn.setAttribute('aria-expanded', 'false');
+    } else {
+      dropdown.style.display = 'block';
+      selectorBtn.classList.add('open');
+      selectorBtn.setAttribute('aria-expanded', 'true');
+    }
+  };
+
+  // Close dropdown on click outside
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#account-bar')) {
+      dropdown.style.display = 'none';
+      selectorBtn.classList.remove('open');
+      selectorBtn.setAttribute('aria-expanded', 'false');
+    }
+  });
+}
+
+/**
+ * Checks if active browser tab is on X and syncs active account.
+ */
+async function syncActiveTabAccountIfAvailable() {
+  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+    try {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs && tabs[0] && tabs[0].url && (tabs[0].url.includes('x.com') || tabs[0].url.includes('twitter.com'))) {
+          chrome.tabs.sendMessage(tabs[0].id, { type: 'bondscore:get_active_account' }, async (response) => {
+            if (response && response.handle) {
+              const currentStored = await window.bondStorage.getCurrentUser();
+              if (currentStored !== response.handle) {
+                await window.bondStorage.switchAccount(response.handle, response.metadata);
+                await setupAccountSwitcher();
+                await loadLeaderboard();
+                const activeTab = document.querySelector('.tab-btn.active');
+                if (activeTab && activeTab.dataset.tab === 'tab-orbit') renderOrbitCanvas();
+                else if (activeTab && activeTab.dataset.tab === 'tab-radar') renderRadarTab();
+              }
+            }
+          });
+        }
+      });
+    } catch (e) {}
+  }
+}
 
 async function loadCurrentUserTag() {
   const userTag = document.getElementById('current-user-tag');

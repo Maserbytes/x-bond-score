@@ -17,6 +17,57 @@ class BondUI {
         this.refreshBadgesForUser(handle);
       }
     });
+
+    window.addEventListener('bondscore:account_switched', async (e) => {
+      const newAccount = e.detail && e.detail.currentAccount;
+      const oldAccount = e.detail && e.detail.previousAccount;
+      await this.handleAccountSwitched(newAccount, oldAccount);
+    });
+  }
+
+  /**
+   * Refreshes all badges on the current page when switching active accounts.
+   */
+  async handleAccountSwitched(newAccount, oldAccount) {
+    console.log(`[BondScore UI] Account switched: ${oldAccount ? '@' + oldAccount : 'initial'} -> @${newAccount}. Refreshing page scores...`);
+
+    // 1. If currently open ScoreCard modal, refresh or close it
+    if (this.activeModal) {
+      const modalHandle = this.activeModal.dataset.handle;
+      if (modalHandle && newAccount && modalHandle.toLowerCase().trim() === newAccount.toLowerCase().trim()) {
+        this.closeScoreCard();
+      } else if (modalHandle) {
+        await this.updateModalContent(modalHandle);
+      }
+    }
+
+    // 2. Refresh all inline badges across timeline and profile
+    const badges = document.querySelectorAll('.bond-badge');
+    for (const b of badges) {
+      const handle = b.getAttribute('data-bond-handle');
+      if (!handle) continue;
+
+      // If this badge is on the new account (oneself), remove it
+      if (newAccount && handle.toLowerCase().trim() === newAccount.toLowerCase().trim()) {
+        b.remove();
+        continue;
+      }
+
+      await this.refreshBadgesForUser(handle, false);
+    }
+
+    // 3. Refresh all follow relationship badges
+    const followBadges = document.querySelectorAll('.bond-follow-badge');
+    for (const fb of followBadges) {
+      const handle = fb.getAttribute('data-bond-follow-handle');
+      if (handle) {
+        if (newAccount && handle.toLowerCase().trim() === newAccount.toLowerCase().trim()) {
+          fb.remove();
+        } else {
+          await this.updateProfileFollowBadge(handle);
+        }
+      }
+    }
   }
 
   /**
@@ -183,8 +234,15 @@ class BondUI {
    */
   async refreshBadgesForUser(handle, shouldAnimate = true) {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const user = await window.bondStorage.getUser(cleanHandle);
-    if (!user) return;
+    const user = (await window.bondStorage.getUser(cleanHandle)) || {
+      handle: cleanHandle,
+      currentScore: 0,
+      tier: 'dormant',
+      streakDays: 0,
+      isPinned: false,
+      trend: 'steady',
+      stats: { repliesSent: 0, repliesReceived: 0, dmsSent: 0, dmsReceived: 0, mutualExchanges: 0, likes: 0, quotes: 0 }
+    };
 
     const tier = BondScoring.getTier(user.currentScore);
     const scoreVal = Math.round(user.currentScore || 0);
@@ -232,6 +290,7 @@ class BondUI {
     this.closeScoreCard();
 
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const currentUser = await window.bondStorage.getCurrentUser();
     const user = (await window.bondStorage.getUser(cleanHandle)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
@@ -311,7 +370,7 @@ class BondUI {
                   ${user.isPinned ? '★ VIP' : '☆ Pin'}
                 </button>
               </div>
-              <div class="bond-handle">@${cleanHandle}</div>
+              <div class="bond-handle">@${cleanHandle} <span class="bond-viewing-account" style="font-size: 11px; opacity: 0.7; margin-left: 6px;">(Viewing as @${currentUser || 'you'})</span></div>
             </div>
           </div>
           <button class="bond-close-btn" title="Close" aria-label="Close">&times;</button>

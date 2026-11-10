@@ -34,6 +34,8 @@ class BondStorage {
     this.eventsCache = new Map();
     this.settingsCache = null;
     this.currentUser = null;
+    this.knownAccounts = [];
+    this.accountsMetadata = {};
     this.isInitialized = false;
     this._setupStorageSync();
   }
@@ -43,29 +45,65 @@ class BondStorage {
       chrome.storage.onChanged.addListener((changes, areaName) => {
         if (areaName !== 'local') return;
         for (const [key, change] of Object.entries(changes)) {
-          if (key.startsWith('user:')) {
-            const handle = key.replace('user:', '');
-            if (change.newValue) {
-              this.memoryCache.set(handle, change.newValue);
-            } else {
-              this.memoryCache.delete(handle);
+          // 1. Account switched across tabs or from popup
+          if (key === 'currentUser' && change.newValue) {
+            const newAcc = (change.newValue || '').toLowerCase().trim();
+            if (newAcc && newAcc !== this.currentUser) {
+              const prev = this.currentUser;
+              this.currentUser = newAcc;
+              this.memoryCache.clear();
+              this.eventsCache.clear();
+              if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('bondscore:account_switched', {
+                  detail: { previousAccount: prev, currentAccount: newAcc }
+                }));
+              }
             }
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('bondscore:updated', {
-                detail: { handle, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
-              }));
-            }
-          } else if (key.startsWith('events:')) {
-            const handle = key.replace('events:', '');
-            if (change.newValue) {
-              this.eventsCache.set(handle, change.newValue);
-            } else {
-              this.eventsCache.delete(handle);
-            }
-          } else if (key === 'currentUser') {
-            this.currentUser = change.newValue || null;
+          } else if (key === 'knownAccounts') {
+            this.knownAccounts = Array.isArray(change.newValue) ? change.newValue : [];
+          } else if (key === 'accountsMetadata') {
+            this.accountsMetadata = change.newValue || {};
           } else if (key === 'settings') {
             this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, change.newValue || {});
+          } else {
+            // Handle updates isolated to current active account
+            const accPrefix = this.currentUser ? `acc:${this.currentUser}:` : '';
+            if (accPrefix && key.startsWith(accPrefix)) {
+              const subKey = key.slice(accPrefix.length);
+              if (subKey.startsWith('user:')) {
+                const handle = subKey.replace('user:', '');
+                if (change.newValue) {
+                  this.memoryCache.set(handle, change.newValue);
+                } else {
+                  this.memoryCache.delete(handle);
+                }
+                if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('bondscore:updated', {
+                    detail: { handle, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
+                  }));
+                }
+              } else if (subKey.startsWith('events:')) {
+                const handle = subKey.replace('events:', '');
+                if (change.newValue) {
+                  this.eventsCache.set(handle, change.newValue);
+                } else {
+                  this.eventsCache.delete(handle);
+                }
+              }
+            } else if (!this.currentUser && key.startsWith('user:')) {
+              // Legacy non-prefixed fallback
+              const handle = key.replace('user:', '');
+              if (change.newValue) {
+                this.memoryCache.set(handle, change.newValue);
+              } else {
+                this.memoryCache.delete(handle);
+              }
+              if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('bondscore:updated', {
+                  detail: { handle, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
+                }));
+              }
+            }
           }
         }
       });
@@ -75,14 +113,80 @@ class BondStorage {
   async init() {
     if (this.isInitialized) return;
     try {
-      const data = await this._getRaw(['currentUser', 'settings']);
-      this.currentUser = data.currentUser || null;
+      const data = await this._getRaw(['currentUser', 'knownAccounts', 'accountsMetadata', 'settings']);
+      this.currentUser = (data.currentUser || '').toLowerCase().trim() || null;
+      this.knownAccounts = Array.isArray(data.knownAccounts) ? data.knownAccounts : [];
+      if (this.currentUser && !this.knownAccounts.includes(this.currentUser)) {
+        this.knownAccounts.push(this.currentUser);
+      }
+      this.accountsMetadata = data.accountsMetadata || {};
       this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
       this.isInitialized = true;
+
+      // Automatically migrate legacy non-namespaced keys into current account if known
+      if (this.currentUser) {
+        await this._migrateLegacyDataIfNeeded(this.currentUser);
+      }
     } catch (err) {
       console.warn('[BondScore] Storage init error:', err);
       this.settingsCache = Object.assign({}, DEFAULT_SETTINGS);
     }
+  }
+
+  /**
+   * Seamlessly migrates legacy un-scoped user: and events: keys into acc:<currentUser>:
+   * Ensures zero data loss when upgrading to multi-account architecture.
+   */
+  async _migrateLegacyDataIfNeeded(account) {
+    if (!account) return;
+    const cleanAccount = account.toLowerCase().trim();
+    return new Promise((resolve) => {
+      if (this._hasChromeStorage()) {
+        chrome.storage.local.get(null, async (allData) => {
+          if (!allData) return resolve();
+          const toSet = {};
+          const toRemove = [];
+          for (const [key, val] of Object.entries(allData)) {
+            if (!key.startsWith('acc:') && (key.startsWith('user:') || key.startsWith('events:'))) {
+              const newKey = `acc:${cleanAccount}:${key}`;
+              if (!allData[newKey]) {
+                toSet[newKey] = val;
+              }
+              toRemove.push(key);
+            }
+          }
+          if (Object.keys(toSet).length > 0) {
+            await this._setRaw(toSet);
+          }
+          if (toRemove.length > 0) {
+            chrome.storage.local.remove(toRemove, () => resolve());
+          } else {
+            resolve();
+          }
+        });
+      } else {
+        const toSet = {};
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k.startsWith('bond_user:') || k.startsWith('bond_events:')) {
+            const rawKey = k.replace('bond_', '');
+            if (!rawKey.startsWith('acc:')) {
+              try {
+                const val = JSON.parse(localStorage.getItem(k));
+                toSet[`acc:${cleanAccount}:${rawKey}`] = val;
+                toRemove.push(k);
+              } catch (e) {}
+            }
+          }
+        }
+        for (const [k, v] of Object.entries(toSet)) {
+          localStorage.setItem(`bond_${k}`, JSON.stringify(v));
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+        resolve();
+      }
+    });
   }
 
   _hasChromeStorage() {
@@ -93,7 +197,7 @@ class BondStorage {
     return new Promise((resolve, reject) => {
       if (this._hasChromeStorage()) {
         chrome.storage.local.get(keys, (res) => {
-          if (chrome.runtime.lastError) {
+          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) {
             reject(chrome.runtime.lastError);
           } else {
             resolve(res || {});
@@ -117,7 +221,7 @@ class BondStorage {
     return new Promise((resolve, reject) => {
       if (this._hasChromeStorage()) {
         chrome.storage.local.set(items, () => {
-          if (chrome.runtime.lastError) {
+          if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) {
             reject(chrome.runtime.lastError);
           } else {
             resolve();
@@ -137,18 +241,89 @@ class BondStorage {
   async getCurrentUser() {
     if (!this.currentUser) {
       const res = await this._getRaw(['currentUser']);
-      this.currentUser = res.currentUser || null;
+      this.currentUser = (res.currentUser || '').toLowerCase().trim() || null;
     }
     return this.currentUser;
   }
 
-  async setCurrentUser(handle) {
-    if (!handle) return;
+  /**
+   * Switches active account, isolating caches and storage queries.
+   */
+  async switchAccount(handle, metadata = null) {
+    if (!handle) return false;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    if (this.currentUser !== cleanHandle) {
-      this.currentUser = cleanHandle;
-      await this._setRaw({ currentUser: cleanHandle });
+    if (!cleanHandle) return false;
+
+    const previousUser = this.currentUser;
+    this.currentUser = cleanHandle;
+
+    if (!Array.isArray(this.knownAccounts)) this.knownAccounts = [];
+    if (!this.knownAccounts.includes(cleanHandle)) {
+      this.knownAccounts.push(cleanHandle);
     }
+
+    if (!this.accountsMetadata) this.accountsMetadata = {};
+    if (metadata || !this.accountsMetadata[cleanHandle]) {
+      this.accountsMetadata[cleanHandle] = {
+        handle: cleanHandle,
+        displayName: (metadata && metadata.displayName) || (this.accountsMetadata[cleanHandle] && this.accountsMetadata[cleanHandle].displayName) || cleanHandle,
+        avatarUrl: (metadata && metadata.avatarUrl) || (this.accountsMetadata[cleanHandle] && this.accountsMetadata[cleanHandle].avatarUrl) || '',
+        lastActive: Date.now()
+      };
+    } else {
+      this.accountsMetadata[cleanHandle].lastActive = Date.now();
+    }
+
+    // Flush in-memory caches to prevent any cross-account data leakage
+    this.memoryCache.clear();
+    this.eventsCache.clear();
+
+    await this._setRaw({
+      currentUser: cleanHandle,
+      knownAccounts: this.knownAccounts,
+      accountsMetadata: this.accountsMetadata
+    });
+
+    // Check if legacy un-scoped data exists that belongs to this account
+    await this._migrateLegacyDataIfNeeded(cleanHandle);
+
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bondscore:account_switched', {
+        detail: { previousAccount: previousUser, currentAccount: cleanHandle }
+      }));
+    }
+
+    console.log(`[BondScore Storage] Active account switched: @${cleanHandle}`);
+    return true;
+  }
+
+  async setCurrentUser(handle, metadata = null) {
+    return this.switchAccount(handle, metadata);
+  }
+
+  /**
+   * Returns list of all known accounts with metadata and active state.
+   */
+  async getKnownAccounts() {
+    if (!this.knownAccounts || this.knownAccounts.length === 0) {
+      const data = await this._getRaw(['knownAccounts', 'accountsMetadata', 'currentUser']);
+      this.knownAccounts = Array.isArray(data.knownAccounts) ? data.knownAccounts : [];
+      this.accountsMetadata = data.accountsMetadata || {};
+      if (data.currentUser && !this.knownAccounts.includes(data.currentUser)) {
+        this.knownAccounts.push(data.currentUser);
+      }
+    }
+    const cur = (this.currentUser || '').toLowerCase().trim();
+    return {
+      activeAccount: cur,
+      accounts: this.knownAccounts.map(h => ({
+        handle: h,
+        displayName: (this.accountsMetadata[h] && this.accountsMetadata[h].displayName) || h,
+        avatarUrl: (this.accountsMetadata[h] && this.accountsMetadata[h].avatarUrl) || '',
+        lastActive: (this.accountsMetadata[h] && this.accountsMetadata[h].lastActive) || 0,
+        isActive: h === cur
+      }))
+    };
   }
 
   async getSettings() {
@@ -165,40 +340,61 @@ class BondStorage {
     return this.settingsCache;
   }
 
-  _userKey(handle) {
-    return `user:${handle.toLowerCase().trim()}`;
+  _userKey(handle, account = this.currentUser) {
+    const h = handle.toLowerCase().trim();
+    const acc = (account || this.currentUser || '').toLowerCase().trim();
+    return acc ? `acc:${acc}:user:${h}` : `user:${h}`;
   }
 
-  _eventsKey(handle) {
-    return `events:${handle.toLowerCase().trim()}`;
+  _eventsKey(handle, account = this.currentUser) {
+    const h = handle.toLowerCase().trim();
+    const acc = (account || this.currentUser || '').toLowerCase().trim();
+    return acc ? `acc:${acc}:events:${h}` : `events:${h}`;
   }
 
-  async getUser(handle, forceRefresh = false) {
+  async getUser(handle, forceRefresh = false, account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    if (!forceRefresh && this.memoryCache.has(cleanHandle)) {
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
+
+    if (!forceRefresh && isCurrentAcc && this.memoryCache.has(cleanHandle)) {
       return this.memoryCache.get(cleanHandle);
     }
 
-    const key = this._userKey(cleanHandle);
+    const key = this._userKey(cleanHandle, activeAccount);
     const res = await this._getRaw([key]);
-    const user = res[key] || null;
-    if (user) {
+    let user = res[key] || null;
+
+    // Fallback to legacy un-scoped key if not yet migrated
+    if (!user && activeAccount) {
+      const legacyKey = `user:${cleanHandle}`;
+      const legacyRes = await this._getRaw([legacyKey]);
+      if (legacyRes[legacyKey]) {
+        user = legacyRes[legacyKey];
+      }
+    }
+
+    if (user && isCurrentAcc) {
       this.memoryCache.set(cleanHandle, user);
     }
     return user;
   }
 
-  async saveUser(handle, userData) {
+  async saveUser(handle, userData, account = this.currentUser) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const key = this._userKey(cleanHandle);
-    const existing = (await this.getUser(cleanHandle)) || {
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    const key = this._userKey(cleanHandle, activeAccount);
+
+    const existing = (await this.getUser(cleanHandle, false, activeAccount)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
       avatarUrl: '',
       currentScore: 0,
       tier: 'dormant',
+      crmStatus: 'Stranger',
+      crmStatusId: 'stranger',
       streakDays: 0,
       isPinned: false,
       note: '',
@@ -208,6 +404,8 @@ class BondStorage {
       stats: {
         repliesSent: 0,
         repliesReceived: 0,
+        dmsSent: 0,
+        dmsReceived: 0,
         mutualExchanges: 0,
         likes: 0,
         quotes: 0,
@@ -222,56 +420,85 @@ class BondStorage {
       lastUpdated: Date.now()
     };
 
-    this.memoryCache.set(cleanHandle, updated);
+    if (!activeAccount || activeAccount === (this.currentUser || '')) {
+      this.memoryCache.set(cleanHandle, updated);
+    }
     await this._setRaw({ [key]: updated });
-    if (typeof window !== 'undefined') {
+
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
       window.dispatchEvent(new CustomEvent('bondscore:updated', {
-        detail: { handle: cleanHandle, user: updated, score: updated.currentScore }
+        detail: { handle: cleanHandle, user: updated, score: updated.currentScore, account: activeAccount }
       }));
     }
     return updated;
   }
 
-  async getEvents(handle) {
+  async getEvents(handle, account = this.currentUser) {
     if (!handle) return [];
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    if (this.eventsCache.has(cleanHandle)) {
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
+
+    if (isCurrentAcc && this.eventsCache.has(cleanHandle)) {
       return this.eventsCache.get(cleanHandle);
     }
 
-    const key = this._eventsKey(cleanHandle);
+    const key = this._eventsKey(cleanHandle, activeAccount);
     const res = await this._getRaw([key]);
-    const events = res[key] || [];
-    this.eventsCache.set(cleanHandle, events);
+    let events = res[key] || [];
+
+    // Fallback to legacy un-scoped key if not yet migrated
+    if ((!events || events.length === 0) && activeAccount) {
+      const legacyKey = `events:${cleanHandle}`;
+      const legacyRes = await this._getRaw([legacyKey]);
+      if (legacyRes[legacyKey] && legacyRes[legacyKey].length > 0) {
+        events = legacyRes[legacyKey];
+      }
+    }
+
+    if (isCurrentAcc) {
+      this.eventsCache.set(cleanHandle, events);
+    }
     return events;
   }
 
-  async saveEvents(handle, events) {
+  async saveEvents(handle, events, account = this.currentUser) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const key = this._eventsKey(cleanHandle);
-    this.eventsCache.set(cleanHandle, events);
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    const key = this._eventsKey(cleanHandle, activeAccount);
+
+    if (!activeAccount || activeAccount === (this.currentUser || '')) {
+      this.eventsCache.set(cleanHandle, events);
+    }
     await this._setRaw({ [key]: events });
   }
 
   /**
    * Records a new interaction event, deduplicating by event ID or tweet ID.
+   * Isolated to the active account.
    */
-  async recordInteraction(handle, eventData) {
+  async recordInteraction(handle, eventData, account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    if ((this.currentUser && cleanHandle === this.currentUser) || cleanHandle === 'masersuspended' || cleanHandle === 'maserbyte') {
-      return null; // Don't track self
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+
+    // Prevent tracking self interactions
+    if (activeAccount && cleanHandle === activeAccount) {
+      return null;
+    }
+    if (cleanHandle === 'masersuspended' || cleanHandle === 'maserbyte') {
+      // Don't track system handles unless user is testing with them
     }
 
-    const events = await this.getEvents(cleanHandle);
+    const events = await this.getEvents(cleanHandle, activeAccount);
     const eventId = eventData.id || `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     
     // Check duplicate by tweetId if provided
     if (eventData.tweetId) {
       const exists = events.some(e => e.tweetId === eventData.tweetId && e.type === eventData.type);
       if (exists) {
-        return await this.getUser(cleanHandle);
+        return await this.getUser(cleanHandle, false, activeAccount);
       }
     }
 
@@ -282,6 +509,8 @@ class BondStorage {
       tweetId: eventData.tweetId || null,
       textSnippet: eventData.textSnippet ? eventData.textSnippet.slice(0, 140) : null,
       isMutual: !!eventData.isMutual,
+      isThread: !!eventData.isThread,
+      direction: eventData.direction || (eventData.type.includes('received') ? 'inbound' : 'outbound'),
       weight: eventData.weight || null
     };
 
@@ -291,10 +520,10 @@ class BondStorage {
       events.sort((a, b) => b.timestamp - a.timestamp);
       events.length = 500;
     }
-    await this.saveEvents(cleanHandle, events);
+    await this.saveEvents(cleanHandle, events, activeAccount);
 
     // Update user summary stats
-    const user = (await this.getUser(cleanHandle)) || {
+    const user = (await this.getUser(cleanHandle, false, activeAccount)) || {
       handle: cleanHandle,
       displayName: eventData.displayName || cleanHandle,
       avatarUrl: eventData.avatarUrl || '',
@@ -321,7 +550,7 @@ class BondStorage {
     if (eventData.avatarUrl) user.avatarUrl = eventData.avatarUrl;
     if (!user.stats) user.stats = {};
 
-    if (newEvent.type === 'reply_sent') user.stats.repliesSent = (user.stats.repliesSent || 0) + 1;
+    if (newEvent.type === 'reply_sent' || newEvent.type === 'reply_thread') user.stats.repliesSent = (user.stats.repliesSent || 0) + 1;
     if (newEvent.type === 'reply_received') user.stats.repliesReceived = (user.stats.repliesReceived || 0) + 1;
     if (newEvent.type === 'dm_sent') user.stats.dmsSent = (user.stats.dmsSent || 0) + 1;
     if (newEvent.type === 'dm_received') user.stats.dmsReceived = (user.stats.dmsReceived || 0) + 1;
@@ -342,8 +571,9 @@ class BondStorage {
         case 'signal_unfollowed':
         case 'signal_blocked':
         case 'signal_you_unfollowed': minBoost = 0; break;
-        case 'reply_mutual': minBoost = 12; break;
-        case 'dm_mutual': minBoost = 14; break;
+        case 'reply_mutual': minBoost = 14; break;
+        case 'reply_thread': minBoost = 14; break;
+        case 'dm_mutual': minBoost = 15; break;
         case 'dm_sent': minBoost = 10; break;
         case 'dm_received': minBoost = 10; break;
         case 'reply_sent': minBoost = newEvent.isMutual ? 12 : 8; break;
@@ -354,7 +584,7 @@ class BondStorage {
         default: minBoost = 2; break;
       }
       const previousScore = user.currentScore || 0;
-      const { score, tier, crmStatus, trend, streakDays, reciprocity } = BondScoring.calculateUserScore(events, settings, previousScore, minBoost);
+      const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } = BondScoring.calculateUserScore(events, settings, previousScore, minBoost);
       user.currentScore = score;
       user.tier = tier.id;
       user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
@@ -363,24 +593,28 @@ class BondStorage {
       user.trend = trend;
       user.streakDays = streakDays;
       user.reciprocity = reciprocity;
+      user.recencyBoost = recencyBoost;
+      user.twoWayMultiplier = twoWayMultiplier;
+      user.qualityMetrics = qualityMetrics;
       user.lastCalculated = Date.now();
     }
 
-    await this.saveUser(cleanHandle, user);
+    await this.saveUser(cleanHandle, user, activeAccount);
     return user;
   }
 
   /**
-   * Observes and logs relationship signals:
+   * Observes and logs relationship signals for the active account:
    * - Mutual follow changes
    * - Follow-backs
    * - Unfollows
    * - Possible blocks
    */
-  async recordRelationshipSignal(handle, data = {}) {
+  async recordRelationshipSignal(handle, data = {}, account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const user = (await this.getUser(cleanHandle)) || {
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    const user = (await this.getUser(cleanHandle, false, activeAccount)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
       avatarUrl: '',
@@ -405,7 +639,7 @@ class BondStorage {
         timestamp: Date.now(),
         textSnippet: '🚫 Possible block detected from @' + cleanHandle,
         isMutual: false
-      });
+      }, activeAccount);
       signalLogged = true;
     }
 
@@ -416,7 +650,7 @@ class BondStorage {
         timestamp: Date.now(),
         textSnippet: '🎉 @' + cleanHandle + ' followed you back!',
         isMutual: true
-      });
+      }, activeAccount);
       signalLogged = true;
     }
 
@@ -427,7 +661,7 @@ class BondStorage {
         timestamp: Date.now(),
         textSnippet: '⚠️ @' + cleanHandle + ' is no longer following you',
         isMutual: false
-      });
+      }, activeAccount);
       signalLogged = true;
     }
 
@@ -442,7 +676,7 @@ class BondStorage {
           timestamp: Date.now(),
           textSnippet: '🤝 Mutual follow active with @' + cleanHandle,
           isMutual: true
-        });
+        }, activeAccount);
         signalLogged = true;
       }
     }
@@ -459,24 +693,24 @@ class BondStorage {
     if (data.displayName) user.displayName = data.displayName;
     if (data.avatarUrl) user.avatarUrl = data.avatarUrl;
 
-    await this.saveUser(cleanHandle, user);
+    await this.saveUser(cleanHandle, user, activeAccount);
     return user;
   }
 
   /**
    * Removes an interaction (e.g. unliking a tweet) and recalculates score in real time.
    */
-  async removeInteraction(handle, tweetId, type = 'like') {
+  async removeInteraction(handle, tweetId, type = 'like', account = this.currentUser) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const events = await this.getEvents(cleanHandle);
+    const activeAccount = (account || this.currentUser || '').toLowerCase().trim();
+    const events = await this.getEvents(cleanHandle, activeAccount);
 
     let idx = -1;
     if (tweetId) {
       idx = events.findIndex(e => e.tweetId === tweetId && e.type === type);
     }
     if (idx === -1) {
-      // Find the most recent event of this type
       for (let i = events.length - 1; i >= 0; i--) {
         if (events[i].type === type) {
           idx = i;
@@ -487,9 +721,9 @@ class BondStorage {
 
     if (idx !== -1) {
       events.splice(idx, 1);
-      await this.saveEvents(cleanHandle, events);
+      await this.saveEvents(cleanHandle, events, activeAccount);
 
-      const user = await this.getUser(cleanHandle);
+      const user = await this.getUser(cleanHandle, false, activeAccount);
       if (user) {
         if (type === 'like' && user.stats.likes > 0) user.stats.likes--;
         if (typeof BondScoring !== 'undefined') {
@@ -502,7 +736,7 @@ class BondStorage {
           user.reciprocity = reciprocity;
           user.lastCalculated = Date.now();
         }
-        await this.saveUser(cleanHandle, user);
+        await this.saveUser(cleanHandle, user, activeAccount);
         return user;
       }
     }
@@ -510,10 +744,13 @@ class BondStorage {
   }
 
   /**
-   * Retrieves all tracked users sorted by score descending (pinned first).
+   * Retrieves all tracked users for the given account (or active account),
+   * sorted by score descending (pinned first).
    */
-  async getAllUsers() {
+  async getAllUsers(account = this.currentUser) {
     return new Promise((resolve) => {
+      const targetAccount = (account || this.currentUser || '').toLowerCase().trim();
+
       if (this._hasChromeStorage()) {
         chrome.storage.local.get(null, (allData) => {
           if (chrome.runtime.lastError || !allData) {
@@ -521,11 +758,17 @@ class BondStorage {
             return;
           }
           const users = [];
-          const myHandle = (this.currentUser || '').toLowerCase().trim();
           for (const [key, value] of Object.entries(allData)) {
-            if (key.startsWith('user:') && value && value.handle) {
+            let isMatch = false;
+            if (targetAccount) {
+              isMatch = key.startsWith(`acc:${targetAccount}:user:`);
+            } else {
+              isMatch = key.startsWith('user:') && !key.startsWith('acc:');
+            }
+
+            if (isMatch && value && value.handle) {
               const h = value.handle.toLowerCase().trim();
-              if (h && (!myHandle || h !== myHandle)) {
+              if (h && (!targetAccount || h !== targetAccount)) {
                 if (!value.crmStatusData && typeof BondScoring !== 'undefined') {
                   const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likes || 0))) || 0;
                   const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0))) || 0;
@@ -546,15 +789,20 @@ class BondStorage {
         });
       } else {
         const users = [];
-        const myHandle = (this.currentUser || '').toLowerCase().trim();
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
-          if (k.startsWith('bond_user:')) {
+          let isMatch = false;
+          if (targetAccount) {
+            isMatch = k.startsWith(`bond_acc:${targetAccount}:user:`);
+          } else {
+            isMatch = k.startsWith('bond_user:') && !k.startsWith('bond_acc:');
+          }
+          if (isMatch) {
             try {
               const u = JSON.parse(localStorage.getItem(k));
               if (u && u.handle) {
                 const h = u.handle.toLowerCase().trim();
-                if (h && (!myHandle || h !== myHandle)) {
+                if (h && (!targetAccount || h !== targetAccount)) {
                   if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
                     const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likes || 0))) || 0;
                     const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0))) || 0;
@@ -578,20 +826,62 @@ class BondStorage {
     });
   }
 
-  async togglePin(handle) {
-    const user = await this.getUser(handle);
+  async togglePin(handle, account = this.currentUser) {
+    const user = await this.getUser(handle, false, account);
     if (!user) return false;
     user.isPinned = !user.isPinned;
-    await this.saveUser(handle, user);
+    await this.saveUser(handle, user, account);
     return user.isPinned;
   }
 
-  async saveNote(handle, note) {
-    const user = await this.getUser(handle);
+  async saveNote(handle, note, account = this.currentUser) {
+    const user = await this.getUser(handle, false, account);
     if (!user) return false;
     user.note = note ? note.slice(0, 200) : '';
-    await this.saveUser(handle, user);
+    await this.saveUser(handle, user, account);
     return true;
+  }
+
+  /**
+   * Clears all interactions and tracked data for a specific account, leaving other accounts intact.
+   */
+  async clearAccount(account = this.currentUser) {
+    const cleanAccount = (account || this.currentUser || '').toLowerCase().trim();
+    if (!cleanAccount) return;
+
+    return new Promise((resolve) => {
+      if (this._hasChromeStorage()) {
+        chrome.storage.local.get(null, (allData) => {
+          if (!allData) return resolve();
+          const prefix = `acc:${cleanAccount}:`;
+          const toRemove = Object.keys(allData).filter(k => k.startsWith(prefix));
+          if (toRemove.length > 0) {
+            chrome.storage.local.remove(toRemove, () => {
+              if (cleanAccount === this.currentUser) {
+                this.memoryCache.clear();
+                this.eventsCache.clear();
+              }
+              resolve();
+            });
+          } else {
+            resolve();
+          }
+        });
+      } else {
+        const prefix = `bond_acc:${cleanAccount}:`;
+        const toRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k.startsWith(prefix)) toRemove.push(k);
+        }
+        toRemove.forEach(k => localStorage.removeItem(k));
+        if (cleanAccount === this.currentUser) {
+          this.memoryCache.clear();
+          this.eventsCache.clear();
+        }
+        resolve();
+      }
+    });
   }
 
   /**

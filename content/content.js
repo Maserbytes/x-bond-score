@@ -19,10 +19,8 @@
   async function scanDom() {
     scanScheduled = false;
 
-    // Detect / refresh current user if not yet discovered
-    if (!window.interactionDetector.currentUser) {
-      await window.interactionDetector.detectCurrentUser();
-    }
+    // Check if account has been switched
+    await window.interactionDetector.checkAccountSwitch();
 
     const currentUser = window.interactionDetector.currentUser;
 
@@ -105,13 +103,33 @@
     observer.observe(root, { childList: true, subtree: true });
   }
 
-  // SPA URL change detection
+  // Listen for popup inquiries for active tab account
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (msg && msg.type === 'bondscore:get_active_account') {
+        const info = window.interactionDetector.extractActiveAccountFromDOM();
+        sendResponse({
+          handle: window.interactionDetector.currentUser,
+          metadata: info || null
+        });
+        return true;
+      }
+    });
+  }
+
+  // SPA URL change detection & active account switch check
   setInterval(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      window.interactionDetector.checkAccountSwitch();
       scheduleScan();
     }
   }, 500);
+
+  // Periodic active account verification
+  setInterval(() => {
+    window.interactionDetector.checkAccountSwitch();
+  }, 2000);
 
   // Initial scan
   setTimeout(scanDom, 600);
