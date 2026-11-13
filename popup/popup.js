@@ -8,6 +8,44 @@ let cachedUsers = [];
 let currentFilter = 'all';
 let currentUsername = 'you';
 let currentTheme = 'system'; // 'system' | 'dark' | 'light'
+let leaderboardRefreshTimer = null;
+let leaderboardLoadGeneration = 0;
+let orbitRenderTimer = null;
+
+function shouldRefreshDashboardForStorageChanges(changes, activeAccount) {
+  if (!changes || typeof changes !== 'object') return false;
+  if (changes.currentUser || changes.knownAccounts || changes.accountsMetadata) return true;
+
+  const account = (activeAccount || '').replace(/^@/, '').toLowerCase().trim();
+  const prefix = account ? `acc:${account}:` : '';
+  return Object.keys(changes).some((key) => account
+    ? key.startsWith(`${prefix}user:`) || key.startsWith(`${prefix}events:`)
+    : key.startsWith('user:') || key.startsWith('events:'));
+}
+
+function queueDashboardRefresh() {
+  if (leaderboardRefreshTimer) clearTimeout(leaderboardRefreshTimer);
+  leaderboardRefreshTimer = setTimeout(async () => {
+    leaderboardRefreshTimer = null;
+    await loadLeaderboard();
+
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (activeTab && activeTab.dataset.tab === 'tab-orbit') renderOrbitCanvas();
+    else if (activeTab && activeTab.dataset.tab === 'tab-radar') renderRadarTab();
+  }, 100);
+}
+
+function queueOrbitCanvasRender() {
+  if (orbitRenderTimer) clearTimeout(orbitRenderTimer);
+  orbitRenderTimer = setTimeout(() => {
+    orbitRenderTimer = null;
+    const canvas = document.getElementById('orbit-canvas');
+    const activeTab = document.querySelector('.tab-btn.active');
+    if (canvas && canvas.offsetParent !== null && activeTab && activeTab.dataset.tab === 'tab-orbit') {
+      renderOrbitCanvas();
+    }
+  }, 60);
+}
 
 function isLightMode() {
   const dataTheme = document.documentElement.getAttribute('data-theme');
@@ -131,16 +169,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Storage change listener to keep popup in sync live with browser actions
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
-    chrome.storage.onChanged.addListener((changes) => {
-      if (changes.currentUser || changes.knownAccounts) {
-        setupAccountSwitcher();
-      }
-      loadLeaderboard();
-      const activeTab = document.querySelector('.tab-btn.active');
-      if (activeTab && activeTab.dataset.tab === 'tab-orbit') {
-        renderOrbitCanvas();
-      } else if (activeTab && activeTab.dataset.tab === 'tab-radar') {
-        renderRadarTab();
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local') return;
+
+      const accountMetadataChanged = !!(changes.currentUser || changes.knownAccounts || changes.accountsMetadata);
+      if (accountMetadataChanged) void setupAccountSwitcher();
+
+      const activeAccount = window.bondStorage.currentUser || (currentUsername === 'you' ? '' : currentUsername);
+      if (shouldRefreshDashboardForStorageChanges(changes, activeAccount)) {
+        queueDashboardRefresh();
       }
     });
   }
@@ -305,11 +342,14 @@ async function loadCurrentUserTag() {
 }
 
 async function loadLeaderboard() {
+  const loadGeneration = ++leaderboardLoadGeneration;
   const totalAccountsEl = document.getElementById('stat-total-accounts');
   const topScoreEl = document.getElementById('stat-top-score');
   const mutualRepliesEl = document.getElementById('stat-mutual-replies');
 
-  cachedUsers = await window.bondStorage.getAllUsers();
+  const users = await window.bondStorage.getAllUsers();
+  if (loadGeneration !== leaderboardLoadGeneration) return;
+  cachedUsers = users;
   totalAccountsEl.innerText = cachedUsers.length;
 
   let maxScore = 0;
@@ -656,10 +696,7 @@ function distributePlanetsOnRing(ctx, users, cx, cy, radius, color) {
 
     // 2. Profile Picture (PFP) or initial fallback
     const pfp = getLoadedPfp(u.avatarUrl, () => {
-      const canvas = document.getElementById('orbit-canvas');
-      if (canvas && canvas.offsetParent !== null) {
-        renderOrbitCanvas();
-      }
+      queueOrbitCanvasRender();
     });
 
     if (pfp) {

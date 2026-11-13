@@ -20,6 +20,37 @@ class InteractionDetector {
   }
 
   /**
+   * Gets an avatar only when its X avatar container identifies the requested
+   * account. A page-wide first-image lookup can accidentally return the signed-
+   * in user's sidebar avatar while viewing someone else's profile.
+   */
+  getAvatarUrlForHandle(handle, root = document) {
+    const cleanHandle = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    if (!cleanHandle || !root || typeof root.querySelectorAll !== 'function') return '';
+
+    const avatarContainers = Array.from(root.querySelectorAll('[data-testid^="UserAvatar-Container-"]'));
+    const targetContainer = avatarContainers.find((container) => {
+      const testId = container.getAttribute('data-testid') || '';
+      const containerHandle = testId.slice('UserAvatar-Container-'.length).toLowerCase();
+      return containerHandle === cleanHandle;
+    });
+
+    if (targetContainer) {
+      const image = targetContainer.querySelector('img[src*="profile_images"], img');
+      const src = image && (image.currentSrc || image.src || image.getAttribute('src'));
+      if (src) return src;
+    }
+
+    // Some X layouts omit the avatar-container test id but label the image.
+    const images = Array.from(root.querySelectorAll('img[src*="profile_images"]'));
+    const labeledImage = images.find((image) => {
+      const alt = (image.getAttribute('alt') || '').toLowerCase();
+      return alt.includes(`@${cleanHandle}`) || alt === cleanHandle;
+    });
+    return labeledImage ? (labeledImage.currentSrc || labeledImage.src || labeledImage.getAttribute('src') || '') : '';
+  }
+
+  /**
    * Reads active account identity strictly from authenticated navigation elements.
    * Completely immune to false positives from visited profiles or tweet authors.
    */
@@ -546,11 +577,7 @@ class InteractionDetector {
       }
 
       // Avatar
-      let avatarUrl = '';
-      const avatarImg = tweetEl.querySelector('img[src*="profile_images"]');
-      if (avatarImg) {
-        avatarUrl = avatarImg.getAttribute('src');
-      }
+      const avatarUrl = this.getAvatarUrlForHandle(handle, tweetEl);
 
       return { handle, displayName, avatarUrl };
     } catch (e) {
@@ -848,8 +875,7 @@ class InteractionDetector {
       // Extract avatar and name if present
       const nameEl = document.querySelector('[data-testid="UserName"]');
       const displayName = nameEl ? (nameEl.querySelector('span') ? nameEl.querySelector('span').innerText : cleanHandle) : cleanHandle;
-      const avatarEl = document.querySelector('img[src*="profile_images"]');
-      const avatarUrl = avatarEl ? avatarEl.src : '';
+      const avatarUrl = this.getAvatarUrlForHandle(cleanHandle);
 
       const updatedUser = await window.bondStorage.recordRelationshipSignal(cleanHandle, {
         theyFollowYou,

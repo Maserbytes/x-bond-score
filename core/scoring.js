@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Scoring, Streak & Time-Decay Engine (v1.1.2)
+ * BondScore for X - Scoring, Streak & Time-Decay Engine (v1.1.3)
  * Computes relationship scores, streaks, reciprocity balance, and 30-day historical trends.
  */
 

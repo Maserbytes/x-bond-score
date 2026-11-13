@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Local Storage Layer (v1.1.2)
+ * BondScore for X - Local Storage Layer (v1.1.3)
  * Manages interactions, user records, cached scores, notes, streaks, and settings using chrome.storage.local.
  * Completely private, zero-backend, and offline-first.
  */
@@ -791,7 +791,10 @@ class BondStorage {
       prevSignalsObj.isBlocked === !!data.isBlocked
     );
 
-    if (signalsUnchanged && !signalLogged) {
+    const metadataChanged = (!!data.displayName && data.displayName !== user.displayName) ||
+      (!!data.avatarUrl && data.avatarUrl !== user.avatarUrl);
+
+    if (signalsUnchanged && !signalLogged && !metadataChanged) {
       return user;
     }
 
@@ -1045,7 +1048,7 @@ class BondStorage {
         chrome.storage.local.get(null, (items) => {
           resolve({
             app: 'BondScore for X',
-            version: '1.1.2',
+            version: '1.1.3',
             exportedAt: new Date().toISOString(),
             data: items || {}
           });
@@ -1062,7 +1065,7 @@ class BondStorage {
         }
         resolve({
           app: 'BondScore for X',
-          version: '1.1.2',
+          version: '1.1.3',
           exportedAt: new Date().toISOString(),
           data: items
         });
