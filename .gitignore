@@ -1,5 +1,9 @@
 # Test & temporary debug artifacts
 *.png
+!icons/
+!icons/*.png
+!dist/staging/icons/
+!dist/staging/icons/*.png
 extract_screen.js
 
 # OS / Editor junk

@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Scoring, Streak & Time-Decay Engine (v1.1.0)
+ * BondScore for X - Scoring, Streak & Time-Decay Engine (v1.1.2)
  * Computes relationship scores, streaks, reciprocity balance, and 30-day historical trends.
  */
 
@@ -88,7 +88,7 @@ class BondScoring {
 
     const now = Date.now();
     const halfLifeDays = settings.decayHalfLifeDays || 14;
-    const gracePeriodDays = settings.gracePeriodDays || 2;
+    const gracePeriodDays = settings.gracePeriodDays ?? 5;
     const weights = Object.assign({
       mutualReply: 15,
       replySent: 8,
@@ -162,22 +162,22 @@ class BondScoring {
           break;
         case 'reply_sent':
           baseWeight = weights.replySent || 8;
-          sentCount++;
+          if (isInbound) receivedCount++; else sentCount++;
           regularReplyCount++;
           break;
         case 'reply_received':
           // Inbound reply appreciation: they took the time to answer you (+25% value)
           baseWeight = (weights.replyReceived || 8) * 1.25;
-          receivedCount++;
+          if (isInbound) receivedCount++; else sentCount++;
           regularReplyCount++;
           break;
         case 'quote':
           baseWeight = weights.quote || 6;
-          sentCount++;
+          if (isInbound) receivedCount++; else sentCount++;
           break;
         case 'mention':
           baseWeight = weights.mention || 5;
-          receivedCount++;
+          if (isInbound) receivedCount++; else sentCount++;
           break;
         case 'like':
           likeCount++;
@@ -251,16 +251,8 @@ class BondScoring {
     const normalized = 100 * (1 - Math.exp(-accumulatedRaw / K));
     let finalScore = Math.round(Math.min(100, Math.max(0, normalized)) * 10) / 10;
 
-    // Memory guarantee: When actively interacting (minBoost > 0) or continuing a bond,
-    // the score always builds upon previousScore and never regresses below it.
-    if (previousScore > 0) {
-      const floorScore = minBoost > 0 ? previousScore + minBoost : previousScore;
-      finalScore = Math.min(100, Math.max(finalScore, floorScore));
-      finalScore = Math.round(finalScore * 10) / 10;
-    } else if (minBoost > 0) {
-      finalScore = Math.min(100, Math.max(finalScore, minBoost));
-      finalScore = Math.round(finalScore * 10) / 10;
-    }
+    // The event ledger is the durable memory. Do not floor this score at the
+    // previous value: doing so prevents inactivity decay from ever taking effect.
 
     // Trend analysis
     let trend = 'steady';
@@ -287,7 +279,7 @@ class BondScoring {
     // Decay Warning (if score is substantial and no interaction in 7+ days)
     const lastEventTime = sorted[0] ? sorted[0].timestamp : 0;
     const daysSinceLast = lastEventTime ? (now - lastEventTime) / msInDay : 999;
-    const decayWarning = finalScore >= 40 && daysSinceLast >= 7;
+    const decayWarning = finalScore >= 40 && daysSinceLast >= gracePeriodDays;
 
     const tier = this.getTier(finalScore);
 
@@ -473,7 +465,7 @@ class BondScoring {
     const now = Date.now();
     const msInDay = 86400000;
     const halfLifeDays = settings.decayHalfLifeDays || 14;
-    const gracePeriodDays = settings.gracePeriodDays || 2;
+    const gracePeriodDays = settings.gracePeriodDays ?? 5;
     const lambda = Math.LN2 / halfLifeDays;
     const weights = Object.assign({
       mutualReply: 15,
@@ -583,8 +575,8 @@ class BondScoring {
 
     const enriched = users.map(u => {
       const stats = u.stats || {};
-      const sent = (stats.repliesSent || 0) + (stats.dmsSent || 0) + (stats.likes || 0);
-      const received = (stats.repliesReceived || 0) + (stats.dmsReceived || 0);
+      const sent = (stats.repliesSent || 0) + (stats.dmsSent || 0) + (stats.likesSent ?? stats.likes ?? 0) + (stats.quotesSent || 0) + (stats.mentionsSent || 0);
+      const received = (stats.repliesReceived || 0) + (stats.dmsReceived || 0) + (stats.likesReceived || 0) + (stats.quotesReceived || 0) + (stats.mentionsReceived || 0);
       const total = sent + received;
       const sentRatio = total > 0 ? Math.round((sent / total) * 100) : 50;
       const lastTime = u.lastInteraction || u.lastUpdated || (now - 30 * msInDay);

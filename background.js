@@ -12,7 +12,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       chrome.storage.local.set({
         settings: {
           decayHalfLifeDays: 14,
-          gracePeriodDays: 2,
+          gracePeriodDays: 5,
           weights: {
             mutualReply: 15,
             replySent: 8,
@@ -50,7 +50,7 @@ if (chrome.alarms) {
 }
 
 /**
- * Recalculates time-decay for all tracked users using exact scoring parity with BondScoring
+ * Recalculates time-decay for all tracked users from the local event ledger.
  */
 async function performDecayRecalculation() {
   chrome.storage.local.get(null, async (allData) => {
@@ -58,7 +58,7 @@ async function performDecayRecalculation() {
 
     const settings = allData.settings || {};
     const halfLifeDays = settings.decayHalfLifeDays || 14;
-    const gracePeriodDays = settings.gracePeriodDays || 2;
+    const gracePeriodDays = settings.gracePeriodDays ?? 5;
     const weights = Object.assign({
       mutualReply: 15,
       replySent: 8,
@@ -91,67 +91,61 @@ async function performDecayRecalculation() {
       const events = allData[eventsKey] || [];
       if (events.length === 0) continue;
 
-        let accumulatedRaw = 0;
-        let sentCount = 0;
-        let receivedCount = 0;
+      let accumulatedRaw = 0;
+      let sentCount = 0;
+      let receivedCount = 0;
+      let likeCount = 0;
 
-        for (const evt of events) {
-          let baseWeight = 0;
-          switch (evt.type) {
-            case 'reply_mutual':
-              baseWeight = weights.mutualReply;
-              sentCount++;
-              receivedCount++;
-              break;
-            case 'reply_sent':
-              baseWeight = weights.replySent;
-              sentCount++;
-              break;
-            case 'reply_received':
-              baseWeight = weights.replyReceived;
-              receivedCount++;
-              break;
-            case 'quote':
-              baseWeight = weights.quote;
-              sentCount++;
-              break;
-            case 'mention':
-              baseWeight = weights.mention;
-              break;
-            case 'like':
-              baseWeight = weights.like;
-              break;
-            case 'deep_sync':
-              baseWeight = weights.deepSyncExchange;
-              receivedCount++;
-              break;
-            default:
-              baseWeight = evt.weight || 2;
-              break;
-          }
-
-          if (evt.isMutual) {
-            baseWeight *= 1.35;
-          }
-
-          const ageMs = Math.max(0, now - evt.timestamp);
-          const ageDays = ageMs / msInDay;
-          const decayableDays = Math.max(0, ageDays - gracePeriodDays);
-          const decayFactor = Math.exp(-lambda * decayableDays);
-
-          accumulatedRaw += baseWeight * decayFactor;
+      for (const evt of events) {
+        const inbound = evt.direction === 'inbound' || ['reply_received', 'dm_received', 'mention', 'signal_follow_back', 'deep_sync'].includes(evt.type);
+        let baseWeight = 0;
+        switch (evt.type) {
+          case 'reply_mutual': baseWeight = weights.mutualReply; sentCount++; receivedCount++; break;
+          case 'reply_thread': baseWeight = 16; inbound ? receivedCount++ : sentCount++; break;
+          case 'reply_sent': baseWeight = weights.replySent; inbound ? receivedCount++ : sentCount++; break;
+          case 'reply_received': baseWeight = weights.replyReceived; inbound ? receivedCount++ : sentCount++; break;
+          case 'dm_mutual': baseWeight = weights.dmMutual || 20; sentCount++; receivedCount++; break;
+          case 'dm_sent': baseWeight = weights.dmSent || 12; inbound ? receivedCount++ : sentCount++; break;
+          case 'dm_received': baseWeight = weights.dmReceived || 12; inbound ? receivedCount++ : sentCount++; break;
+          case 'signal_follow_back':
+          case 'signal_mutual_follow': baseWeight = 16; sentCount++; receivedCount++; break;
+          case 'signal_you_followed': baseWeight = 5; sentCount++; break;
+          case 'signal_unfollowed':
+          case 'signal_blocked':
+          case 'signal_you_unfollowed': baseWeight = 0; break;
+          case 'quote': baseWeight = weights.quote; inbound ? receivedCount++ : sentCount++; break;
+          case 'mention': baseWeight = weights.mention; inbound ? receivedCount++ : sentCount++; break;
+          case 'like':
+            likeCount++;
+            baseWeight = likeCount <= 3 ? weights.like : Math.max(0.4, weights.like / Math.sqrt(likeCount - 2));
+            inbound ? receivedCount++ : sentCount++;
+            break;
+          case 'deep_sync': baseWeight = weights.deepSyncExchange; receivedCount++; break;
+          default: baseWeight = evt.weight || 2; inbound ? receivedCount++ : sentCount++;
         }
 
-        if (sentCount > 0 && receivedCount > 0) {
-          accumulatedRaw *= 1.25;
-        }
+        if (evt.isThread || evt.type === 'reply_thread') baseWeight *= 1.35;
+        if (evt.isMutual) baseWeight *= 1.3;
+
+        const ageMs = Math.max(0, now - evt.timestamp);
+        const ageDays = ageMs / msInDay;
+        const recencyBoost = ageDays <= 1 ? 1.5 : ageDays <= 3 ? 1.3 : ageDays <= 7 ? 1.15 : 1;
+        const decayableDays = Math.max(0, ageDays - gracePeriodDays);
+        accumulatedRaw += baseWeight * recencyBoost * Math.exp(-lambda * decayableDays);
+      }
+
+      if (sentCount > 0 && receivedCount > 0) {
+        const balance = Math.min(sentCount, receivedCount) / Math.max(sentCount, receivedCount);
+        accumulatedRaw *= 1.3 + 0.3 * balance;
+      } else if (sentCount >= 4 && receivedCount === 0) {
+        accumulatedRaw = Math.min(accumulatedRaw, 16);
+      }
 
         const K = 45;
         const normalized = 100 * (1 - Math.exp(-accumulatedRaw / K));
-        // Preserve minimum memory floor of 1.0 so tracked mutuals are never forgotten
-        const newScore = Math.round(Math.min(100, Math.max(1.0, normalized)) * 10) / 10;
+        const newScore = Math.round(Math.min(100, Math.max(0, normalized)) * 10) / 10;
 
-        if (Math.abs(newScore - (user.currentScore || 0)) >= 0.5) {
+        if (Math.abs(newScore - (user.currentScore || 0)) >= 0.1) {
           user.trend = newScore > user.currentScore ? 'rising' : (newScore < user.currentScore ? 'decaying' : 'steady');
           user.currentScore = newScore;
           if (newScore >= 90) user.tier = 'soulmates';

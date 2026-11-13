@@ -1,5 +1,5 @@
 /**
- * BondScore for X - UI Injection & Score Card Component (v1.1.0)
+ * BondScore for X - UI Injection & Score Card Component (v1.1.2)
  * Renders badges inline with streaks, reciprocity radar, 30-day sparklines, VIP pins, and private notes.
  */
 
@@ -131,8 +131,8 @@ class BondUI {
       const tier = BondScoring.getTier(user.currentScore);
       const scoreVal = Math.round(user.currentScore || 0);
 
-      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
-      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
       const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
       const badge = document.createElement('span');
@@ -281,8 +281,8 @@ class BondUI {
     const scoreVal = Math.round(user.currentScore || 0);
     const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
     const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
@@ -349,11 +349,11 @@ class BondUI {
     const settings = await window.bondStorage.getSettings();
     const scoringResult = BondScoring.calculateUserScore(events, settings, user.currentScore);
     const tier = scoringResult.tier;
-    const scoreVal = Math.round(user.currentScore || scoringResult.score || 0);
+    const scoreVal = Math.round(scoringResult.score || 0);
     const reciprocity = scoringResult.reciprocity;
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likes || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     const crm = scoringResult.crmStatus || user.crmStatusData || BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0);
 
     const dmEvents = events.filter(e => e.type && e.type.startsWith('dm_'));
@@ -437,7 +437,7 @@ class BondUI {
             <span class="bond-warning-icon">❄️</span>
             <div>
               <strong>Bond at Risk!</strong>
-              <div>No replies in ${scoringResult.daysSinceLast} days. Score will decay soon.</div>
+              <div>No interaction in ${scoringResult.daysSinceLast} days. The score is decaying.</div>
             </div>
           </div>
         ` : ''}

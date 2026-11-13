@@ -17,6 +17,26 @@
   let scanScheduled = false;
   let isScanning = false;
   let lastUrl = location.href;
+  const historyBackfillScheduled = new Set();
+
+  async function scheduleRecentHistoryBackfill(handle, currentUser) {
+    const cleanHandle = (handle || '').replace(/^@/, '').toLowerCase().trim();
+    if (!cleanHandle || !currentUser || historyBackfillScheduled.has(cleanHandle)) return;
+
+    await window.bondStorage.rebuildDirectionalStats(cleanHandle).catch(() => {});
+    const user = await window.bondStorage.getUser(cleanHandle);
+    if (user && user.historyBackfillAt) return;
+    if (user && Date.now() - (user.historyBackfillAttemptAt || 0) < 24 * 60 * 60 * 1000) return;
+
+    historyBackfillScheduled.add(cleanHandle);
+    await window.bondStorage.saveUser(cleanHandle, { historyBackfillAttemptAt: Date.now() });
+    // One bounded seven-day scan per profile, then passive DOM tracking takes over.
+    setTimeout(() => {
+      window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, () => {}, { windowDays: 7 })
+        .catch(() => {})
+        .finally(() => historyBackfillScheduled.delete(cleanHandle));
+    }, 250);
+  }
 
   /**
    * Scans visible DOM for tweets and profile headers to inject BondScore badges.
@@ -101,6 +121,7 @@
           }
           // Observe relationship signals (mutuals, follow-back, unfollow, blocks)
           await window.interactionDetector.observeProfileSignals(profileHandle);
+          scheduleRecentHistoryBackfill(profileHandle, currentUser).catch(() => {});
         }
       }
     } finally {

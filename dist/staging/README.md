@@ -2,7 +2,7 @@
 
 > **Created by [@MaserSuspended](https://x.com/MaserSuspended)**  
 > **Live relationship & mutual interaction score tracker for X (Twitter).**  
-> Pure Chrome Extension (Manifest V3) • 100% Local Storage • Zero Backend • Zero API Fees.
+> Chromium Extension for Chrome and Edge (Manifest V3) • 100% Local Storage • Zero Backend.
 
 ---
 
@@ -18,7 +18,9 @@
   - **Automatic Switch Detection on X**: Detects whenever you switch accounts on X (via the bottom-left account switcher or navigation) and instantly recalculates and swaps all badges on your timeline, profiles, and ScoreCard with zero page reload.
   - **Popup Account Dropdown Switcher**: Click the account selector in the popup header to toggle between any detected account and view its separate CRM leaderboard, solar orbit, and engagement memory.
   - **Lossless Auto-Migration**: Automatically migrates existing single-account scores into your detected account on first launch.
-- **Tracks every like, reply, and Direct Message (DM) you send** to build a comprehensive relationship history.
+- **Tracks observed interactions in both directions** and stores the event ledger locally for score recalculation.
+- **Seven-day profile catch-up**: performs one bounded recent-post scan the first time you view a profile, then relies on passive tracking. X may not expose every interaction, especially older likes and notifications.
+- A failed catch-up is retried no more than once per day; a successful one is remembered for that account and profile.
 - **Profile Follow Badges**: Displays vibrant, live relationship badges directly on user profiles:
   - `🤝 Mutual`: Both you and the user follow each other.
   - `➡️ One-Way Follow`: You follow them, but they do not follow you back.
@@ -30,7 +32,7 @@
 - **Relationship CRM Classification**: Automatically categorizes every bond into **💖 Besties**, **🤝 Mutuals**, **➡️ One-sided (You lead / They lead)**, or **👤 Stranger**.
 - **Personal Relationship History Ledger**: View a full filterable timeline of all interactions (DMs, Replies, Likes, Quotes) in the Score Card.
 - **Rises** with frequent mutual replies, quote tweets, comments, DMs, and likes.
-- **Smoothly decays** over time if you and the other account stop interacting.
+- **Keeps the local event history** while the score stays steady for five inactive days, then gradually decays.
 - **Displays subtly** right next to handles on timelines, profile pages, and tweet threads.
 - **Provides an interactive Score Card** when you click any badge, showing conversation breakdowns, reply ratios, reciprocity radar, and notes.
 - **Supports Deep Mode**: On-demand deep search through mutual tweet histories without requiring Twitter's official paid API.
@@ -39,8 +41,8 @@
 
 ## 🚀 Quick Start / How to Install
 
-1. Open Google Chrome.
-2. Navigate to `chrome://extensions/` in the URL bar.
+1. Open Google Chrome or Microsoft Edge.
+2. Navigate to `chrome://extensions/` or `edge://extensions/` in the URL bar.
 3. Turn on **Developer mode** (toggle in the top-right corner).
 4. Click **Load unpacked** (top-left button).
 5. Select this directory:
@@ -149,7 +151,7 @@ $$Score = 100 \times \left(1 - e^{-\frac{\text{RawScore}}{45}}\right)$$
 | **Like / Repost** | `+2 pts` | Diminishing returns ($N > 3$) | Lightweight engagement signal |
 
 ### Time-Decay Model
-- **Grace Period**: 2 days (no decay for 48 hours following an interaction).
+- **Grace Period**: 5 days (no decay during the first five days after the latest interaction).
 - **Decay Rate**: Exponential half-life ($\lambda = \frac{\ln 2}{14 \text{ days}}$ by default).
 - Configurable via the **Extension Popup > Decay & Weights** sliders.
 

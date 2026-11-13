@@ -340,8 +340,8 @@ function setupFilterPills() {
 
 function getCRMStatusForUser(u) {
   if (u.crmStatusData) return u.crmStatusData;
-  const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likes || 0))) || 0;
-  const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0))) || 0;
+  const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.mentionsSent || 0))) || 0;
+  const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
   return BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
 }
 
@@ -360,16 +360,16 @@ function applyFilterAndRender() {
     });
   } else if (currentFilter === 'supporters') {
     list = list.filter(u => {
-      const s = ((u.stats && u.stats.repliesSent) || 0) + ((u.stats && u.stats.dmsSent) || 0) + ((u.stats && u.stats.likes) || 0);
-      const r = ((u.stats && u.stats.repliesReceived) || 0) + ((u.stats && u.stats.dmsReceived) || 0);
+      const s = ((u.stats && u.stats.repliesSent) || 0) + ((u.stats && u.stats.dmsSent) || 0) + (u.stats && (u.stats.likesSent ?? u.stats.likes) || 0) + ((u.stats && u.stats.quotesSent) || 0) + ((u.stats && u.stats.mentionsSent) || 0);
+      const r = ((u.stats && u.stats.repliesReceived) || 0) + ((u.stats && u.stats.dmsReceived) || 0) + ((u.stats && u.stats.likesReceived) || 0) + ((u.stats && u.stats.quotesReceived) || 0) + ((u.stats && u.stats.mentionsReceived) || 0);
       return r > 0 && (r >= s || r >= 2);
     });
   } else if (currentFilter === 'dormant') {
     const now = Date.now();
     list = list.filter(u => {
       const days = Math.floor((now - (u.lastInteraction || now)) / 86400000);
-      const s = ((u.stats && u.stats.repliesSent) || 0) + ((u.stats && u.stats.dmsSent) || 0) + ((u.stats && u.stats.likes) || 0);
-      const r = ((u.stats && u.stats.repliesReceived) || 0) + ((u.stats && u.stats.dmsReceived) || 0);
+      const s = ((u.stats && u.stats.repliesSent) || 0) + ((u.stats && u.stats.dmsSent) || 0) + (u.stats && (u.stats.likesSent ?? u.stats.likes) || 0) + ((u.stats && u.stats.quotesSent) || 0) + ((u.stats && u.stats.mentionsSent) || 0);
+      const r = ((u.stats && u.stats.repliesReceived) || 0) + ((u.stats && u.stats.dmsReceived) || 0) + ((u.stats && u.stats.likesReceived) || 0) + ((u.stats && u.stats.quotesReceived) || 0) + ((u.stats && u.stats.mentionsReceived) || 0);
       return days >= 14 && ((u.currentScore || 0) > 5 || (s + r) > 0);
     });
   } else if (currentFilter === 'besties') {
@@ -870,7 +870,7 @@ async function loadSettingsForm() {
   halfLifeInput.value = settings.decayHalfLifeDays || 14;
   halfLifeVal.innerText = `${halfLifeInput.value} days`;
 
-  graceInput.value = settings.gracePeriodDays || 2;
+  graceInput.value = settings.gracePeriodDays ?? 5;
   graceVal.innerText = `${graceInput.value} days`;
 
   const weights = settings.weights || {};

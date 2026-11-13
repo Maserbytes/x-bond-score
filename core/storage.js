@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Local Storage Layer (v1.1.0)
+ * BondScore for X - Local Storage Layer (v1.1.2)
  * Manages interactions, user records, cached scores, notes, streaks, and settings using chrome.storage.local.
  * Completely private, zero-backend, and offline-first.
  */
@@ -7,7 +7,7 @@
 const DEFAULT_SETTINGS = {
   theme: 'system', // 'system' | 'dark' | 'light'
   decayHalfLifeDays: 14,
-  gracePeriodDays: 2,
+  gracePeriodDays: 5,
   weights: {
     mutualReply: 15,
     dmMutual: 20,
@@ -121,6 +121,10 @@ class BondStorage {
       }
       this.accountsMetadata = data.accountsMetadata || {};
       this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+      if (this.settingsCache.gracePeriodDays === 2) {
+        this.settingsCache.gracePeriodDays = 5;
+        await this._setRaw({ settings: this.settingsCache });
+      }
       this.isInitialized = true;
 
       // Automatically migrate legacy non-namespaced keys into current account if known
@@ -349,6 +353,10 @@ class BondStorage {
     if (!this.settingsCache) {
       const res = await this._getRaw(['settings']);
       this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, res.settings || {});
+      if (this.settingsCache.gracePeriodDays === 2) {
+        this.settingsCache.gracePeriodDays = 5;
+        await this._setRaw({ settings: this.settingsCache });
+      }
     }
     return this.settingsCache;
   }
@@ -539,6 +547,47 @@ class BondStorage {
     await this._setRaw({ [key]: events });
   }
 
+  _buildDirectionalStats(events, existingStats = {}) {
+    const stats = {
+      ...existingStats,
+      repliesSent: 0, repliesReceived: 0,
+      dmsSent: 0, dmsReceived: 0,
+      likes: 0, likesSent: 0, likesReceived: 0,
+      quotes: 0, quotesSent: 0, quotesReceived: 0,
+      mentionsSent: 0, mentionsReceived: 0, mutualExchanges: 0
+    };
+    for (const evt of events || []) {
+      const inbound = evt.direction === 'inbound' || ['reply_received', 'dm_received', 'mention'].includes(evt.type);
+      if (evt.type === 'reply_mutual' || evt.type === 'dm_mutual') {
+        if (evt.type === 'reply_mutual') { stats.repliesSent++; stats.repliesReceived++; }
+        if (evt.type === 'dm_mutual') { stats.dmsSent++; stats.dmsReceived++; }
+      } else if (['reply_sent', 'reply_received', 'reply_thread'].includes(evt.type)) {
+        stats[inbound ? 'repliesReceived' : 'repliesSent']++;
+      } else if (['dm_sent', 'dm_received'].includes(evt.type)) {
+        stats[inbound ? 'dmsReceived' : 'dmsSent']++;
+      } else if (evt.type === 'like') {
+        stats.likes++;
+        stats[inbound ? 'likesReceived' : 'likesSent']++;
+      } else if (evt.type === 'quote') {
+        stats.quotes++;
+        stats[inbound ? 'quotesReceived' : 'quotesSent']++;
+      } else if (evt.type === 'mention') {
+        stats[inbound ? 'mentionsReceived' : 'mentionsSent']++;
+      }
+      if (evt.isMutual || evt.type === 'reply_mutual' || evt.type === 'dm_mutual' || evt.type === 'signal_mutual_follow' || evt.type === 'signal_follow_back') {
+        stats.mutualExchanges++;
+      }
+    }
+    return stats;
+  }
+
+  async rebuildDirectionalStats(handle, account = null) {
+    const user = await this.getUser(handle, false, account);
+    if (!user) return null;
+    user.stats = this._buildDirectionalStats(await this.getEvents(handle, account), user.stats || {});
+    return await this.saveUser(handle, user, account);
+  }
+
   /**
    * Records a new interaction event, deduplicating by event ID or tweet ID.
    * Isolated to the active account.
@@ -564,7 +613,7 @@ class BondStorage {
     
     // Check duplicate by tweetId if provided
     if (eventData.tweetId) {
-      const exists = events.some(e => e.tweetId === eventData.tweetId && e.type === eventData.type);
+      const exists = events.some(e => e.tweetId === eventData.tweetId);
       if (exists) {
         return await this.getUser(cleanHandle, false, activeAccount);
       }
@@ -578,7 +627,12 @@ class BondStorage {
       textSnippet: eventData.textSnippet ? eventData.textSnippet.slice(0, 140) : null,
       isMutual: !!eventData.isMutual,
       isThread: !!eventData.isThread,
-      direction: eventData.direction || (eventData.type.includes('received') ? 'inbound' : 'outbound'),
+      direction: eventData.direction || (
+        ['reply_received', 'dm_received', 'mention'].includes(eventData.type) ||
+        eventData.type === 'signal_follow_back'
+          ? 'inbound'
+          : 'outbound'
+      ),
       weight: eventData.weight || null
     };
 
@@ -618,42 +672,17 @@ class BondStorage {
     if (eventData.avatarUrl) user.avatarUrl = eventData.avatarUrl;
     if (!user.stats) user.stats = {};
 
-    if (newEvent.type === 'reply_sent' || newEvent.type === 'reply_thread') user.stats.repliesSent = (user.stats.repliesSent || 0) + 1;
-    if (newEvent.type === 'reply_received') user.stats.repliesReceived = (user.stats.repliesReceived || 0) + 1;
-    if (newEvent.type === 'dm_sent') user.stats.dmsSent = (user.stats.dmsSent || 0) + 1;
-    if (newEvent.type === 'dm_received') user.stats.dmsReceived = (user.stats.dmsReceived || 0) + 1;
-    if (newEvent.type === 'like') user.stats.likes = (user.stats.likes || 0) + 1;
-    if (newEvent.type === 'quote') user.stats.quotes = (user.stats.quotes || 0) + 1;
-    if (newEvent.isMutual) user.stats.mutualExchanges = (user.stats.mutualExchanges || 0) + 1;
+    // Rebuild counters from the ledger, including for existing installations.
+    user.stats = this._buildDirectionalStats(events, user.stats);
 
     user.lastInteraction = Math.max(user.lastInteraction || 0, newEvent.timestamp);
 
-    // Recalculate score & streaks with guaranteed upward continuation
+    // Recalculate from the event ledger so recent activity raises the score and inactivity can decay it.
     const scoringEngine = this._getScoringEngine();
     if (scoringEngine) {
       const settings = await this.getSettings();
-      let minBoost = 0;
-      switch (newEvent.type) {
-        case 'signal_follow_back': minBoost = 12; break;
-        case 'signal_mutual_follow': minBoost = 14; break;
-        case 'signal_you_followed': minBoost = 4; break;
-        case 'signal_unfollowed':
-        case 'signal_blocked':
-        case 'signal_you_unfollowed': minBoost = 0; break;
-        case 'reply_mutual': minBoost = 14; break;
-        case 'reply_thread': minBoost = 14; break;
-        case 'dm_mutual': minBoost = 15; break;
-        case 'dm_sent': minBoost = 10; break;
-        case 'dm_received': minBoost = 10; break;
-        case 'reply_sent': minBoost = newEvent.isMutual ? 12 : 8; break;
-        case 'reply_received': minBoost = 8; break;
-        case 'quote': minBoost = 6; break;
-        case 'like': minBoost = 3; break;
-        case 'deep_sync': minBoost = 10; break;
-        default: minBoost = 2; break;
-      }
       const previousScore = user.currentScore || 0;
-      const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } = scoringEngine.calculateUserScore(events, settings, previousScore, minBoost);
+      const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } = scoringEngine.calculateUserScore(events, settings, previousScore);
       user.currentScore = score;
       user.tier = tier.id;
       user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
@@ -877,8 +906,8 @@ class BondStorage {
               const h = value.handle.toLowerCase().trim();
               if (h && (!targetAccount || h !== targetAccount)) {
                 if (!value.crmStatusData && typeof BondScoring !== 'undefined') {
-                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likes || 0))) || 0;
-                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0))) || 0;
+                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent ?? value.stats.likes ?? 0) + (value.stats.quotesSent || 0) + (value.stats.mentionsSent || 0))) || 0;
+                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
                   value.crmStatusData = BondScoring.calculateCRMStatus(value.currentScore || 0, sSent, sRecv, value.streakDays || 0);
                   value.crmStatus = value.crmStatusData.label;
                   value.crmStatusId = value.crmStatusData.id;
@@ -927,8 +956,8 @@ class BondStorage {
                 const h = u.handle.toLowerCase().trim();
                 if (h && (!targetAccount || h !== targetAccount)) {
                   if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
-                    const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likes || 0))) || 0;
-                    const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0))) || 0;
+                    const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.mentionsSent || 0))) || 0;
+                    const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
                     u.crmStatusData = BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
                     u.crmStatus = u.crmStatusData.label;
                     u.crmStatusId = u.crmStatusData.id;
@@ -1016,7 +1045,7 @@ class BondStorage {
         chrome.storage.local.get(null, (items) => {
           resolve({
             app: 'BondScore for X',
-            version: '1.1.0',
+            version: '1.1.2',
             exportedAt: new Date().toISOString(),
             data: items || {}
           });
@@ -1033,7 +1062,7 @@ class BondStorage {
         }
         resolve({
           app: 'BondScore for X',
-          version: '1.1.0',
+          version: '1.1.2',
           exportedAt: new Date().toISOString(),
           data: items
         });

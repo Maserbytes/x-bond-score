@@ -16,7 +16,7 @@ class BaseDeepProvider {
    * @param {Function} onProgress - callback({ percent: number, stage: string, itemsFound: number })
    * @returns {Promise<Array<{ type: string, timestamp: number, tweetId: string, textSnippet: string, isMutual: boolean }>>}
    */
-  async analyze(currentUser, targetUser, onProgress) {
+  async analyze(currentUser, targetUser, onProgress, options = {}) {
     throw new Error('Not implemented');
   }
 }
@@ -32,7 +32,7 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
     super('XSearchQueryAnalyzer');
   }
 
-  async analyze(currentUser, targetUser, onProgress) {
+  async analyze(currentUser, targetUser, onProgress, options = {}) {
     const cleanCurrent = (currentUser || '').replace(/^@/, '').toLowerCase().trim();
     const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
 
@@ -42,7 +42,9 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
 
     onProgress({ percent: 10, stage: 'Preparing interaction query...', itemsFound: 0 });
 
-    const searchQuery = `(from:${cleanCurrent} to:${cleanTarget}) OR (from:${cleanTarget} to:${cleanCurrent})`;
+    const windowDays = Math.max(1, Math.min(7, Number(options.windowDays) || 7));
+    const since = new Date(Date.now() - windowDays * 86400000).toISOString().slice(0, 10);
+    const searchQuery = `((from:${cleanCurrent} to:${cleanTarget}) OR (from:${cleanTarget} to:${cleanCurrent})) since:${since}`;
     console.log(`[BondScore] Deep analyzing via query: ${searchQuery}`);
 
     // Check if user has plugged in a custom function (e.g. Rezero Sanctuary)
@@ -53,13 +55,13 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
     }
 
     // Default internal search pipeline
-    return await this._executeSearchPipeline(cleanCurrent, cleanTarget, searchQuery, onProgress);
+    return await this._executeSearchPipeline(cleanCurrent, cleanTarget, searchQuery, onProgress, windowDays);
   }
 
   /**
    * Default execution pipeline using X's internal search query
    */
-  async _executeSearchPipeline(currentUser, targetUser, query, onProgress) {
+  async _executeSearchPipeline(currentUser, targetUser, query, onProgress, windowDays = 7) {
     const results = [];
     const now = Date.now();
 
@@ -70,10 +72,9 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
       const csrfToken = this._getCsrfToken();
       if (csrfToken) {
         onProgress({ percent: 50, stage: 'Querying X internal search timeline...', itemsFound: 0 });
-        const apiEvents = await this._queryInternalApi(query, csrfToken);
-        if (apiEvents && apiEvents.length > 0) {
-          results.push(...apiEvents);
-        }
+        const apiEvents = await this._queryInternalApi(query, csrfToken, currentUser, targetUser, windowDays);
+        if (apiEvents && apiEvents.scanCompleted) results.scanCompleted = true;
+        if (apiEvents && apiEvents.length > 0) results.push(...apiEvents);
       }
     } catch (err) {
       console.warn('[BondScore] Internal search query failed, using DOM / heuristic fallback:', err);
@@ -100,7 +101,7 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
   /**
    * Internal query to X Search timeline API
    */
-  async _queryInternalApi(query, csrfToken) {
+  async _queryInternalApi(query, csrfToken, currentUser, targetUser, windowDays = 7) {
     try {
       const url = `https://x.com/i/api/2/search/adaptive.json?q=${encodeURIComponent(query)}&count=40&query_source=typed_query&pc=1&spelling_corrections=1`;
       const res = await fetch(url, {
@@ -116,34 +117,38 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
       if (!res.ok) return [];
       const json = await res.json();
       const events = [];
-      const tweets = (json && json.globalObjects && json.globalObjects.tweets) ? json.globalObjects.tweets : {};
+      const hasTweetCollection = !!(json && json.globalObjects && json.globalObjects.tweets && typeof json.globalObjects.tweets === 'object');
+      if (!hasTweetCollection) return [];
+      const tweets = json.globalObjects.tweets;
+      const users = (json && json.globalObjects && json.globalObjects.users) ? json.globalObjects.users : {};
+      const earliest = Date.now() - windowDays * 86400000;
 
       for (const [tweetId, tweet] of Object.entries(tweets)) {
+        const author = users[tweet.user_id_str] || {};
+        const authorHandle = (author.screen_name || tweet.user_screen_name || '').toLowerCase();
+        const timestamp = new Date(tweet.created_at).getTime();
+        if (!timestamp || timestamp < earliest) continue;
+        if (authorHandle !== currentUser && authorHandle !== targetUser) continue;
         const text = tweet.full_text || '';
         const inReplyTo = tweet.in_reply_to_screen_name ? tweet.in_reply_to_screen_name.toLowerCase() : '';
 
-        let type = 'reply_mutual';
-        let isMutual = true;
-
-        if (inReplyTo) {
-          type = 'reply_mutual';
-          isMutual = true;
-        } else if (tweet.is_quote_status) {
-          type = 'quote';
-          isMutual = false;
-        } else {
-          type = 'mention';
-          isMutual = false;
-        }
+        const direction = authorHandle === currentUser ? 'outbound' : 'inbound';
+        const isReply = !!inReplyTo;
+        const type = isReply
+          ? (direction === 'outbound' ? 'reply_sent' : 'reply_received')
+          : (tweet.is_quote_status ? 'quote' : 'mention');
 
         events.push({
           type,
-          timestamp: new Date(tweet.created_at).getTime() || Date.now(),
+          timestamp,
           tweetId: tweetId,
           textSnippet: text,
-          isMutual
+          direction,
+          isMutual: false,
+          isThread: isReply
         });
       }
+      events.scanCompleted = true;
       return events;
     } catch (e) {
       return [];
@@ -186,12 +191,19 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
         const isFromTarget = authorHandle === targetUser;
 
         if (isFromCurrent || isFromTarget) {
+          const counterpart = isFromCurrent ? targetUser : currentUser;
+          const fullText = tweetEl.innerText || text;
+          const counterpartPattern = new RegExp(`@${counterpart}\\b`, 'i');
+          if (!counterpartPattern.test(fullText)) return;
+          const isReply = /Replying to\s+@/i.test(fullText);
           events.push({
-            type: isFromCurrent ? 'reply_sent' : 'reply_received',
+            type: isReply ? (isFromCurrent ? 'reply_sent' : 'reply_received') : 'mention',
             timestamp,
             tweetId,
             textSnippet: text,
-            isMutual: true
+            isMutual: false,
+            direction: isFromCurrent ? 'outbound' : 'inbound',
+            isThread: isReply
           });
         }
       } catch (err) {
@@ -235,7 +247,7 @@ class DeepAnalyzerManager {
   /**
    * Performs deep analysis on a specific target user.
    */
-  async runAnalysis(currentUser, targetUser, onProgress = () => {}) {
+  async runAnalysis(currentUser, targetUser, onProgress = () => {}, options = {}) {
     const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
     if (this.activeScans.has(cleanTarget)) {
       console.warn(`[BondScore] Deep analysis already in progress for @${cleanTarget}`);
@@ -244,7 +256,7 @@ class DeepAnalyzerManager {
 
     this.activeScans.add(cleanTarget);
     try {
-      const events = await this.provider.analyze(currentUser, cleanTarget, onProgress);
+      const events = await this.provider.analyze(currentUser, cleanTarget, onProgress, options);
 
       if (events && events.length > 0) {
         onProgress({ percent: 90, stage: 'Saving records to local storage...', itemsFound: events.length });
@@ -260,6 +272,12 @@ class DeepAnalyzerManager {
           user.stats.deepScans = (user.stats.deepScans || 0) + 1;
           await window.bondStorage.saveUser(cleanTarget, user);
         }
+      }
+
+      if (events && events.scanCompleted) {
+        const user = (await window.bondStorage.getUser(cleanTarget)) || { handle: cleanTarget };
+        user.historyBackfillAt = Date.now();
+        await window.bondStorage.saveUser(cleanTarget, user);
       }
 
       onProgress({ percent: 100, stage: 'Ready!', itemsFound: events.length });

@@ -602,7 +602,7 @@ class InteractionDetector {
           displayName: author.displayName,
           avatarUrl: author.avatarUrl,
           textSnippet: text.slice(0, 140),
-          isMutual: isReplyToMe,
+          isMutual: false,
           isThread,
           direction: 'inbound'
         }, this.currentUser);
@@ -653,7 +653,7 @@ class InteractionDetector {
           type,
           tweetId: cellId,
           textSnippet: text.slice(0, 100),
-          isMutual: type === 'reply_received',
+          isMutual: false,
           direction: 'inbound'
         }, this.currentUser);
 
