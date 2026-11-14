@@ -1,5 +1,5 @@
 /**
- * BondScore for X - UI Injection & Score Card Component (v1.1.2)
+ * BondScore for X - UI Injection & Score Card Component (v1.1.3)
  * Renders badges inline with streaks, reciprocity radar, 30-day sparklines, VIP pins, and private notes.
  */
 

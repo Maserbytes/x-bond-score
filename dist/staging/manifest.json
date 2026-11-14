@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BondScore for X - Relationship & Mutuals Tracker",
-  "version": "1.1.2",
+  "version": "1.1.4",
   "description": "Live relationship score for X (Twitter). Mutual interaction tracking, time-decay scoring, and deep conversation analysis.",
   "permissions": [
     "storage",

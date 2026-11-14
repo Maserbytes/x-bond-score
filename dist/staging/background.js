@@ -158,7 +158,6 @@ async function performDecayRecalculation() {
           updates[key] = user;
         }
       }
-    }
 
     if (Object.keys(updates).length > 0) {
       chrome.storage.local.set(updates);
