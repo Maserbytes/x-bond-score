@@ -56,6 +56,140 @@ const BondTiers = {
   }
 };
 
+/**
+ * 1:1 Direct Message Relationship Ranks
+ * Progressive ranks: Acquaintance -> Friend -> Close Friend -> Bestie -> Ride or Die
+ */
+const DmRanks = {
+  RIDE_OR_DIE: {
+    id: 'ride_or_die',
+    level: 5,
+    name: 'Ride or Die',
+    shortLabel: 'Ride or Die',
+    emoji: '👑',
+    minScore: 91,
+    maxScore: 100,
+    color: '#A855F7', // Royal purple / electric violet
+    bg: 'rgba(168, 85, 247, 0.16)',
+    border: 'rgba(168, 85, 247, 0.40)',
+    glow: '0 0 12px rgba(168, 85, 247, 0.35)',
+    description: 'Unbreakable bond. Constant conversations, instant replies, peak loyalty.'
+  },
+  BESTIE: {
+    id: 'bestie',
+    level: 4,
+    name: 'Bestie',
+    shortLabel: 'Bestie',
+    emoji: '💖',
+    minScore: 76,
+    maxScore: 90,
+    color: '#F91880', // Hot pink
+    bg: 'rgba(249, 24, 128, 0.16)',
+    border: 'rgba(249, 24, 128, 0.40)',
+    glow: '0 0 10px rgba(249, 24, 128, 0.30)',
+    description: 'Deep trusted friend. Frequent daily chats and balanced two-way exchanges.'
+  },
+  CLOSE_FRIEND: {
+    id: 'close_friend',
+    level: 3,
+    name: 'Close Friend',
+    shortLabel: 'Close Friend',
+    emoji: '🔥',
+    minScore: 51,
+    maxScore: 75,
+    color: '#F59E0B', // Amber flame
+    bg: 'rgba(245, 158, 11, 0.16)',
+    border: 'rgba(245, 158, 11, 0.40)',
+    glow: '0 0 8px rgba(245, 158, 11, 0.25)',
+    description: 'Strong connection with active message streaks and mutual dialogue.'
+  },
+  FRIEND: {
+    id: 'friend',
+    level: 2,
+    name: 'Friend',
+    shortLabel: 'Friend',
+    emoji: '🤝',
+    minScore: 26,
+    maxScore: 50,
+    color: '#38BDF8', // Sky blue
+    bg: 'rgba(56, 189, 248, 0.16)',
+    border: 'rgba(56, 189, 248, 0.35)',
+    glow: 'none',
+    description: 'Solid casual banter and regular comfortable replies.'
+  },
+  ACQUAINTANCE: {
+    id: 'acquaintance',
+    level: 1,
+    name: 'Acquaintance',
+    shortLabel: 'Acquaintance',
+    emoji: '👋',
+    minScore: 0,
+    maxScore: 25,
+    color: '#94A3B8', // Slate gray
+    bg: 'rgba(148, 163, 184, 0.14)',
+    border: 'rgba(148, 163, 184, 0.25)',
+    glow: 'none',
+    description: 'Occasional light DMs. Just getting to know each other.'
+  }
+};
+
+/**
+ * Group Chat Energy Levels
+ * Measures vitality, activity rate, and member participation health
+ */
+const GroupEnergyLevels = {
+  BUZZING: {
+    id: 'buzzing',
+    name: 'Buzzing',
+    emoji: '⚡',
+    minScore: 80,
+    color: '#10B981', // Vibrant emerald
+    bg: 'rgba(16, 185, 129, 0.16)',
+    border: 'rgba(16, 185, 129, 0.40)',
+    description: 'Chat is on fire! Messages flying and high participation.'
+  },
+  ACTIVE: {
+    id: 'active',
+    name: 'Active',
+    emoji: '🔥',
+    minScore: 55,
+    color: '#3B82F6', // Electric blue
+    bg: 'rgba(59, 130, 246, 0.16)',
+    border: 'rgba(59, 130, 246, 0.35)',
+    description: 'Regular energetic discussions and steady flow.'
+  },
+  CHILL: {
+    id: 'chill',
+    name: 'Chill',
+    emoji: '☕',
+    minScore: 30,
+    color: '#F59E0B', // Warm amber
+    bg: 'rgba(245, 158, 11, 0.16)',
+    border: 'rgba(245, 158, 11, 0.35)',
+    description: 'Casual banter at a relaxed and comfortable pace.'
+  },
+  COOLING: {
+    id: 'cooling',
+    name: 'Cooling',
+    emoji: '🍂',
+    minScore: 15,
+    color: '#F97316', // Rust orange
+    bg: 'rgba(249, 115, 22, 0.16)',
+    border: 'rgba(249, 115, 22, 0.35)',
+    description: 'Activity is slowing down. Has not had much chatter lately.'
+  },
+  INACTIVE: {
+    id: 'inactive',
+    name: 'Dying / Inactive',
+    emoji: '❄️',
+    minScore: 0,
+    color: '#64748B', // Faded slate
+    bg: 'rgba(100, 116, 139, 0.14)',
+    border: 'rgba(100, 116, 139, 0.25)',
+    description: 'Quiet group chat. Danger of becoming dormant.'
+  }
+};
+
 class BondScoring {
   /**
    * Returns tier metadata for a given score (0-100).
@@ -67,6 +201,311 @@ class BondScoring {
     if (s >= BondTiers.CONVERSANT.minScore) return BondTiers.CONVERSANT;
     if (s >= BondTiers.ACQUAINTANCE.minScore) return BondTiers.ACQUAINTANCE;
     return BondTiers.DORMANT;
+  }
+
+  /**
+   * Returns 1:1 DM relationship rank for a given score (0-100).
+   */
+  static getDmRank(score) {
+    const s = Math.max(0, Math.min(100, Math.round(score || 0)));
+    if (s >= DmRanks.RIDE_OR_DIE.minScore) return DmRanks.RIDE_OR_DIE;
+    if (s >= DmRanks.BESTIE.minScore) return DmRanks.BESTIE;
+    if (s >= DmRanks.CLOSE_FRIEND.minScore) return DmRanks.CLOSE_FRIEND;
+    if (s >= DmRanks.FRIEND.minScore) return DmRanks.FRIEND;
+    return DmRanks.ACQUAINTANCE;
+  }
+
+  /**
+   * Returns Group Chat energy level for a given energy score (0-100).
+   */
+  static getGroupEnergyLevel(score) {
+    const s = Math.max(0, Math.min(100, Math.round(score || 0)));
+    if (s >= GroupEnergyLevels.BUZZING.minScore) return GroupEnergyLevels.BUZZING;
+    if (s >= GroupEnergyLevels.ACTIVE.minScore) return GroupEnergyLevels.ACTIVE;
+    if (s >= GroupEnergyLevels.CHILL.minScore) return GroupEnergyLevels.CHILL;
+    if (s >= GroupEnergyLevels.COOLING.minScore) return GroupEnergyLevels.COOLING;
+    return GroupEnergyLevels.INACTIVE;
+  }
+
+  /**
+   * Formats duration in milliseconds into compact, glanceable text (e.g. 5m, 2h 15m, 3d).
+   */
+  static formatDuration(ms) {
+    if (!ms || ms <= 0) return '0m';
+    const totalMinutes = Math.floor(ms / 60000);
+    if (totalMinutes < 1) return 'Just now';
+    if (totalMinutes < 60) return `${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const mins = totalMinutes % 60;
+    if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    const days = Math.floor(hours / 24);
+    const remHours = hours % 24;
+    if (days < 7) return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+    const weeks = Math.floor(days / 7);
+    return `${weeks}w`;
+  }
+
+  /**
+   * Computes comprehensive analytics & bond score for a 1:1 Direct Message conversation.
+   * Considers frequency, two-way balance, recency decay, reply speed, and streaks.
+   */
+  static calculateDmMetrics(dmData = {}, settings = {}) {
+    const sentCount = dmData.sentCount || 0;
+    const receivedCount = dmData.receivedCount || 0;
+    const totalCount = sentCount + receivedCount;
+    const now = Date.now();
+    const msInDay = 86400000;
+    const fadingThresholdDays = settings.fadingThresholdDays ?? 3;
+
+    const lastSent = dmData.lastSentTimestamp || 0;
+    const lastReceived = dmData.lastReceivedTimestamp || 0;
+    const lastMessage = dmData.lastMessageTimestamp || Math.max(lastSent, lastReceived);
+
+    // 1. Median Reply Time & Formatting
+    const replyTimes = Array.isArray(dmData.replyTimes) ? dmData.replyTimes.filter(t => typeof t === 'number' && t > 0) : [];
+    let medianReplyTimeMs = 0;
+    if (replyTimes.length > 0) {
+      const sorted = [...replyTimes].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      medianReplyTimeMs = sorted.length % 2 !== 0 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    } else if (dmData.medianReplyTimeMs) {
+      medianReplyTimeMs = dmData.medianReplyTimeMs;
+    }
+
+    // 2. Reply Speed Multiplier Factor
+    let speedFactor = 1.0;
+    if (medianReplyTimeMs > 0) {
+      const hours = medianReplyTimeMs / 3600000;
+      if (hours <= 0.25) speedFactor = 1.15;       // Fast (< 15 mins)
+      else if (hours <= 1.0) speedFactor = 1.08;   // Prompt (< 1 hour)
+      else if (hours <= 6.0) speedFactor = 1.0;    // Standard (< 6 hours)
+      else if (hours <= 24.0) speedFactor = 0.92;  // Casual (< 24 hours)
+      else if (hours <= 48.0) speedFactor = 0.85;  // Slow (< 48 hours)
+      else speedFactor = 0.75;                     // Very slow
+    }
+
+    // 3. Balance Ratio & Reciprocity
+    let sentPercent = 50;
+    let receivedPercent = 50;
+    let balanceRatio = 1.0;
+    let balanceMultiplier = 1.0;
+
+    if (totalCount > 0) {
+      sentPercent = Math.round((sentCount / totalCount) * 100);
+      receivedPercent = 100 - sentPercent;
+      const minC = Math.min(sentCount, receivedCount);
+      const maxC = Math.max(sentCount, receivedCount);
+      balanceRatio = maxC > 0 ? (minC / maxC) : 0;
+      balanceMultiplier = 0.45 + (0.55 * balanceRatio);
+    }
+
+    // 4. Reply Rate % (inbound messages answered by user)
+    let replyRate = 100;
+    if (receivedCount > 0) {
+      replyRate = Math.min(100, Math.round((sentCount / receivedCount) * 100));
+    }
+
+    // 5. Waiting For Your Reply State
+    const waitingForUserReply = lastReceived > lastSent && totalCount > 0;
+    const waitingSinceTimestamp = waitingForUserReply ? lastReceived : null;
+    const waitingDurationMs = waitingForUserReply ? Math.max(0, now - lastReceived) : 0;
+
+    // 6. Recency Factor & Inactivity Decay
+    let recencyFactor = 1.0;
+    const daysSinceLast = lastMessage ? (now - lastMessage) / msInDay : 999;
+    if (daysSinceLast <= 1) {
+      recencyFactor = 1.0;
+    } else if (daysSinceLast <= 3) {
+      recencyFactor = 0.92;
+    } else if (daysSinceLast <= 7) {
+      recencyFactor = 0.78;
+    } else if (daysSinceLast <= 14) {
+      recencyFactor = 0.60;
+    } else {
+      const halfLife = settings.decayHalfLifeDays || 14;
+      const lambda = Math.LN2 / halfLife;
+      recencyFactor = 0.60 * Math.exp(-lambda * (daysSinceLast - 14));
+    }
+
+    // 7. Volume Factor (asymptotic scaling up to ~45 messages)
+    const volumeFactor = 1 - Math.exp(-totalCount / 32);
+
+    // 8. Streak Bonus
+    const dailyStreak = dmData.dailyStreak || 0;
+    const streakBonus = Math.min(15, dailyStreak * 1.5);
+
+    // 9. Final Bond Score
+    let rawScore = (volumeFactor * balanceMultiplier * recencyFactor * speedFactor * 85) + streakBonus;
+    if (totalCount === 0) rawScore = 0;
+    const bondScore = Math.min(100, Math.max(0, Math.round(rawScore * 10) / 10));
+    const rank = BondScoring.getDmRank(bondScore);
+
+    // 10. Progress to Next Rank
+    let nextRank = null;
+    let pointsToNext = 0;
+    let progressToNextPct = 100;
+
+    if (rank.id === 'acquaintance') {
+      nextRank = DmRanks.FRIEND;
+      pointsToNext = Math.max(0, Math.round((nextRank.minScore - bondScore) * 10) / 10);
+      progressToNextPct = Math.min(100, Math.round((bondScore / nextRank.minScore) * 100));
+    } else if (rank.id === 'friend') {
+      nextRank = DmRanks.CLOSE_FRIEND;
+      pointsToNext = Math.max(0, Math.round((nextRank.minScore - bondScore) * 10) / 10);
+      progressToNextPct = Math.min(100, Math.round(((bondScore - DmRanks.FRIEND.minScore) / (nextRank.minScore - DmRanks.FRIEND.minScore)) * 100));
+    } else if (rank.id === 'close_friend') {
+      nextRank = DmRanks.BESTIE;
+      pointsToNext = Math.max(0, Math.round((nextRank.minScore - bondScore) * 10) / 10);
+      progressToNextPct = Math.min(100, Math.round(((bondScore - DmRanks.CLOSE_FRIEND.minScore) / (nextRank.minScore - DmRanks.CLOSE_FRIEND.minScore)) * 100));
+    } else if (rank.id === 'bestie') {
+      nextRank = DmRanks.RIDE_OR_DIE;
+      pointsToNext = Math.max(0, Math.round((nextRank.minScore - bondScore) * 10) / 10);
+      progressToNextPct = Math.min(100, Math.round(((bondScore - DmRanks.BESTIE.minScore) / (nextRank.minScore - DmRanks.BESTIE.minScore)) * 100));
+    }
+
+    // 11. Fading Alert (soft warning if high bond conversation is going cold)
+    const isFading = bondScore >= 40 && daysSinceLast >= fadingThresholdDays;
+    const isCoolingCandidate = bondScore >= 35 && daysSinceLast >= 3 && daysSinceLast <= 28;
+
+    return {
+      bondScore,
+      rank,
+      nextRank,
+      pointsToNext,
+      progressToNextPct,
+      sentCount,
+      receivedCount,
+      totalCount,
+      sentPercent,
+      receivedPercent,
+      balanceRatio: Math.round(balanceRatio * 100) / 100,
+      replyRate,
+      medianReplyTimeMs,
+      formattedMedianReply: medianReplyTimeMs > 0 ? this.formatDuration(medianReplyTimeMs) : 'Instant / None',
+      waitingForUserReply,
+      waitingSinceTimestamp,
+      waitingDurationMs,
+      formattedWaitingDuration: waitingForUserReply ? this.formatDuration(waitingDurationMs) : null,
+      dailyStreak,
+      daysSinceLast: Math.floor(daysSinceLast),
+      isFading,
+      isCoolingCandidate,
+      speedFactor: Math.round(speedFactor * 100) / 100,
+      balanceMultiplier: Math.round(balanceMultiplier * 100) / 100,
+      recencyFactor: Math.round(recencyFactor * 100) / 100
+    };
+  }
+
+  /**
+   * Computes energy score, activity status, and active member roster for a Group Chat.
+   */
+  static calculateGroupEnergy(groupData = {}) {
+    const totalMessages = groupData.totalMessages || 0;
+    const recent3d = groupData.recentMessages3d || 0;
+    const recent7d = groupData.recentMessages7d || (recent3d * 2);
+    const lastMessage = groupData.lastMessageTimestamp || Date.now();
+    const now = Date.now();
+    const msInDay = 86400000;
+    const daysSince = Math.max(0, (now - lastMessage) / msInDay);
+
+    // 1. Member Participation Roster
+    const memberCounts = groupData.memberMessageCounts || {};
+    const memberEntries = Object.entries(memberCounts);
+    let memberSum = 0;
+    memberEntries.forEach(([, count]) => { memberSum += count; });
+    const effectiveTotal = Math.max(totalMessages, memberSum);
+
+    const activeMembers = memberEntries.map(([handle, count]) => {
+      const share = effectiveTotal > 0 ? Math.round((count / effectiveTotal) * 100) : 0;
+      return { handle, count, share };
+    }).sort((a, b) => b.count - a.count);
+
+    // 2. Diversity Score (0 to 20 pts)
+    const distinctMembers = activeMembers.length;
+    let diversityScore = 5;
+    if (distinctMembers >= 5) diversityScore = 20;
+    else if (distinctMembers >= 3) diversityScore = 15;
+    else if (distinctMembers >= 2) diversityScore = 10;
+
+    // 3. Message Volume Score (0 to 50 pts)
+    const activeVol = recent7d + Math.min(20, totalMessages * 0.2);
+    const volumeScore = Math.min(50, Math.round(50 * (1 - Math.exp(-activeVol / 25))));
+
+    // 4. Recency Score (0 to 30 pts)
+    let recencyScore = 30;
+    if (daysSince <= 1) recencyScore = 30;
+    else if (daysSince <= 3) recencyScore = 22;
+    else if (daysSince <= 7) recencyScore = 14;
+    else if (daysSince <= 14) recencyScore = 6;
+    else recencyScore = 0;
+
+    // 5. Final Group Energy Score
+    let energyScore = volumeScore + recencyScore + diversityScore;
+    if (totalMessages === 0) energyScore = 0;
+    energyScore = Math.min(100, Math.max(0, energyScore));
+
+    const energyLevel = BondScoring.getGroupEnergyLevel(energyScore);
+    const isDying = energyScore < 18 || daysSince >= 14;
+
+    return {
+      energyScore,
+      energyLevel,
+      isDying,
+      daysSinceLast: Math.floor(daysSince),
+      totalMessages,
+      recent7d,
+      activeMembers,
+      distinctMembers
+    };
+  }
+
+  /**
+   * Calculates overall combined relationship strength:
+   * Public Timeline interactions + Private Direct Message health.
+   */
+  static calculateCombinedRelationship(publicUser = null, dmConv = null, settings = {}) {
+    const pubScore = publicUser ? (publicUser.currentScore || 0) : 0;
+    const dmScore = dmConv ? (dmConv.bondScore || 0) : 0;
+    const hasDm = !!(dmConv && dmConv.totalCount > 0);
+
+    if (!hasDm) {
+      return {
+        combinedScore: pubScore,
+        publicScore: pubScore,
+        dmScore: 0,
+        hasDm: false,
+        synergy: false,
+        rank: BondScoring.getTier(pubScore),
+        dmRank: null,
+        label: 'Public Only'
+      };
+    }
+
+    const dmWeight = Math.max(0.1, Math.min(0.9, (settings.dmScoreWeightPercent ?? 50) / 100));
+    const pubWeight = 1 - dmWeight;
+
+    // Synergy bonus (+6 to +10 pts) if user is active BOTH publicly and privately
+    const hasSynergy = pubScore >= 30 && dmScore >= 35;
+    const synergyBonus = hasSynergy ? 8 : 0;
+
+    const baseScore = (pubScore * pubWeight) + (dmScore * dmWeight);
+    const combinedScore = Math.min(100, Math.max(0, Math.round(baseScore + synergyBonus)));
+
+    const publicTier = BondScoring.getTier(pubScore);
+    const dmRank = BondScoring.getDmRank(dmScore);
+    const combinedTier = BondScoring.getTier(combinedScore);
+
+    return {
+      combinedScore,
+      publicScore: pubScore,
+      dmScore,
+      hasDm: true,
+      synergy: hasSynergy,
+      publicTier,
+      dmRank,
+      combinedTier,
+      label: `${publicTier.shortName} • ${dmRank.shortLabel}`
+    };
   }
 
   /**
@@ -730,5 +1169,25 @@ class BondScoring {
   }
 }
 
-window.BondScoring = BondScoring;
-window.BondTiers = BondTiers;
+if (typeof window !== 'undefined') {
+  window.BondScoring = BondScoring;
+  window.BondTiers = BondTiers;
+  window.DmRanks = DmRanks;
+  window.GroupEnergyLevels = GroupEnergyLevels;
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.BondScoring = BondScoring;
+  globalThis.BondTiers = BondTiers;
+  globalThis.DmRanks = DmRanks;
+  globalThis.GroupEnergyLevels = GroupEnergyLevels;
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    BondScoring,
+    BondTiers,
+    DmRanks,
+    GroupEnergyLevels
+  };
+}

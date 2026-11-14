@@ -124,6 +124,12 @@
           scheduleRecentHistoryBackfill(profileHandle, currentUser).catch(() => {});
         }
       }
+
+      // 4. Process Direct Messages (Conversation row badges & open thread header pill)
+      if (location.pathname.startsWith('/messages') || document.querySelector('[data-testid="DMDrawer"]')) {
+        await window.interactionDetector.scanDmInbox();
+        await window.interactionDetector.scanActiveDmThread();
+      }
     } finally {
       isScanning = false;
     }

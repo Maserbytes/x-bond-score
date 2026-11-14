@@ -760,8 +760,30 @@ class InteractionDetector {
           isMutual: true
         }, this.currentUser);
 
+        // Record in DM conversation store
+        let convId = targetHandle;
+        const urlMatch = location.pathname.match(/\/messages\/([A-Za-z0-9_-]+)/i);
+        if (urlMatch && urlMatch[1]) {
+          convId = urlMatch[1].toLowerCase();
+        }
+        if (window.bondStorage && window.bondStorage.recordDmMessage) {
+          await window.bondStorage.recordDmMessage(convId, {
+            direction: 'outbound',
+            senderHandle: this.currentUser,
+            recipientHandle: targetHandle,
+            textSnippet,
+            timestamp: Date.now(),
+            displayName,
+            avatarUrl,
+            isGroup: false
+          }, this.currentUser).catch(() => {});
+        }
+
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(targetHandle, true);
+          if (window.bondUI.refreshDmHeaderPill) {
+            window.bondUI.refreshDmHeaderPill(convId);
+          }
         }
       }
     } catch (err) {
@@ -891,6 +913,134 @@ class InteractionDetector {
       }
     } catch (err) {
       console.warn('[BondScore Signals] Error observing profile signals:', err);
+    }
+  }
+
+  /**
+   * Scans visible DM conversations in the messages list or DM drawer.
+   * Extracts participant handles, unread state, and triggers UI badge injection.
+   */
+  async scanDmInbox() {
+    try {
+      const settings = window.bondStorage && window.bondStorage.settingsCache;
+      if (settings && settings.trackDirectMessages === false) return;
+
+      const convElements = document.querySelectorAll('[data-testid="conversation"]');
+      if (!convElements || convElements.length === 0) return;
+
+      for (const el of convElements) {
+        try {
+          const link = el.querySelector('a[href^="/messages/"]') || el.closest('a[href^="/messages/"]');
+          const href = link ? link.getAttribute('href') : '';
+          const match = href.match(/\/messages\/([A-Za-z0-9_-]+)/);
+          const convId = match ? match[1].toLowerCase() : null;
+          if (!convId) continue;
+
+          // Check if group (numeric ID or multiple members)
+          const isGroup = /^\d+$/.test(convId);
+
+          const text = el.innerText || '';
+          let participantHandle = null;
+          if (!isGroup) {
+            const handleMatch = text.match(/@([A-Za-z0-9_]{1,15})/);
+            if (handleMatch) {
+              participantHandle = handleMatch[1].toLowerCase();
+            } else if (convId.includes('-')) {
+              participantHandle = convId.split('-')[1].toLowerCase();
+            }
+          }
+
+          const img = el.querySelector('img[src*="profile_images"], img');
+          const avatarUrl = img ? (img.currentSrc || img.src || '') : '';
+          const nameEl = el.querySelector('div[dir="ltr"] span, span');
+          const displayName = nameEl ? nameEl.innerText.trim() : (participantHandle || convId);
+
+          const hasUnread = !!el.querySelector('[data-testid="unread-badge"], [aria-label*="unread" i]');
+
+          if (window.bondUI && window.bondUI.injectDmRowBadge) {
+            await window.bondUI.injectDmRowBadge(el, convId, participantHandle, isGroup, { displayName, avatarUrl, hasUnread });
+          }
+        } catch (err) {
+          // continue
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  /**
+   * Scans the active open DM thread to track inbound/outbound messages and waiting state.
+   */
+  async scanActiveDmThread() {
+    try {
+      const settings = window.bondStorage && window.bondStorage.settingsCache;
+      if (settings && settings.trackDirectMessages === false) return;
+
+      const container = document.querySelector('[data-testid="DMConversation"], [data-testid="DMDrawer"]');
+      if (!container) return;
+
+      const header = container.querySelector('[data-testid="conversation-header"]');
+      if (!header) return;
+
+      let convId = null;
+      let targetHandle = null;
+      const urlMatch = location.pathname.match(/\/messages\/([A-Za-z0-9_-]+)/i);
+      if (urlMatch && urlMatch[1]) {
+        convId = urlMatch[1].toLowerCase();
+        if (convId.includes('-')) {
+          targetHandle = convId.split('-')[1].toLowerCase();
+        }
+      }
+
+      const isGroup = convId ? /^\d+$/.test(convId) : false;
+
+      if (!targetHandle && !isGroup) {
+        const headerLinks = header.querySelectorAll('a[href^="/"]');
+        for (const l of headerLinks) {
+          const m = (l.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]+)$/);
+          if (m && m[1] && !['messages', 'home', 'explore', 'notifications', 'i'].includes(m[1].toLowerCase())) {
+            const h = m[1].toLowerCase();
+            if (!this.currentUser || h !== this.currentUser) {
+              targetHandle = h;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!convId && targetHandle) {
+        convId = targetHandle;
+      }
+      if (!convId) return;
+
+      // Scan message entries to observe direction of latest messages
+      const messageEntries = container.querySelectorAll('[data-testid="messageEntry"]');
+      if (messageEntries.length > 0) {
+        const lastEntry = messageEntries[messageEntries.length - 1];
+        const hasAvatar = !!lastEntry.querySelector('img[src*="profile_images"]');
+        const isOutbound = !hasAvatar && !!lastEntry.querySelector('[class*="r-18u37iz"], [style*="background-color: rgb(29, 155, 240)"]');
+
+        const existing = await window.bondStorage.getDmConversation(convId);
+        if (existing) {
+          const now = Date.now();
+          if (hasAvatar && !existing.waitingForUserReply) {
+            existing.waitingForUserReply = true;
+            existing.waitingSinceTimestamp = existing.waitingSinceTimestamp || now;
+            await window.bondStorage.saveDmConversation(convId, existing);
+          } else if (isOutbound && existing.waitingForUserReply) {
+            existing.waitingForUserReply = false;
+            existing.waitingSinceTimestamp = null;
+            await window.bondStorage.saveDmConversation(convId, existing);
+          }
+        }
+      }
+
+      if (window.bondUI && window.bondUI.injectDmHeaderPill) {
+        await window.bondUI.injectDmHeaderPill(header, convId, targetHandle, isGroup);
+      }
+    } catch (e) {
+      // ignore
     }
   }
 }

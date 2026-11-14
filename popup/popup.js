@@ -19,8 +19,8 @@ function shouldRefreshDashboardForStorageChanges(changes, activeAccount) {
   const account = (activeAccount || '').replace(/^@/, '').toLowerCase().trim();
   const prefix = account ? `acc:${account}:` : '';
   return Object.keys(changes).some((key) => account
-    ? key.startsWith(`${prefix}user:`) || key.startsWith(`${prefix}events:`)
-    : key.startsWith('user:') || key.startsWith('events:'));
+    ? key.startsWith(`${prefix}user:`) || key.startsWith(`${prefix}events:`) || key.startsWith(`${prefix}dm:`)
+    : key.startsWith('user:') || key.startsWith('events:') || key.startsWith('dm:'));
 }
 
 function queueDashboardRefresh() {
@@ -32,6 +32,7 @@ function queueDashboardRefresh() {
     const activeTab = document.querySelector('.tab-btn.active');
     if (activeTab && activeTab.dataset.tab === 'tab-orbit') renderOrbitCanvas();
     else if (activeTab && activeTab.dataset.tab === 'tab-radar') renderRadarTab();
+    else if (activeTab && activeTab.dataset.tab === 'tab-dms') renderDmsTab();
   }, 100);
 }
 
@@ -151,6 +152,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           renderOrbitCanvas();
         } else if (btn.dataset.tab === 'tab-radar') {
           renderRadarTab();
+        } else if (btn.dataset.tab === 'tab-dms') {
+          renderDmsTab();
         }
       }
     });
@@ -164,6 +167,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderRadarTab();
   setupFilterPills();
   setupSearchHandler();
+  setupDmFilterPills();
+  setupDmSearchHandler();
   setupOrbitExporter();
   setupTwoHandleLookup();
 
@@ -926,6 +931,25 @@ async function loadSettingsForm() {
   weightReplyInput.addEventListener('input', () => weightReplyVal.innerText = `${weightReplyInput.value} pts`);
   weightLikeInput.addEventListener('input', () => weightLikeVal.innerText = `${weightLikeInput.value} pts`);
 
+  // Direct Messages & Privacy Controls
+  const trackDmsInput = document.getElementById('setting-track-dms');
+  const fadingInput = document.getElementById('setting-fading-threshold');
+  const fadingVal = document.getElementById('setting-fading-val');
+  const dmWeightInput = document.getElementById('setting-dm-weight');
+  const dmWeightVal = document.getElementById('setting-dm-weight-val');
+
+  if (trackDmsInput) trackDmsInput.checked = settings.trackDirectMessages !== false;
+  if (fadingInput && fadingVal) {
+    fadingInput.value = settings.fadingThresholdDays ?? 3;
+    fadingVal.innerText = `${fadingInput.value} days`;
+    fadingInput.addEventListener('input', () => fadingVal.innerText = `${fadingInput.value} days`);
+  }
+  if (dmWeightInput && dmWeightVal) {
+    dmWeightInput.value = settings.dmScoreWeightPercent ?? 50;
+    dmWeightVal.innerText = `${dmWeightInput.value}%`;
+    dmWeightInput.addEventListener('input', () => dmWeightVal.innerText = `${dmWeightInput.value}%`);
+  }
+
   // Wire up theme segmented buttons in Settings tab
   const segBtns = document.querySelectorAll('.theme-seg-btn');
   segBtns.forEach(btn => {
@@ -944,6 +968,9 @@ async function loadSettingsForm() {
       theme: currentTheme,
       decayHalfLifeDays: parseInt(halfLifeInput.value, 10),
       gracePeriodDays: parseInt(graceInput.value, 10),
+      trackDirectMessages: trackDmsInput ? trackDmsInput.checked : true,
+      fadingThresholdDays: fadingInput ? parseInt(fadingInput.value, 10) : 3,
+      dmScoreWeightPercent: dmWeightInput ? parseInt(dmWeightInput.value, 10) : 50,
       weights: {
         ...(current.weights || {}),
         mutualReply: parseInt(weightMutualInput.value, 10),
@@ -1238,4 +1265,305 @@ function setupTwoHandleLookup() {
 function escapeHtml(str) {
   if (!str) return '';
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* ==========================================================================
+   💬 Direct Messages & Group Chats Dashboard Logic (v1.2)
+   ========================================================================== */
+
+let cachedDms = [];
+let currentDmFilter = 'all';
+
+function setupDmFilterPills() {
+  const pills = document.querySelectorAll('#dm-filter-pills .filter-pill');
+  pills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      pills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      currentDmFilter = pill.dataset.dmFilter || 'all';
+      renderDmSubSections(cachedDms, currentDmFilter);
+    });
+  });
+}
+
+function setupDmSearchHandler() {
+  const searchInput = document.getElementById('dm-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      renderDmSubSections(cachedDms, currentDmFilter);
+    });
+  }
+}
+
+/**
+ * 💬 Render DMs & Group Chats Analytics and Relationship System
+ */
+async function renderDmsTab() {
+  const allDms = await window.bondStorage.getAllDmConversations(currentUsername);
+  cachedDms = allDms;
+
+  const total = allDms.length;
+  const waitingList = allDms.filter(d => d.waitingForUserReply === true);
+  const waitingCount = waitingList.length;
+
+  const allReplyTimes = [];
+  let streakSum = 0;
+  allDms.forEach(d => {
+    if (d.medianReplyTimeMs > 0) allReplyTimes.push(d.medianReplyTimeMs);
+    if (d.dailyStreak > 1) streakSum++;
+  });
+
+  let avgSpeedText = '-';
+  if (allReplyTimes.length > 0) {
+    const avgMs = Math.round(allReplyTimes.reduce((a, b) => a + b, 0) / allReplyTimes.length);
+    avgSpeedText = BondScoring.formatDuration ? BondScoring.formatDuration(avgMs) : `${Math.round(avgMs / 60000)}m`;
+  }
+
+  const statTotal = document.getElementById('dm-stat-total');
+  const statWaiting = document.getElementById('dm-stat-waiting');
+  const statSpeed = document.getElementById('dm-stat-speed');
+  const statStreaks = document.getElementById('dm-stat-streaks');
+  const statBoxWaiting = document.getElementById('dm-stat-box-waiting');
+
+  if (statTotal) statTotal.innerText = total;
+  if (statWaiting) statWaiting.innerText = waitingCount;
+  if (statSpeed) statSpeed.innerText = avgSpeedText;
+  if (statStreaks) statStreaks.innerText = streakSum;
+
+  if (statBoxWaiting) {
+    statBoxWaiting.classList.toggle('has-waiting', waitingCount > 0);
+  }
+
+  renderDmSubSections(allDms, currentDmFilter);
+}
+
+function renderDmSubSections(allDms, filter = 'all') {
+  const searchInput = document.getElementById('dm-search-input');
+  const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+
+  let filtered = allDms;
+  if (query) {
+    filtered = filtered.filter(d => {
+      const title = (d.title || '').toLowerCase();
+      const id = (d.convId || '').toLowerCase();
+      const parts = Array.isArray(d.participants) ? d.participants.join(' ').toLowerCase() : '';
+      return title.includes(query) || id.includes(query) || parts.includes(query);
+    });
+  }
+
+  // 1. Waiting for your reply
+  const sectionWaiting = document.getElementById('dm-section-waiting');
+  const listWaiting = document.getElementById('dm-waiting-list');
+  const countWaiting = document.getElementById('dm-waiting-count');
+  const waitingItems = filtered.filter(d => d.waitingForUserReply === true);
+
+  if (countWaiting) countWaiting.innerText = waitingItems.length;
+  if (sectionWaiting && listWaiting) {
+    const showWaiting = filter === 'waiting' || (filter === 'all' && waitingItems.length > 0);
+    sectionWaiting.style.display = showWaiting ? 'block' : 'none';
+
+    if (waitingItems.length === 0) {
+      listWaiting.innerHTML = '<div class="dm-empty-state">🎉 All caught up! Zero conversations waiting on your reply.</div>';
+    } else {
+      listWaiting.innerHTML = waitingItems.map(d => {
+        const title = d.title || (d.participants && d.participants[0]) || d.convId;
+        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
+        const avatar = details ? details.avatarUrl : '';
+        const waitTime = d.formattedWaitingDuration || (BondScoring.formatDuration ? BondScoring.formatDuration(d.waitingDurationMs || 0) : 'recently');
+        const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
+
+        return `
+          <div class="dm-action-row" data-conv="${escapeHtml(d.convId)}">
+            <div class="dm-action-avatar">
+              ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
+            </div>
+            <div class="dm-action-meta">
+              <div class="dm-action-title-row">
+                <span class="dm-action-title">${escapeHtml(title)}</span>
+                <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.shortLabel}</span>
+              </div>
+              <div class="dm-action-sub">
+                <span class="dm-wait-tag">⏳ Waiting ${waitTime}</span>
+                <span>• ${d.replyRate ?? 100}% reply rate</span>
+              </div>
+            </div>
+            <button class="dm-reply-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Reply ↗</button>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 2. Who Should I Message? (Anti-Fading Smart List)
+  const sectionCold = document.getElementById('dm-section-cold');
+  const listCold = document.getElementById('dm-cold-list');
+  const countCold = document.getElementById('dm-cold-count');
+  const coldItems = filtered.filter(d => !d.isGroup && (d.isCoolingCandidate === true || d.isFading === true));
+
+  if (countCold) countCold.innerText = coldItems.length;
+  if (sectionCold && listCold) {
+    const showCold = filter === 'cold' || (filter === 'all' && coldItems.length > 0);
+    sectionCold.style.display = showCold ? 'block' : 'none';
+
+    if (coldItems.length === 0) {
+      listCold.innerHTML = '<div class="dm-empty-state">🔥 All high-bond relationships are warm and active!</div>';
+    } else {
+      listCold.innerHTML = coldItems.map(d => {
+        const title = d.title || (d.participants && d.participants[0]) || d.convId;
+        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
+        const avatar = details ? details.avatarUrl : '';
+        const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
+        const days = d.daysSinceLast || Math.floor((Date.now() - (d.lastMessageTimestamp || Date.now())) / 86400000);
+
+        return `
+          <div class="dm-action-row cold-row" data-conv="${escapeHtml(d.convId)}">
+            <div class="dm-action-avatar">
+              ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
+            </div>
+            <div class="dm-action-meta">
+              <div class="dm-action-title-row">
+                <span class="dm-action-title">${escapeHtml(title)}</span>
+                <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
+              </div>
+              <div class="dm-action-sub">
+                <span class="dm-cold-tag">🧊 Quiet for ${days} days</span>
+                <span>• Was Bond ${Math.round(d.bondScore || 0)}</span>
+              </div>
+            </div>
+            <button class="dm-reconnect-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Say Hi ↗</button>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 3. Closest Friends (1:1 Leaderboard)
+  const sectionClosest = document.getElementById('dm-section-closest');
+  const listClosest = document.getElementById('dm-closest-list');
+  const countClosest = document.getElementById('dm-closest-count');
+  let closestItems = filtered.filter(d => !d.isGroup && (d.bondScore || 0) > 0);
+  if (filter === 'streaks') closestItems = closestItems.filter(d => (d.dailyStreak || 0) > 1);
+  closestItems.sort((a, b) => (b.bondScore || 0) - (a.bondScore || 0));
+
+  if (countClosest) countClosest.innerText = closestItems.length;
+  if (sectionClosest && listClosest) {
+    const showClosest = filter !== 'groups' && filter !== 'cold' && filter !== 'waiting';
+    sectionClosest.style.display = showClosest ? 'block' : 'none';
+
+    if (closestItems.length === 0) {
+      listClosest.innerHTML = '<div class="dm-empty-state">No direct messages tracked yet. Chat on X to build your private bond scores!</div>';
+    } else {
+      listClosest.innerHTML = closestItems.map((d, idx) => {
+        const title = d.title || (d.participants && d.participants[0]) || d.convId;
+        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
+        const avatar = details ? details.avatarUrl : '';
+        const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
+        const score = Math.round(d.bondScore || 0);
+        const sentPct = d.sentPercent ?? (d.totalCount > 0 ? Math.round((d.sentCount / d.totalCount) * 100) : 50);
+        const recvPct = 100 - sentPct;
+
+        return `
+          <div class="dm-closest-card" data-conv="${escapeHtml(d.convId)}">
+            <div class="dm-closest-top">
+              <div class="dm-closest-user">
+                <span class="dm-closest-rank-num">#${idx + 1}</span>
+                <div class="dm-action-avatar">
+                  ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
+                </div>
+                <div class="dm-closest-names">
+                  <div class="dm-closest-name-row">
+                    <strong class="dm-closest-name">${escapeHtml(title)}</strong>
+                    <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
+                  </div>
+                  <div class="dm-closest-metrics-row">
+                    <span>⚡ ${d.formattedMedianReply || 'fast'}</span>
+                    ${d.dailyStreak > 1 ? `<span class="dm-streak-chip">🔥 ${d.dailyStreak}d</span>` : ''}
+                    <span>📬 ${d.replyRate ?? 100}% reply</span>
+                  </div>
+                </div>
+              </div>
+              <div class="dm-closest-score-badge" style="color: ${rank.color}; border: 1px solid ${rank.color}40; background: ${rank.bg}">
+                <span>${score}</span>
+              </div>
+            </div>
+
+            <!-- Balance Bar -->
+            <div class="dm-card-balance-wrap">
+              <div class="dm-card-balance-sent" style="width: ${sentPct}%;"></div>
+              <div class="dm-card-balance-recv" style="width: ${recvPct}%;"></div>
+            </div>
+            <div class="dm-card-balance-labels">
+              <span>You: ${d.sentCount || 0} (${sentPct}%)</span>
+              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open ↗</button>
+              <span>Them: ${d.receivedCount || 0} (${recvPct}%)</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 4. Group Chats
+  const sectionGroups = document.getElementById('dm-section-groups');
+  const listGroups = document.getElementById('dm-groups-list');
+  const countGroups = document.getElementById('dm-groups-count');
+  const groupItems = filtered.filter(d => d.isGroup === true);
+  groupItems.sort((a, b) => (b.groupEnergyScore || 0) - (a.groupEnergyScore || 0));
+
+  if (countGroups) countGroups.innerText = groupItems.length;
+  if (sectionGroups && listGroups) {
+    const showGroups = filter === 'groups' || (filter === 'all' && groupItems.length > 0);
+    sectionGroups.style.display = showGroups ? 'block' : 'none';
+
+    if (groupItems.length === 0) {
+      listGroups.innerHTML = '<div class="dm-empty-state">No group chats detected yet. Participate in group conversations on X to observe group energy!</div>';
+    } else {
+      listGroups.innerHTML = groupItems.map(d => {
+        const energyLevel = d.groupEnergyLevel || BondScoring.getGroupEnergyLevel(d.groupEnergyScore || 0);
+        const score = Math.round(d.groupEnergyScore || 0);
+        const activeMembers = (d.energyMetrics && d.energyMetrics.activeMembers) || [];
+
+        return `
+          <div class="dm-group-card" data-conv="${escapeHtml(d.convId)}">
+            <div class="dm-group-header">
+              <div class="dm-group-info">
+                <span class="dm-group-icon">👥</span>
+                <div>
+                  <strong class="dm-group-title">${escapeHtml(d.title || 'Group Chat')}</strong>
+                  <div class="dm-group-sub">${activeMembers.length || (d.participants ? d.participants.length : 1)} active participants</div>
+                </div>
+              </div>
+              <div class="bond-energy-tag bond-energy-${energyLevel.id}">
+                ${energyLevel.emoji} ${energyLevel.name} ${score}
+              </div>
+            </div>
+
+            <!-- Active Member Chips -->
+            <div class="dm-group-chips">
+              ${activeMembers.slice(0, 4).map(m => `
+                <span class="dm-member-chip">@${escapeHtml(m.handle)} (${m.share}%)</span>
+              `).join('')}
+            </div>
+
+            <div class="dm-group-footer">
+              <span class="dm-group-activity">${d.isDying ? '⚠️ Group is quiet / dormant' : `🔥 ${d.totalMessages || 0} messages recorded`}</span>
+              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open Group ↗</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // Wire up Open/Reply buttons to launch X messages
+  const actionBtns = document.querySelectorAll('.dm-reply-btn, .dm-reconnect-btn, .dm-open-btn');
+  actionBtns.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const url = btn.getAttribute('data-url');
+      if (url && typeof chrome !== 'undefined' && chrome.tabs) {
+        chrome.tabs.create({ url });
+      }
+    });
+  });
 }

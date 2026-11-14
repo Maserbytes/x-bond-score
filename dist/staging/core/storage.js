@@ -8,6 +8,10 @@ const DEFAULT_SETTINGS = {
   theme: 'system', // 'system' | 'dark' | 'light'
   decayHalfLifeDays: 14,
   gracePeriodDays: 5,
+  trackDirectMessages: true, // 100% private, on-device DM analytics toggle
+  fadingThresholdDays: 3,    // Soft fading alert threshold (days inactive)
+  dmScoreWeightPercent: 50,  // Weight % for DM score in combined bond
+  showBadgesInDMs: true,     // Render badges and header pills inside X DM conversations
   weights: {
     mutualReply: 15,
     dmMutual: 20,
@@ -32,6 +36,7 @@ class BondStorage {
   constructor() {
     this.memoryCache = new Map();
     this.eventsCache = new Map();
+    this.dmCache = new Map();
     this.settingsCache = null;
     this.currentUser = null;
     this.knownAccounts = [];
@@ -53,6 +58,7 @@ class BondStorage {
               this.currentUser = newAcc;
               this.memoryCache.clear();
               this.eventsCache.clear();
+              this.dmCache.clear();
               if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('bondscore:account_switched', {
                   detail: { previousAccount: prev, currentAccount: newAcc }
@@ -89,6 +95,18 @@ class BondStorage {
                 } else {
                   this.eventsCache.delete(handle);
                 }
+              } else if (subKey.startsWith('dm:')) {
+                const convId = subKey.replace('dm:', '');
+                if (change.newValue) {
+                  this.dmCache.set(convId, change.newValue);
+                } else {
+                  this.dmCache.delete(convId);
+                }
+                if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('bondscore:dm_updated', {
+                    detail: { convId, conversation: change.newValue }
+                  }));
+                }
               }
             } else if (!this.currentUser && key.startsWith('user:')) {
               // Legacy non-prefixed fallback
@@ -101,6 +119,18 @@ class BondStorage {
               if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
                 window.dispatchEvent(new CustomEvent('bondscore:updated', {
                   detail: { handle, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
+                }));
+              }
+            } else if (!this.currentUser && key.startsWith('dm:')) {
+              const convId = key.replace('dm:', '');
+              if (change.newValue) {
+                this.dmCache.set(convId, change.newValue);
+              } else {
+                this.dmCache.delete(convId);
+              }
+              if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('bondscore:dm_updated', {
+                  detail: { convId, conversation: change.newValue }
                 }));
               }
             }
@@ -150,6 +180,7 @@ class BondStorage {
   _getScoringEngine() {
     if (typeof BondScoring !== 'undefined') return BondScoring;
     if (typeof window !== 'undefined' && window.BondScoring) return window.BondScoring;
+    if (typeof globalThis !== 'undefined' && globalThis.BondScoring) return globalThis.BondScoring;
     return null;
   }
 
@@ -377,6 +408,12 @@ class BondStorage {
     const h = (handle || '').replace(/^@/, '').toLowerCase().trim();
     const acc = this._resolveActiveAccount(account);
     return acc ? `acc:${acc}:events:${h}` : `events:${h}`;
+  }
+
+  _dmKey(convId, account = null) {
+    const id = (convId || '').toLowerCase().trim();
+    const acc = this._resolveActiveAccount(account);
+    return acc ? `acc:${acc}:dm:${id}` : `dm:${id}`;
   }
 
   async getUser(handle, forceRefresh = false, account = null) {
@@ -998,6 +1035,420 @@ class BondStorage {
   }
 
   /**
+   * Retrieves a DM conversation record by conversation ID or recipient handle.
+   */
+  async getDmConversation(convId, forceRefresh = false, account = null) {
+    if (!convId) return null;
+    const cleanId = convId.toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
+    const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
+
+    if (!forceRefresh && isCurrentAcc && this.dmCache.has(cleanId)) {
+      return this.dmCache.get(cleanId);
+    }
+
+    const key = this._dmKey(cleanId, activeAccount);
+    const res = await this._getRaw([key]);
+    let conv = res[key] || null;
+
+    // Fallback: check legacy un-scoped key
+    if (!conv) {
+      const legacyKey = `dm:${cleanId}`;
+      const legacyRes = await this._getRaw([legacyKey]);
+      if (legacyRes[legacyKey]) {
+        conv = legacyRes[legacyKey];
+        if (activeAccount) {
+          await this._setRaw({ [key]: conv });
+        }
+      }
+    }
+
+    // Fallback: search by participant handle if convId is handle
+    if (!conv) {
+      const allDms = await this.getAllDmConversations(activeAccount);
+      conv = allDms.find(d => {
+        if (!d.isGroup && d.participants && d.participants.includes(cleanId.replace(/^@/, ''))) return true;
+        if (d.convId && d.convId.toLowerCase().includes(cleanId)) return true;
+        return false;
+      }) || null;
+    }
+
+    if (conv && isCurrentAcc) {
+      this.dmCache.set(cleanId, conv);
+    }
+    return conv;
+  }
+
+  /**
+   * Saves or updates a DM conversation record.
+   */
+  async saveDmConversation(convId, convData, account = null) {
+    if (!convId) return null;
+    const cleanId = convId.toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
+    const key = this._dmKey(cleanId, activeAccount);
+
+    const existing = (await this.getDmConversation(cleanId, false, activeAccount)) || {
+      convId: cleanId,
+      isGroup: false,
+      title: cleanId,
+      participants: [],
+      participantDetails: {},
+      sentCount: 0,
+      receivedCount: 0,
+      totalCount: 0,
+      lastSentTimestamp: 0,
+      lastReceivedTimestamp: 0,
+      lastMessageTimestamp: Date.now(),
+      lastSenderHandle: '',
+      waitingForUserReply: false,
+      waitingSinceTimestamp: null,
+      replyTimes: [],
+      medianReplyTimeMs: 0,
+      replyRate: 100,
+      dailyStreak: 0,
+      bondScore: 0,
+      rank: null,
+      isFading: false,
+      memberMessageCounts: {},
+      groupEnergyScore: 0,
+      groupEnergyLevel: null,
+      isDying: false
+    };
+
+    const updated = {
+      ...existing,
+      ...convData,
+      convId: cleanId,
+      lastUpdated: Date.now()
+    };
+
+    // Calculate metrics using scoring engine
+    const scoringEngine = this._getScoringEngine();
+    if (scoringEngine) {
+      const settings = await this.getSettings();
+      if (updated.isGroup) {
+        const energy = scoringEngine.calculateGroupEnergy(updated);
+        updated.groupEnergyScore = energy.energyScore;
+        updated.groupEnergyLevel = energy.energyLevel;
+        updated.isDying = energy.isDying;
+        updated.energyMetrics = energy;
+      } else {
+        const metrics = scoringEngine.calculateDmMetrics(updated, settings);
+        updated.bondScore = metrics.bondScore;
+        updated.rank = metrics.rank;
+        updated.nextRank = metrics.nextRank;
+        updated.pointsToNext = metrics.pointsToNext;
+        updated.progressToNextPct = metrics.progressToNextPct;
+        updated.sentPercent = metrics.sentPercent;
+        updated.receivedPercent = metrics.receivedPercent;
+        updated.balanceRatio = metrics.balanceRatio;
+        updated.replyRate = metrics.replyRate;
+        updated.medianReplyTimeMs = metrics.medianReplyTimeMs;
+        updated.formattedMedianReply = metrics.formattedMedianReply;
+        updated.waitingForUserReply = metrics.waitingForUserReply;
+        updated.waitingSinceTimestamp = metrics.waitingSinceTimestamp;
+        updated.waitingDurationMs = metrics.waitingDurationMs;
+        updated.formattedWaitingDuration = metrics.formattedWaitingDuration;
+        updated.isFading = metrics.isFading;
+        updated.isCoolingCandidate = metrics.isCoolingCandidate;
+        updated.dmMetrics = metrics;
+      }
+    }
+
+    if (!activeAccount || activeAccount === (this.currentUser || '')) {
+      this.dmCache.set(cleanId, updated);
+    }
+    await this._setRaw({ [key]: updated });
+
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bondscore:dm_updated', {
+        detail: { convId: cleanId, conversation: updated, account: activeAccount }
+      }));
+    }
+    return updated;
+  }
+
+  /**
+   * Retrieves all DM conversations for the specified account (or active account).
+   */
+  async getAllDmConversations(account = this.currentUser) {
+    return new Promise((resolve) => {
+      let targetAccount = (account || this.currentUser || '').toLowerCase().trim();
+
+      if (this._hasChromeStorage()) {
+        chrome.storage.local.get(null, async (allData) => {
+          if (chrome.runtime.lastError || !allData) {
+            resolve([]);
+            return;
+          }
+
+          if (!targetAccount && allData.currentUser) {
+            targetAccount = (allData.currentUser || '').toLowerCase().trim();
+          }
+
+          const convs = [];
+          const scoringEngine = this._getScoringEngine();
+          const settings = await this.getSettings().catch(() => DEFAULT_SETTINGS);
+
+          for (const [key, value] of Object.entries(allData)) {
+            let isMatch = false;
+            if (targetAccount) {
+              isMatch = key.startsWith(`acc:${targetAccount}:dm:`);
+            } else {
+              isMatch = key.startsWith('dm:') && !key.startsWith('acc:');
+            }
+
+            if (isMatch && value && value.convId) {
+              // Ensure metrics are computed
+              if (scoringEngine) {
+                if (value.isGroup) {
+                  const energy = scoringEngine.calculateGroupEnergy(value);
+                  value.groupEnergyScore = energy.energyScore;
+                  value.groupEnergyLevel = energy.energyLevel;
+                  value.isDying = energy.isDying;
+                  value.energyMetrics = energy;
+                } else {
+                  const metrics = scoringEngine.calculateDmMetrics(value, settings);
+                  value.bondScore = metrics.bondScore;
+                  value.rank = metrics.rank;
+                  value.nextRank = metrics.nextRank;
+                  value.pointsToNext = metrics.pointsToNext;
+                  value.progressToNextPct = metrics.progressToNextPct;
+                  value.sentPercent = metrics.sentPercent;
+                  value.receivedPercent = metrics.receivedPercent;
+                  value.balanceRatio = metrics.balanceRatio;
+                  value.replyRate = metrics.replyRate;
+                  value.medianReplyTimeMs = metrics.medianReplyTimeMs;
+                  value.formattedMedianReply = metrics.formattedMedianReply;
+                  value.waitingForUserReply = metrics.waitingForUserReply;
+                  value.waitingSinceTimestamp = metrics.waitingSinceTimestamp;
+                  value.waitingDurationMs = metrics.waitingDurationMs;
+                  value.formattedWaitingDuration = metrics.formattedWaitingDuration;
+                  value.isFading = metrics.isFading;
+                  value.isCoolingCandidate = metrics.isCoolingCandidate;
+                  value.dmMetrics = metrics;
+                }
+              }
+              convs.push(value);
+            }
+          }
+
+          convs.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0));
+          resolve(convs);
+        });
+      } else {
+        const convs = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          let isMatch = false;
+          if (targetAccount) {
+            isMatch = k.startsWith(`bond_acc:${targetAccount}:dm:`);
+          } else {
+            isMatch = k.startsWith('bond_dm:') && !k.startsWith('bond_acc:');
+          }
+          if (isMatch) {
+            try {
+              const val = JSON.parse(localStorage.getItem(k));
+              if (val && val.convId) convs.push(val);
+            } catch (e) {}
+          }
+        }
+        convs.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0));
+        resolve(convs);
+      }
+    });
+  }
+
+  /**
+   * Records a single DM message (inbound or outbound) in the conversation ledger.
+   * Completely private, 100% on-device metadata. Never transmits message text.
+   */
+  async recordDmMessage(convId, msgData = {}, account = null) {
+    if (!convId) return null;
+    const cleanConvId = convId.toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
+    if (!activeAccount) {
+      activeAccount = (await this.getCurrentUser()) || '';
+    }
+
+    const settings = await this.getSettings();
+    if (settings.trackDirectMessages === false) {
+      return null;
+    }
+
+    const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
+    const conv = existing || {
+      convId: cleanConvId,
+      isGroup: !!msgData.isGroup,
+      title: msgData.groupTitle || (msgData.recipientHandle ? `@${msgData.recipientHandle}` : cleanConvId),
+      participants: msgData.participants || (msgData.recipientHandle ? [msgData.recipientHandle.toLowerCase()] : []),
+      participantDetails: {},
+      sentCount: 0,
+      receivedCount: 0,
+      totalCount: 0,
+      lastSentTimestamp: 0,
+      lastReceivedTimestamp: 0,
+      lastMessageTimestamp: 0,
+      lastSenderHandle: '',
+      waitingForUserReply: false,
+      waitingSinceTimestamp: null,
+      replyTimes: [],
+      medianReplyTimeMs: 0,
+      replyRate: 100,
+      dailyStreak: 0,
+      memberMessageCounts: {}
+    };
+
+    const now = msgData.timestamp || Date.now();
+    const isOutbound = msgData.direction === 'outbound' || (msgData.senderHandle && activeAccount && msgData.senderHandle.toLowerCase() === activeAccount);
+    const sender = (msgData.senderHandle || (isOutbound ? activeAccount : cleanConvId)).toLowerCase();
+
+    // Update participants & avatars
+    if (msgData.recipientHandle && !conv.participants.includes(msgData.recipientHandle.toLowerCase())) {
+      conv.participants.push(msgData.recipientHandle.toLowerCase());
+    }
+    if (msgData.senderHandle && !isOutbound && !conv.participants.includes(msgData.senderHandle.toLowerCase())) {
+      conv.participants.push(msgData.senderHandle.toLowerCase());
+    }
+    if (msgData.displayName || msgData.avatarUrl) {
+      const handleToUpdate = isOutbound ? (msgData.recipientHandle || cleanConvId) : sender;
+      if (!conv.participantDetails) conv.participantDetails = {};
+      conv.participantDetails[handleToUpdate] = {
+        displayName: msgData.displayName || (conv.participantDetails[handleToUpdate] && conv.participantDetails[handleToUpdate].displayName) || handleToUpdate,
+        avatarUrl: msgData.avatarUrl || (conv.participantDetails[handleToUpdate] && conv.participantDetails[handleToUpdate].avatarUrl) || ''
+      };
+    }
+
+    // Directional counts and response timing calculation
+    if (isOutbound) {
+      conv.sentCount = (conv.sentCount || 0) + 1;
+      // If user is replying to an inbound message, calculate turnaround duration
+      if (conv.lastReceivedTimestamp && conv.lastSentTimestamp < conv.lastReceivedTimestamp) {
+        const latencyMs = now - conv.lastReceivedTimestamp;
+        if (latencyMs > 0 && latencyMs < 7 * 86400000) {
+          if (!Array.isArray(conv.replyTimes)) conv.replyTimes = [];
+          conv.replyTimes.push(latencyMs);
+          if (conv.replyTimes.length > 50) conv.replyTimes.shift();
+        }
+      }
+      conv.lastSentTimestamp = now;
+      conv.waitingForUserReply = false;
+      conv.waitingSinceTimestamp = null;
+    } else {
+      conv.receivedCount = (conv.receivedCount || 0) + 1;
+      conv.lastReceivedTimestamp = now;
+      conv.waitingForUserReply = true;
+      conv.waitingSinceTimestamp = now;
+    }
+
+    conv.totalCount = (conv.sentCount || 0) + (conv.receivedCount || 0);
+    conv.lastMessageTimestamp = now;
+    conv.lastSenderHandle = sender;
+
+    // Track member breakdown for group chats
+    if (conv.isGroup) {
+      if (!conv.memberMessageCounts) conv.memberMessageCounts = {};
+      conv.memberMessageCounts[sender] = (conv.memberMessageCounts[sender] || 0) + 1;
+    }
+
+    // Daily messaging streaks
+    const msInDay = 86400000;
+    const currentDay = Math.floor(now / msInDay);
+    if (!conv.lastActiveDay) {
+      conv.lastActiveDay = currentDay;
+      conv.dailyStreak = 1;
+    } else if (currentDay === conv.lastActiveDay + 1) {
+      conv.dailyStreak = (conv.dailyStreak || 0) + 1;
+      conv.lastActiveDay = currentDay;
+    } else if (currentDay > conv.lastActiveDay + 1) {
+      conv.dailyStreak = 1;
+      conv.lastActiveDay = currentDay;
+    }
+
+    // For 1:1 DMs, also log into the user's public CRM ledger to keep timeline scores aligned
+    if (!conv.isGroup && conv.participants.length > 0) {
+      const otherHandle = conv.participants[0];
+      if (otherHandle && otherHandle !== activeAccount) {
+        const details = conv.participantDetails && conv.participantDetails[otherHandle];
+        await this.recordInteraction(otherHandle, {
+          type: isOutbound ? 'dm_sent' : 'dm_received',
+          timestamp: now,
+          tweetId: `dm_${now}`,
+          textSnippet: msgData.textSnippet ? msgData.textSnippet.slice(0, 100) : 'Direct Message',
+          displayName: details ? details.displayName : otherHandle,
+          avatarUrl: details ? details.avatarUrl : '',
+          isMutual: true
+        }, activeAccount).catch(() => {});
+      }
+    }
+
+    return await this.saveDmConversation(cleanConvId, conv, activeAccount);
+  }
+
+  /**
+   * Retrieves conversations waiting for the user's reply, sorted by longest waiting first.
+   */
+  async getWaitingForReply(account = this.currentUser) {
+    const all = await this.getAllDmConversations(account);
+    const waiting = all.filter(c => c.waitingForUserReply === true);
+    waiting.sort((a, b) => (b.waitingDurationMs || 0) - (a.waitingDurationMs || 0));
+    return waiting;
+  }
+
+  /**
+   * Retrieves high-bond conversations going cold ("Who should I message?").
+   */
+  async getColdDMs(account = this.currentUser) {
+    const all = await this.getAllDmConversations(account);
+    const cold = all.filter(c => !c.isGroup && (c.isCoolingCandidate === true || c.isFading === true));
+    cold.sort((a, b) => (b.bondScore || 0) - (a.bondScore || 0));
+    return cold;
+  }
+
+  /**
+   * Returns top closest friends ranked by 1:1 DM Bond Score.
+   */
+  async getTopClosestFriends(limit = 10, account = this.currentUser) {
+    const all = await this.getAllDmConversations(account);
+    const friends = all.filter(c => !c.isGroup && (c.bondScore || 0) > 0);
+    friends.sort((a, b) => (b.bondScore || 0) - (a.bondScore || 0));
+    return friends.slice(0, limit);
+  }
+
+  /**
+   * Returns all tracked Group Chats with energy levels and active rosters.
+   */
+  async getGroupChats(account = this.currentUser) {
+    const all = await this.getAllDmConversations(account);
+    const groups = all.filter(c => c.isGroup === true);
+    groups.sort((a, b) => (b.groupEnergyScore || 0) - (a.groupEnergyScore || 0));
+    return groups;
+  }
+
+  /**
+   * Calculates overall combined relationship score for a given handle:
+   * Public Timeline interactions + Private DM bond.
+   */
+  async getCombinedRelationship(handle, account = this.currentUser) {
+    if (!handle) return null;
+    const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const user = await this.getUser(cleanHandle, false, account);
+    const dmConv = await this.getDmConversation(cleanHandle, false, account);
+    const scoringEngine = this._getScoringEngine();
+    const settings = await this.getSettings();
+
+    if (!scoringEngine) return null;
+    return scoringEngine.calculateCombinedRelationship(user, dmConv, settings);
+  }
+
+  /**
    * Clears all interactions and tracked data for a specific account, leaving other accounts intact.
    */
   async clearAccount(account = this.currentUser) {
@@ -1015,6 +1466,7 @@ class BondStorage {
               if (cleanAccount === this.currentUser) {
                 this.memoryCache.clear();
                 this.eventsCache.clear();
+                this.dmCache.clear();
               }
               resolve();
             });
@@ -1033,6 +1485,7 @@ class BondStorage {
         if (cleanAccount === this.currentUser) {
           this.memoryCache.clear();
           this.eventsCache.clear();
+          this.dmCache.clear();
         }
         resolve();
       }
@@ -1115,4 +1568,10 @@ class BondStorage {
 }
 
 // Global instance attached to window for content script and popup usage
-window.bondStorage = new BondStorage();
+if (typeof window !== 'undefined') {
+  window.bondStorage = new BondStorage();
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { BondStorage, DEFAULT_SETTINGS };
+}

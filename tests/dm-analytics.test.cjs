@@ -1,0 +1,226 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { BondScoring, BondTiers, DmRanks, GroupEnergyLevels } = require('../core/scoring.js');
+const { BondStorage, DEFAULT_SETTINGS } = require('../core/storage.js');
+
+test('DmRanks correctly classifies 1:1 DM scores into progressive relationship levels', () => {
+  assert.equal(BondScoring.getDmRank(10).id, 'acquaintance');
+  assert.equal(BondScoring.getDmRank(25).id, 'acquaintance');
+  assert.equal(BondScoring.getDmRank(26).id, 'friend');
+  assert.equal(BondScoring.getDmRank(50).id, 'friend');
+  assert.equal(BondScoring.getDmRank(51).id, 'close_friend');
+  assert.equal(BondScoring.getDmRank(75).id, 'close_friend');
+  assert.equal(BondScoring.getDmRank(76).id, 'bestie');
+  assert.equal(BondScoring.getDmRank(90).id, 'bestie');
+  assert.equal(BondScoring.getDmRank(91).id, 'ride_or_die');
+  assert.equal(BondScoring.getDmRank(100).id, 'ride_or_die');
+});
+
+test('calculateDmMetrics calculates volume, balance, speed factor, and ranks', () => {
+  const now = Date.now();
+  const balancedConv = {
+    sentCount: 30,
+    receivedCount: 30,
+    lastSentTimestamp: now - 1000 * 60 * 10, // 10 mins ago
+    lastReceivedTimestamp: now - 1000 * 60 * 30, // 30 mins ago
+    lastMessageTimestamp: now - 1000 * 60 * 10,
+    replyTimes: [1000 * 60 * 5, 1000 * 60 * 8, 1000 * 60 * 12], // ~8 mins median
+    dailyStreak: 5
+  };
+
+  const metrics = BondScoring.calculateDmMetrics(balancedConv, { fadingThresholdDays: 3 });
+
+  assert.equal(metrics.totalCount, 60);
+  assert.equal(metrics.sentPercent, 50);
+  assert.equal(metrics.receivedPercent, 50);
+  assert.equal(metrics.balanceRatio, 1.0);
+  assert.equal(metrics.waitingForUserReply, false);
+  assert.ok(metrics.speedFactor >= 1.08, 'Fast median reply should have speed bonus');
+  assert.ok(metrics.bondScore >= 75, `Expected high bond score for balanced active streak chat, got ${metrics.bondScore}`);
+  assert.ok(['bestie', 'ride_or_die'].includes(metrics.rank.id));
+  assert.equal(metrics.isFading, false);
+});
+
+test('calculateDmMetrics flags inbound messages waiting for user reply', () => {
+  const now = Date.now();
+  const waitingConv = {
+    sentCount: 10,
+    receivedCount: 15,
+    lastSentTimestamp: now - 1000 * 60 * 60 * 5, // 5 hours ago
+    lastReceivedTimestamp: now - 1000 * 60 * 45, // 45 mins ago
+    lastMessageTimestamp: now - 1000 * 60 * 45,
+    replyTimes: [1000 * 60 * 20]
+  };
+
+  const metrics = BondScoring.calculateDmMetrics(waitingConv);
+
+  assert.equal(metrics.waitingForUserReply, true);
+  assert.ok(metrics.waitingDurationMs >= 1000 * 60 * 44);
+  assert.ok(metrics.formattedWaitingDuration.includes('m') || metrics.formattedWaitingDuration.includes('h'));
+});
+
+test('calculateDmMetrics triggers fading warning when high bond chat goes quiet', () => {
+  const now = Date.now();
+  const msInDay = 86400000;
+  const quietConv = {
+    sentCount: 40,
+    receivedCount: 40,
+    lastSentTimestamp: now - 6 * msInDay, // 6 days ago
+    lastReceivedTimestamp: now - 6 * msInDay,
+    lastMessageTimestamp: now - 6 * msInDay,
+    replyTimes: [1000 * 60 * 10],
+    dailyStreak: 0
+  };
+
+  const metrics = BondScoring.calculateDmMetrics(quietConv, { fadingThresholdDays: 3 });
+
+  assert.ok(metrics.daysSinceLast >= 5);
+  assert.equal(metrics.isFading, true, 'Should trigger isFading after 6 days of silence on high bond chat');
+  assert.equal(metrics.isCoolingCandidate, true);
+});
+
+test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', () => {
+  const now = Date.now();
+  const activeGroup = {
+    totalMessages: 150,
+    recentMessages3d: 45,
+    recentMessages7d: 80,
+    lastMessageTimestamp: now - 1000 * 60 * 15, // 15 mins ago
+    memberMessageCounts: {
+      userA: 40,
+      userB: 35,
+      userC: 30,
+      userD: 25,
+      userE: 20
+    }
+  };
+
+  const energy = BondScoring.calculateGroupEnergy(activeGroup);
+
+  assert.ok(energy.energyScore >= 75, `Expected high energy score for buzzing group, got ${energy.energyScore}`);
+  assert.ok(['buzzing', 'active'].includes(energy.energyLevel.id));
+  assert.equal(energy.isDying, false);
+  assert.equal(energy.activeMembers.length, 5);
+  assert.equal(energy.activeMembers[0].handle, 'userA');
+
+  // Inactive group
+  const msInDay = 86400000;
+  const deadGroup = {
+    totalMessages: 10,
+    recentMessages3d: 0,
+    recentMessages7d: 0,
+    lastMessageTimestamp: now - 25 * msInDay,
+    memberMessageCounts: { userA: 10 }
+  };
+
+  const deadEnergy = BondScoring.calculateGroupEnergy(deadGroup);
+  assert.ok(deadEnergy.energyScore <= 20);
+  assert.equal(deadEnergy.isDying, true);
+  assert.equal(deadEnergy.energyLevel.id, 'inactive');
+});
+
+test('calculateCombinedRelationship combines public and DM bond scores with synergy', () => {
+  const publicUser = { currentScore: 70 };
+  const dmConv = { bondScore: 80, totalCount: 40 };
+
+  const combined = BondScoring.calculateCombinedRelationship(publicUser, dmConv, { dmScoreWeightPercent: 50 });
+
+  assert.equal(combined.hasDm, true);
+  assert.equal(combined.synergy, true);
+  // (70 * 0.5) + (80 * 0.5) = 75 + 8 synergy = 83
+  assert.equal(combined.combinedScore, 83);
+  assert.ok(combined.label.includes('Mutual') || combined.label.includes('Bestie'));
+
+  // Public only (no DMs)
+  const publicOnly = BondScoring.calculateCombinedRelationship(publicUser, null);
+  assert.equal(publicOnly.hasDm, false);
+  assert.equal(publicOnly.combinedScore, 70);
+});
+
+test('BondStorage handles DM conversation storage, recording, and querying', async () => {
+  // Set up mock chrome.storage.local
+  const mockStore = {};
+  global.chrome = {
+    storage: {
+      local: {
+        get(keys, cb) {
+          if (!keys) return cb(Object.assign({}, mockStore));
+          const res = {};
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          keyList.forEach(k => {
+            if (mockStore[k] !== undefined) res[k] = mockStore[k];
+          });
+          cb(res);
+        },
+        set(items, cb) {
+          Object.assign(mockStore, items);
+          if (cb) cb();
+        }
+      },
+      onChanged: {
+        addListener() {}
+      }
+    },
+    runtime: {
+      lastError: null
+    }
+  };
+
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('masertest');
+
+  const now = Date.now();
+
+  // 1. Record inbound DM from alice
+  await storage.recordDmMessage('123-alice', {
+    direction: 'inbound',
+    senderHandle: 'alice',
+    recipientHandle: 'masertest',
+    textSnippet: 'Hey Maser! How is the new release?',
+    timestamp: now - 1000 * 60 * 30, // 30 mins ago
+    displayName: 'Alice Cooper',
+    avatarUrl: 'https://example.com/alice.jpg'
+  });
+
+  let conv = await storage.getDmConversation('123-alice');
+  assert.ok(conv);
+  assert.equal(conv.receivedCount, 1);
+  assert.equal(conv.sentCount, 0);
+  assert.equal(conv.waitingForUserReply, true);
+
+  // 2. User replies (outbound)
+  await storage.recordDmMessage('123-alice', {
+    direction: 'outbound',
+    senderHandle: 'masertest',
+    recipientHandle: 'alice',
+    textSnippet: 'It is amazing! Shipping DMs today!',
+    timestamp: now - 1000 * 60 * 10 // 10 mins ago
+  });
+
+  conv = await storage.getDmConversation('123-alice');
+  assert.equal(conv.sentCount, 1);
+  assert.equal(conv.receivedCount, 1);
+  assert.equal(conv.waitingForUserReply, false);
+  assert.ok(conv.replyTimes.length === 1);
+  assert.equal(conv.replyTimes[0], 1000 * 60 * 20); // 20 mins turnaround
+
+  // 3. Waiting for reply list
+  // Record another inbound message from bob
+  await storage.recordDmMessage('456-bob', {
+    direction: 'inbound',
+    senderHandle: 'bob',
+    recipientHandle: 'masertest',
+    textSnippet: 'Yo, check this out',
+    timestamp: now - 1000 * 60 * 15
+  });
+
+  const waitingList = await storage.getWaitingForReply();
+  assert.equal(waitingList.length, 1);
+  assert.equal(waitingList[0].convId, '456-bob');
+
+  // 4. Closest friends & group chats
+  const closest = await storage.getTopClosestFriends();
+  assert.ok(closest.length >= 1);
+});

@@ -23,6 +23,13 @@ class BondUI {
       const oldAccount = e.detail && e.detail.previousAccount;
       await this.handleAccountSwitched(newAccount, oldAccount);
     });
+
+    window.addEventListener('bondscore:dm_updated', async (e) => {
+      const convId = e.detail && e.detail.convId;
+      if (convId) {
+        this.refreshDmHeaderPill(convId);
+      }
+    });
   }
 
   /**
@@ -759,6 +766,408 @@ class BondUI {
   escapeHtml(str) {
     if (!str) return '';
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  /**
+   * Injects or updates a DM relationship rank or energy badge in the DM inbox conversation row.
+   */
+  async injectDmRowBadge(convElement, convId, participantHandle, isGroup, metadata = {}) {
+    if (!convElement || !convId) return;
+    const cleanConvId = convId.toLowerCase().trim();
+    const settings = await window.bondStorage.getSettings();
+    if (settings.showBadgesInDMs === false || settings.trackDirectMessages === false) return;
+
+    let badge = convElement.querySelector(`.bond-dm-row-badge[data-bond-dm-conv="${cleanConvId}"]`);
+    const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
+      convId: cleanConvId,
+      isGroup,
+      sentCount: 0,
+      receivedCount: 0,
+      totalCount: 0,
+      bondScore: 0,
+      dailyStreak: 0
+    };
+
+    let badgeHtml = '';
+    if (conv.isGroup) {
+      const energyLevel = conv.groupEnergyLevel || (typeof BondScoring !== 'undefined' ? BondScoring.getGroupEnergyLevel(conv.groupEnergyScore || 0) : null);
+      const score = Math.round(conv.groupEnergyScore || 0);
+      badgeHtml = `
+        <span class="bond-energy-tag bond-energy-${energyLevel ? energyLevel.id : 'chill'}">
+          <span class="bond-dm-emoji">${energyLevel ? energyLevel.emoji : '⚡'}</span>
+          <span class="bond-dm-label">${energyLevel ? energyLevel.name : 'Energy'}</span>
+          <span class="bond-dm-score">${score}</span>
+        </span>
+      `;
+    } else {
+      const rank = conv.rank || (typeof BondScoring !== 'undefined' ? BondScoring.getDmRank(conv.bondScore || 0) : null);
+      const score = Math.round(conv.bondScore || 0);
+      badgeHtml = `
+        <span class="bond-rank-tag bond-rank-${rank ? rank.id : 'acquaintance'}">
+          <span class="bond-dm-emoji">${rank ? rank.emoji : '👋'}</span>
+          <span class="bond-dm-label">${rank ? rank.shortLabel : 'Acquaintance'}</span>
+          <span class="bond-dm-score">${score}</span>
+        </span>
+        ${conv.dailyStreak > 1 ? `<span class="bond-status-pill bond-streak-pill" title="Daily Streak">🔥${conv.dailyStreak}d</span>` : ''}
+        ${conv.waitingForUserReply ? `<span class="bond-status-pill bond-waiting-pill" title="Waiting for your reply">⏳ Reply</span>` : ''}
+        ${conv.isFading ? `<span class="bond-status-pill bond-cooling-pill" title="High-bond chat cooling off">🧊 Cold</span>` : ''}
+      `;
+    }
+
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'bond-dm-row-badge';
+      badge.setAttribute('data-bond-dm-conv', cleanConvId);
+      badge.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openDmScoreCard(cleanConvId, badge);
+      });
+
+      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"]') || convElement;
+      targetContainer.appendChild(badge);
+    }
+
+    badge.innerHTML = badgeHtml;
+  }
+
+  /**
+   * Injects or updates the interactive DM Header Pill inside an open conversation.
+   */
+  async injectDmHeaderPill(headerElement, convId, targetHandle, isGroup) {
+    if (!headerElement || !convId) return;
+    const cleanConvId = convId.toLowerCase().trim();
+    const settings = await window.bondStorage.getSettings();
+    if (settings.showBadgesInDMs === false || settings.trackDirectMessages === false) return;
+
+    let pill = headerElement.querySelector(`.bond-dm-header-pill[data-bond-dm-header="${cleanConvId}"]`);
+    const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
+      convId: cleanConvId,
+      isGroup,
+      sentCount: 0,
+      receivedCount: 0,
+      totalCount: 0,
+      bondScore: 0,
+      dailyStreak: 0
+    };
+
+    let pillHtml = '';
+    if (conv.isGroup) {
+      const energyLevel = conv.groupEnergyLevel || (typeof BondScoring !== 'undefined' ? BondScoring.getGroupEnergyLevel(conv.groupEnergyScore || 0) : null);
+      const score = Math.round(conv.groupEnergyScore || 0);
+      pillHtml = `
+        <div class="bond-header-pill-inner bond-header-pill-group">
+          <span class="bond-header-pill-emoji">${energyLevel ? energyLevel.emoji : '⚡'}</span>
+          <span class="bond-header-pill-rank">${energyLevel ? energyLevel.name : 'Group Energy'}</span>
+          <span class="bond-header-pill-score">${score}</span>
+          <span class="bond-header-pill-dot">•</span>
+          <span class="bond-header-pill-meta">${conv.energyMetrics ? conv.energyMetrics.distinctMembers : 1} Members</span>
+        </div>
+      `;
+    } else {
+      const rank = conv.rank || (typeof BondScoring !== 'undefined' ? BondScoring.getDmRank(conv.bondScore || 0) : null);
+      const score = Math.round(conv.bondScore || 0);
+      const replyRate = conv.replyRate ?? 100;
+      pillHtml = `
+        <div class="bond-header-pill-inner">
+          <span class="bond-header-pill-emoji">${rank ? rank.emoji : '👋'}</span>
+          <span class="bond-header-pill-rank">${rank ? rank.name : 'Acquaintance'}</span>
+          <span class="bond-header-pill-score">${score}</span>
+          <span class="bond-header-pill-dot">•</span>
+          <span class="bond-header-pill-meta">${replyRate}% Reply</span>
+          ${conv.dailyStreak > 1 ? `<span class="bond-header-pill-dot">•</span><span class="bond-header-pill-streak">🔥 ${conv.dailyStreak}d</span>` : ''}
+          ${conv.waitingForUserReply ? `<span class="bond-header-pill-waiting" title="Awaiting your reply">⏳</span>` : ''}
+        </div>
+      `;
+    }
+
+    if (!pill) {
+      pill = document.createElement('div');
+      pill.className = 'bond-dm-header-pill';
+      pill.setAttribute('data-bond-dm-header', cleanConvId);
+      pill.title = 'Click to open Conversation Bond & Analytics';
+      pill.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openDmScoreCard(cleanConvId, pill);
+      });
+
+      const actionsContainer = headerElement.querySelector('div[style*="flex-direction: row"], [role="group"]') || headerElement;
+      actionsContainer.parentNode ? actionsContainer.parentNode.insertBefore(pill, actionsContainer) : headerElement.appendChild(pill);
+    }
+
+    pill.innerHTML = pillHtml;
+  }
+
+  /**
+   * Refreshes the DM header pill for a conversation ID.
+   */
+  async refreshDmHeaderPill(convId) {
+    if (!convId) return;
+    const cleanConvId = convId.toLowerCase().trim();
+    const pill = document.querySelector(`.bond-dm-header-pill[data-bond-dm-header="${cleanConvId}"]`);
+    if (pill && pill.parentElement) {
+      await this.injectDmHeaderPill(pill.parentElement, cleanConvId, null, false);
+    }
+  }
+
+  /**
+   * Opens the rich 1:1 Direct Message or Group Chat Analytics Modal.
+   */
+  async openDmScoreCard(convId, anchorEl = null) {
+    this.closeScoreCard();
+    const cleanConvId = (convId || '').toLowerCase().trim();
+    const currentUser = await window.bondStorage.getCurrentUser();
+    const settings = await window.bondStorage.getSettings();
+    const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
+      convId: cleanConvId,
+      isGroup: /^\d+$/.test(cleanConvId),
+      title: cleanConvId,
+      participants: [cleanConvId],
+      sentCount: 0,
+      receivedCount: 0,
+      totalCount: 0,
+      bondScore: 0,
+      dailyStreak: 0
+    };
+
+    const isGroup = !!conv.isGroup;
+    let participantHandle = null;
+    let publicUser = null;
+    let combined = null;
+
+    if (!isGroup) {
+      participantHandle = conv.participants && conv.participants.length > 0
+        ? conv.participants.find(p => p !== currentUser) || conv.participants[0]
+        : cleanConvId.replace(/^@/, '');
+      publicUser = await window.bondStorage.getUser(participantHandle);
+      combined = BondScoring.calculateCombinedRelationship(publicUser, conv, settings);
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'bond-modal-backdrop';
+    modal.dataset.dmConv = cleanConvId;
+    if (settings && settings.theme && settings.theme !== 'system') {
+      modal.setAttribute('data-theme', settings.theme);
+    }
+    this.activeModal = modal;
+
+    let modalBodyHtml = '';
+    if (isGroup) {
+      const energyLevel = conv.groupEnergyLevel || BondScoring.getGroupEnergyLevel(conv.groupEnergyScore || 0);
+      const energyScore = Math.round(conv.groupEnergyScore || 0);
+      const activeMembers = (conv.energyMetrics && conv.energyMetrics.activeMembers) || [];
+
+      modalBodyHtml = `
+        <div class="bond-card" role="dialog" aria-modal="true">
+          <div class="bond-card-header">
+            <div class="bond-card-user">
+              <div class="bond-avatar-placeholder" style="background: linear-gradient(135deg, #10b981, #3b82f6);">👥</div>
+              <div class="bond-user-meta">
+                <div class="bond-display-name-row">
+                  <span class="bond-display-name">${this.escapeHtml(conv.title || 'Group Chat')}</span>
+                  <span class="bond-energy-tag bond-energy-${energyLevel.id}">${energyLevel.emoji} ${energyLevel.name}</span>
+                </div>
+                <div class="bond-handle">${conv.participants ? conv.participants.length : activeMembers.length} participants</div>
+              </div>
+            </div>
+            <button class="bond-close-btn" title="Close">&times;</button>
+          </div>
+
+          <div class="bond-score-hero">
+            <div class="bond-gauge-wrapper">
+              <svg class="bond-gauge-svg" viewBox="0 0 100 100">
+                <circle class="bond-gauge-bg" cx="50" cy="50" r="42" />
+                <circle class="bond-gauge-val" cx="50" cy="50" r="42" style="stroke: ${energyLevel.color}; stroke-dashoffset: ${264 - (264 * energyScore) / 100};" />
+              </svg>
+              <div class="bond-gauge-center">
+                <span class="bond-gauge-score" style="color: ${energyLevel.color};">${energyScore}</span>
+                <span class="bond-gauge-label">ENERGY</span>
+              </div>
+            </div>
+            <div class="bond-hero-meta">
+              <div class="bond-hero-status" style="color: ${energyLevel.color}; font-weight: 700; font-size: 14px;">
+                ${energyLevel.emoji} ${energyLevel.name} Discussion
+              </div>
+              <div class="bond-hero-desc" style="font-size: 12px; opacity: 0.8; margin-top: 4px;">
+                ${energyLevel.description}
+              </div>
+              ${conv.isDying ? `
+                <div class="bond-warning-banner" style="margin-top: 8px;">
+                  <span class="bond-warning-icon">⚠️</span>
+                  <div><strong>Chat is going quiet!</strong> Low activity in the past 14 days.</div>
+                </div>
+              ` : ''}
+            </div>
+          </div>
+
+          <div class="bond-section-title">🏆 Most Active Members</div>
+          <div class="bond-group-members-list">
+            ${activeMembers.length > 0 ? activeMembers.slice(0, 6).map((m, idx) => `
+              <div class="bond-group-member-row">
+                <span class="bond-member-rank">#${idx + 1}</span>
+                <span class="bond-member-handle">@${this.escapeHtml(m.handle)}</span>
+                <div class="bond-member-bar-wrap">
+                  <div class="bond-member-bar" style="width: ${m.share}%;"></div>
+                </div>
+                <span class="bond-member-count">${m.count} msgs (${m.share}%)</span>
+              </div>
+            `).join('') : '<div class="bond-empty-text">No active member data yet.</div>'}
+          </div>
+        </div>
+      `;
+    } else {
+      const rank = conv.rank || BondScoring.getDmRank(conv.bondScore || 0);
+      const scoreVal = Math.round(conv.bondScore || 0);
+      const totalCount = conv.totalCount || 0;
+      const sentCount = conv.sentCount || 0;
+      const receivedCount = conv.receivedCount || 0;
+      const sentPct = conv.sentPercent ?? (totalCount > 0 ? Math.round((sentCount / totalCount) * 100) : 50);
+      const recvPct = 100 - sentPct;
+
+      const details = conv.participantDetails && participantHandle && conv.participantDetails[participantHandle];
+      const displayName = details ? details.displayName : (publicUser ? publicUser.displayName : participantHandle);
+      const avatarUrl = details ? details.avatarUrl : (publicUser ? publicUser.avatarUrl : '');
+
+      modalBodyHtml = `
+        <div class="bond-card" role="dialog" aria-modal="true">
+          <div class="bond-card-header">
+            <div class="bond-card-user">
+              ${avatarUrl ? `<img class="bond-avatar" src="${this.escapeHtml(avatarUrl)}" alt="${this.escapeHtml(displayName)}"/>` : `<div class="bond-avatar-placeholder">${participantHandle ? participantHandle.charAt(0).toUpperCase() : '?'}</div>`}
+              <div class="bond-user-meta">
+                <div class="bond-display-name-row">
+                  <span class="bond-display-name">${this.escapeHtml(displayName || participantHandle)}</span>
+                  <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
+                </div>
+                <div class="bond-handle">@${this.escapeHtml(participantHandle || cleanConvId)} <span class="bond-viewing-account" style="font-size: 11px; opacity: 0.7; margin-left: 6px;">(1:1 Private DM)</span></div>
+              </div>
+            </div>
+            <button class="bond-close-btn" title="Close">&times;</button>
+          </div>
+
+          <div class="bond-score-hero">
+            <div class="bond-gauge-wrapper">
+              <svg class="bond-gauge-svg" viewBox="0 0 100 100">
+                <circle class="bond-gauge-bg" cx="50" cy="50" r="42" />
+                <circle class="bond-gauge-val" cx="50" cy="50" r="42" style="stroke: ${rank.color}; stroke-dashoffset: ${264 - (264 * scoreVal) / 100};" />
+              </svg>
+              <div class="bond-gauge-center">
+                <span class="bond-gauge-score" style="color: ${rank.color};">${scoreVal}</span>
+                <span class="bond-gauge-label">BOND</span>
+              </div>
+            </div>
+            <div class="bond-hero-meta">
+              <div class="bond-hero-status" style="color: ${rank.color}; font-weight: 700; font-size: 14px;">
+                ${rank.emoji} Level ${rank.level}: ${rank.name}
+              </div>
+              <div class="bond-hero-desc" style="font-size: 12px; opacity: 0.8; margin-top: 4px;">
+                ${rank.description}
+              </div>
+              ${conv.nextRank ? `
+                <div class="bond-next-rank-badge" style="margin-top: 8px;">
+                  <span>⚡ <strong>${conv.pointsToNext} pts</strong> to reach ${conv.nextRank.emoji} ${conv.nextRank.name}</span>
+                </div>
+              ` : `
+                <div class="bond-next-rank-badge max-rank" style="margin-top: 8px;">
+                  <span>👑 Max Relationship Level Achieved!</span>
+                </div>
+              `}
+            </div>
+          </div>
+
+          <div class="bond-rank-progression">
+            <div class="bond-progression-track">
+              <div class="bond-progression-fill" style="width: ${scoreVal}%; background: ${rank.color};"></div>
+            </div>
+            <div class="bond-progression-steps">
+              <span class="bond-prog-step ${scoreVal >= 0 ? 'active' : ''}">👋 Acquaintance</span>
+              <span class="bond-prog-step ${scoreVal >= 26 ? 'active' : ''}">🤝 Friend</span>
+              <span class="bond-prog-step ${scoreVal >= 51 ? 'active' : ''}">🔥 Close Friend</span>
+              <span class="bond-prog-step ${scoreVal >= 76 ? 'active' : ''}">💖 Bestie</span>
+              <span class="bond-prog-step ${scoreVal >= 91 ? 'active' : ''}">👑 Ride or Die</span>
+            </div>
+          </div>
+
+          <div class="bond-balance-card">
+            <div class="bond-balance-header">
+              <span>⚖️ Conversation Balance</span>
+              <span class="bond-balance-ratio-badge">${conv.balanceRatio >= 0.75 ? 'Balanced 50/50' : conv.sentPercent > 65 ? 'You Lead 📤' : 'They Lead 📥'}</span>
+            </div>
+            <div class="bond-balance-bar-wrap">
+              <div class="bond-balance-fill-sent" style="width: ${sentPct}%;"></div>
+              <div class="bond-balance-fill-recv" style="width: ${recvPct}%;"></div>
+            </div>
+            <div class="bond-balance-metrics">
+              <span>📤 Sent: <strong>${sentCount}</strong> (${sentPct}%)</span>
+              <span>📥 Received: <strong>${receivedCount}</strong> (${recvPct}%)</span>
+            </div>
+          </div>
+
+          <div class="bond-dm-metric-grid">
+            <div class="bond-dm-metric-box">
+              <span class="bond-dm-metric-label">⚡ Reply Speed</span>
+              <strong class="bond-dm-metric-val">${conv.formattedMedianReply || 'Instant'}</strong>
+              <span class="bond-dm-metric-sub">Median turnaround</span>
+            </div>
+            <div class="bond-dm-metric-box">
+              <span class="bond-dm-metric-label">📬 Reply Rate</span>
+              <strong class="bond-dm-metric-val">${conv.replyRate ?? 100}%</strong>
+              <span class="bond-dm-metric-sub">Inbound answered</span>
+            </div>
+            <div class="bond-dm-metric-box">
+              <span class="bond-dm-metric-label">🔥 Daily Streak</span>
+              <strong class="bond-dm-metric-val">${conv.dailyStreak || 0}d</strong>
+              <span class="bond-dm-metric-sub">Consecutive days</span>
+            </div>
+            <div class="bond-dm-metric-box">
+              <span class="bond-dm-metric-label">⏳ Reply State</span>
+              <strong class="bond-dm-metric-val ${conv.waitingForUserReply ? 'state-waiting' : 'state-caughtup'}">
+                ${conv.waitingForUserReply ? 'Waiting on You' : 'Caught Up ✅'}
+              </strong>
+              <span class="bond-dm-metric-sub">${conv.waitingForUserReply ? `Waiting ${conv.formattedWaitingDuration || ''}` : 'No pending replies'}</span>
+            </div>
+          </div>
+
+          ${combined ? `
+            <div class="bond-combined-card">
+              <div class="bond-combined-header">
+                <span class="bond-combined-title">🌟 Overall Relationship Strength</span>
+                <span class="bond-combined-badge">${combined.combinedScore} / 100</span>
+              </div>
+              <div class="bond-combined-desc">
+                Public Timeline: <strong>${combined.publicScore}</strong> (${combined.publicTier.name}) + Private DM: <strong>${combined.dmScore}</strong> (${combined.dmRank.name})
+                ${combined.synergy ? '<br><span class="bond-synergy-pill">⚡ Intimacy Synergy Active (+8 pts)</span>' : ''}
+              </div>
+            </div>
+          ` : ''}
+
+          ${conv.isFading ? `
+            <div class="bond-warning-banner" style="margin-top: 12px;">
+              <span class="bond-warning-icon">🧊</span>
+              <div>
+                <strong>High-bond conversation going cold!</strong>
+                <div>No messages in ${conv.daysSinceLast} days. Reach out and keep the spark alive!</div>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    modal.innerHTML = modalBodyHtml;
+
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) this.closeScoreCard();
+    });
+    const closeBtn = modal.querySelector('.bond-close-btn');
+    if (closeBtn) closeBtn.addEventListener('click', () => this.closeScoreCard());
+
+    this.modalKeydownHandler = (e) => {
+      if (e.key === 'Escape') this.closeScoreCard();
+    };
+    window.addEventListener('keydown', this.modalKeydownHandler);
+
+    document.body.appendChild(modal);
   }
 }
 

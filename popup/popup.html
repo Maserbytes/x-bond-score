@@ -16,7 +16,7 @@
           </svg>
         </div>
         <div>
-          <h1 class="brand-title">BondScore <span class="badge-v11">v1.1</span></h1>
+          <h1 class="brand-title">BondScore <span class="badge-v11">v1.3</span></h1>
           <div class="creator-tag">Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></div>
         </div>
       </div>
@@ -62,6 +62,7 @@
     <!-- Nav Tabs -->
     <nav class="popup-tabs">
       <button class="tab-btn active" data-tab="tab-leaderboard">🏆 Mutuals</button>
+      <button class="tab-btn" data-tab="tab-dms">💬 DMs & Groups</button>
       <button class="tab-btn" data-tab="tab-orbit">🪐 Orbit</button>
       <button class="tab-btn" data-tab="tab-radar">🧠 Mutual backs</button>
       <button class="tab-btn" data-tab="tab-settings">⚙️ Settings</button>
@@ -111,6 +112,87 @@
             <div class="empty-icon">🤝</div>
             <h3>No tracked mutuals yet</h3>
             <p>Browse X, reply to mutuals, or click <strong>Deep Analysis</strong> on any profile to calculate your first Bond Score.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tab: DMs & Groups Analytics & Fun Relationship System -->
+      <section id="tab-dms" class="tab-pane">
+        <div class="stats-overview">
+          <div class="stat-box">
+            <div class="stat-number" id="dm-stat-total">0</div>
+            <div class="stat-label">Conversations</div>
+          </div>
+          <div class="stat-box" id="dm-stat-box-waiting">
+            <div class="stat-number" id="dm-stat-waiting">0</div>
+            <div class="stat-label">Waiting on You</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number" id="dm-stat-speed">-</div>
+            <div class="stat-label">Avg Reply Speed</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number" id="dm-stat-streaks">0</div>
+            <div class="stat-label">Active Streaks</div>
+          </div>
+        </div>
+
+        <!-- Filter Pills & Search for DMs -->
+        <div class="search-filter-section">
+          <div class="search-bar-wrapper">
+            <input type="text" id="dm-search-input" placeholder="Search chats by name or @handle..." autocomplete="off">
+          </div>
+          <div class="filter-pills" id="dm-filter-pills">
+            <button class="filter-pill active" data-dm-filter="all">All</button>
+            <button class="filter-pill" data-dm-filter="waiting">⏳ Waiting on You</button>
+            <button class="filter-pill" data-dm-filter="streaks">🔥 Streaks</button>
+            <button class="filter-pill" data-dm-filter="cold">🧊 Going Cold</button>
+            <button class="filter-pill" data-dm-filter="closest">👑 Closest Friends</button>
+            <button class="filter-pill" data-dm-filter="groups">👥 Groups</button>
+          </div>
+        </div>
+
+        <!-- Section 1: ⏳ Waiting for Your Reply (Actionable) -->
+        <div class="radar-card dm-section-card" id="dm-section-waiting" style="display:none;">
+          <div class="radar-card-title dm-section-title">
+            <span>⏳ Waiting For Your Reply</span>
+            <span class="dm-count-badge" id="dm-waiting-count">0</span>
+          </div>
+          <p class="settings-hint">Inbound messages waiting on your response. Keep your reply streaks alive!</p>
+          <div class="dm-mini-list" id="dm-waiting-list"></div>
+        </div>
+
+        <!-- Section 2: 🧊 Who Should I Message? (Anti-Fading Smart List) -->
+        <div class="radar-card dm-section-card" id="dm-section-cold" style="display:none;">
+          <div class="radar-card-title dm-section-title">
+            <span>🧊 Who Should I Message?</span>
+            <span class="dm-count-badge cooling" id="dm-cold-count">0</span>
+          </div>
+          <p class="settings-hint">High-bond conversations that are going cold. Send a quick message to rekindle the bond!</p>
+          <div class="dm-mini-list" id="dm-cold-list"></div>
+        </div>
+
+        <!-- Section 3: 👑 Closest Friends (1:1 Leaderboard) -->
+        <div class="radar-card dm-section-card" id="dm-section-closest">
+          <div class="radar-card-title dm-section-title">
+            <span>👑 Closest Friends (1:1 Leaderboard)</span>
+            <span class="dm-count-badge" id="dm-closest-count">0</span>
+          </div>
+          <p class="settings-hint">Private ranked leaderboard of your strongest 1:1 direct message relationships.</p>
+          <div class="dm-mini-list" id="dm-closest-list">
+            <div class="dm-empty-state">No direct messages tracked yet. Chat on X to build your private bond scores!</div>
+          </div>
+        </div>
+
+        <!-- Section 4: 👥 Group Chats (Energy & Health) -->
+        <div class="radar-card dm-section-card" id="dm-section-groups">
+          <div class="radar-card-title dm-section-title">
+            <span>👥 Group Chats (Energy & Vitality)</span>
+            <span class="dm-count-badge" id="dm-groups-count">0</span>
+          </div>
+          <p class="settings-hint">Group discussions ranked by energy levels, message volume, and active participation.</p>
+          <div class="dm-mini-list" id="dm-groups-list">
+            <div class="dm-empty-state">No active group chats detected yet.</div>
           </div>
         </div>
       </section>
@@ -204,6 +286,41 @@
               <span class="setting-val-badge" id="weight-like-val">2 pts</span>
             </div>
             <input type="range" id="weight-like" min="1" max="10" value="2" step="1">
+          </div>
+        </div>
+
+        <!-- Direct Messages & Privacy Settings -->
+        <div class="settings-group">
+          <h3>💬 Direct Messages & Privacy</h3>
+          <p class="settings-hint">Manage 100% on-device private DM analytics, fading warnings, and combined relationship scoring.</p>
+
+          <div class="setting-item-toggle">
+            <div class="setting-toggle-label">
+              <strong>Track Direct Messages & Groups</strong>
+              <div class="range-sub">100% private, on-device analysis. Never transmits message text.</div>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="setting-track-dms" checked>
+              <span class="slider round"></span>
+            </label>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="setting-fading-threshold">Fading Alert Threshold</label>
+              <span class="setting-val-badge" id="setting-fading-val">3 days</span>
+            </div>
+            <input type="range" id="setting-fading-threshold" min="1" max="14" value="3" step="1">
+            <div class="range-sub">Days of inactivity before alerting that a high-bond chat is cooling</div>
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="setting-dm-weight">DM Weight in Combined Bond</label>
+              <span class="setting-val-badge" id="setting-dm-weight-val">50%</span>
+            </div>
+            <input type="range" id="setting-dm-weight" min="10" max="90" value="50" step="5">
+            <div class="range-sub">Balance between public timeline interactions and private DM health</div>
           </div>
         </div>
 
