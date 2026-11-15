@@ -162,7 +162,7 @@
         const profileMatch = location.pathname.match(/^\/([A-Za-z0-9_]+)$/);
         if (profileMatch && profileMatch[1]) {
           const profileHandle = profileMatch[1].toLowerCase();
-          const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
+          const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search', 'chat'];
           if (!nonUserPaths.includes(profileHandle) && (!currentUser || profileHandle !== currentUser)) {
             const profileHeader = document.querySelector('div[data-testid="UserName"]');
             if (profileHeader) {
@@ -183,8 +183,11 @@
           }
         }
 
-        // 4. Process Direct Messages
-        if (location.pathname.startsWith('/messages') || document.querySelector('[data-testid="DMDrawer"]')) {
+        // 4. Process Direct Messages & Group Chats (Supports both /messages and /i/chat/)
+        const isDMPage = location.pathname.startsWith('/messages') ||
+                         location.pathname.startsWith('/i/chat') ||
+                         !!document.querySelector('[data-testid="DMDrawer"], [data-testid="DMConversation"]');
+        if (isDMPage) {
           if (window.interactionDetector) {
             await window.interactionDetector.scanDmInbox();
             await window.interactionDetector.scanActiveDmThread();

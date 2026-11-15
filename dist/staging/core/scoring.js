@@ -413,13 +413,14 @@ class BondScoring {
    * Computes energy score, activity status, and active member roster for a Group Chat.
    */
   static calculateGroupEnergy(groupData = {}) {
-    const totalMessages = groupData.totalMessages || 0;
-    const recent3d = groupData.recentMessages3d || 0;
-    const recent7d = groupData.recentMessages7d || (recent3d * 2);
+    const totalMessages = groupData.totalMessages || groupData.totalCount || groupData.lifetimeTotal || 0;
     const lastMessage = groupData.lastMessageTimestamp || Date.now();
     const now = Date.now();
     const msInDay = 86400000;
     const daysSince = Math.max(0, (now - lastMessage) / msInDay);
+
+    const recent3d = groupData.recentMessages3d !== undefined ? groupData.recentMessages3d : (daysSince <= 3 ? totalMessages : 0);
+    const recent7d = groupData.recentMessages7d !== undefined ? groupData.recentMessages7d : (daysSince <= 7 ? totalMessages : recent3d * 2);
 
     // 1. Member Participation Roster
     const memberCounts = groupData.memberMessageCounts || {};

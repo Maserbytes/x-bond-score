@@ -318,3 +318,87 @@ test('Chat Memories & Lifetime History: retains permanent memories and never res
   assert.ok(metricsAfter2Days.bondScore >= 20, `Score after 2 days should remain strong, got ${metricsAfter2Days.bondScore}`);
   assert.notEqual(metricsAfter2Days.rank.id, null);
 });
+
+test('X Group Chat Registration & Energy Tracking (/i/chat/g... layout)', async () => {
+  const mockStore = {};
+  global.chrome = {
+    storage: {
+      local: {
+        get(keys, cb) {
+          if (!keys) return cb(Object.assign({}, mockStore));
+          const res = {};
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          keyList.forEach(k => { if (mockStore[k] !== undefined) res[k] = mockStore[k]; });
+          cb(res);
+        },
+        set(obj, cb) {
+          Object.assign(mockStore, obj);
+          if (cb) cb();
+        }
+      }
+    }
+  };
+
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('masersuspended');
+
+  const now = Date.now();
+  const gcId = 'g2119410785122472214';
+  const groupTitle = "kurisu's experiment rats";
+
+  // 1. Ingest thread messages from group chat
+  const entries = [
+    { fingerprint: `${gcId}_1`, direction: 'inbound', senderHandle: 'kurisu', text: 'Took some vintage art', timestamp: now - 300000 },
+    { fingerprint: `${gcId}_2`, direction: 'inbound', senderHandle: 'tozo', text: 'looks awesome!', timestamp: now - 200000 },
+    { fingerprint: `${gcId}_3`, direction: 'outbound', text: 'sure?', timestamp: now - 100000 },
+    { fingerprint: `${gcId}_4`, direction: 'inbound', senderHandle: 'tanhero', text: 'Will post than see', timestamp: now - 50000 }
+  ];
+
+  await storage.ingestMessageEntries(gcId, entries, 'masersuspended', 'x', {
+    isGroup: true,
+    groupTitle
+  });
+
+  // Verify conversation is registered as a group chat with proper title and participants
+  const conv = await storage.getDmConversation(gcId, false, 'masersuspended');
+  assert.ok(conv, 'Group conversation must be registered');
+  assert.equal(conv.convId, gcId);
+  assert.equal(conv.isGroup, true, 'isGroup must be true for g-prefixed group ID');
+  assert.equal(conv.title, groupTitle);
+  assert.equal(conv.totalCount, 4);
+  assert.equal(conv.sentCount, 1);
+  assert.equal(conv.receivedCount, 3);
+  assert.ok(conv.participants.includes('kurisu'));
+  assert.ok(conv.participants.includes('tozo'));
+  assert.ok(conv.participants.includes('tanhero'));
+
+  // 2. Outgoing group message via recordDmMessage
+  await storage.recordDmMessage(gcId, {
+    direction: 'outbound',
+    senderHandle: 'masersuspended',
+    textSnippet: 'Let us go!',
+    timestamp: now,
+    isGroup: true,
+    groupTitle,
+    platform: 'x'
+  }, 'masersuspended');
+
+  const updatedConv = await storage.getDmConversation(gcId, false, 'masersuspended');
+  assert.equal(updatedConv.sentCount, 2);
+  assert.equal(updatedConv.totalCount, 5);
+
+  // 3. Test getGroupChats query
+  const groups = await storage.getGroupChats('masersuspended');
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].convId, gcId);
+  assert.equal(groups[0].title, groupTitle);
+  assert.ok(groups[0].groupEnergyScore > 0, `Expected group energy score > 0, got ${groups[0].groupEnergyScore}`);
+  assert.ok(groups[0].groupEnergyLevel, 'Group energy level must be populated');
+
+  // 4. Test getAllDmConversations returns the group
+  const allDms = await storage.getAllDmConversations('masersuspended');
+  assert.equal(allDms.length, 1);
+  assert.equal(allDms[0].isGroup, true);
+});
+

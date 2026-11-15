@@ -290,7 +290,9 @@ class InteractionDetector {
         if (!composer) return;
 
         // Check if inside DM conversation
-        const isDM = !!composer.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], [data-testid="dmComposerTextInput"], [aria-label*="Direct message" i]');
+        const isDM = !!composer.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], [data-testid="dmComposerTextInput"], [aria-label*="Direct message" i], [aria-label*="Message" i]') ||
+                     location.pathname.startsWith('/i/chat') ||
+                     location.pathname.startsWith('/messages');
         if (isDM && e.key === 'Enter' && !e.shiftKey) {
           this._handleDMSubmit(composer);
           return;
@@ -312,10 +314,17 @@ class InteractionDetector {
     const target = e.target;
     if (!target) return;
 
-    // 0. Check for DM Send Button
-    const dmSendBtn = target.closest('[data-testid="dmComposerSendButton"]');
-    if (dmSendBtn) {
-      this._handleDMSubmit(dmSendBtn);
+    // 0. Check for DM Send Button (Handles standard messages & /i/chat/)
+    const isDMPage = location.pathname.startsWith('/i/chat') || location.pathname.startsWith('/messages');
+    const dmSendBtn = target.closest(
+      '[data-testid="dmComposerSendButton"], ' +
+      '[data-testid="sendButton"], ' +
+      '[aria-label="Send" i], ' +
+      '[aria-label*="Send message" i], ' +
+      'button[data-testid*="send" i]'
+    );
+    if (dmSendBtn || (isDMPage && target.closest('[role="button"]') && target.closest('[role="button"]').querySelector('svg path[d*="M2.504 21.866"], svg[data-testid="send"]'))) {
+      this._handleDMSubmit(dmSendBtn || target);
       return;
     }
 
@@ -694,51 +703,90 @@ class InteractionDetector {
   }
 
   /**
-   * Captures outgoing DMs sent to another account in direct messages
+   * Captures outgoing DMs sent in 1:1 or Group Chats
    */
   async _handleDMSubmit(el) {
     try {
       let targetHandle = null;
       let displayName = '';
       let avatarUrl = '';
+      let isGroup = false;
+      let convId = null;
+      let groupTitle = '';
 
-      // 1. Look for DM header profile link or conversation header
-      const conversationContainer = el.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], [role="main"]') || document.body;
-      const dmHeaderLinks = conversationContainer.querySelectorAll('[data-testid="conversation-header"] a[href^="/"], [data-testid="DmRecipientName"] a[href^="/"], a[href^="/"]');
-      
-      for (const link of dmHeaderLinks) {
-        const href = link.getAttribute('href') || '';
-        const match = href.match(/^\/([A-Za-z0-9_]+)$/);
-        if (match && match[1] && !['messages', 'home', 'explore', 'notifications', 'i'].includes(match[1].toLowerCase())) {
-          const h = match[1].toLowerCase();
-          if (!this.currentUser || h !== this.currentUser) {
-            targetHandle = h;
-            displayName = link.innerText.trim() || h;
-            break;
+      // 1. Detect conversation ID from URL (supports both /messages/ and /i/chat/)
+      const urlMatch = location.pathname.match(/(?:\/messages\/|\/i\/chat\/)([A-Za-z0-9_-]+)/i);
+      if (urlMatch && urlMatch[1]) {
+        convId = urlMatch[1].toLowerCase();
+        isGroup = /^(?:g\d+|\d+)$/i.test(convId) || convId.startsWith('g');
+        if (convId.includes('-')) {
+          targetHandle = convId.split('-')[1].toLowerCase();
+        }
+      }
+
+      const conversationContainer = el.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], main[role="main"], div[data-testid="primaryColumn"]') || document.body;
+
+      // Extract conversation / group title from header
+      const headerTitle = document.querySelector('[data-testid="conversation-header"] span, h2 span, main h2, [data-testid="DMConversation"] h2');
+      if (headerTitle) {
+        groupTitle = headerTitle.innerText.trim();
+        displayName = groupTitle;
+      }
+
+      // If not a group, look for 1:1 recipient profile link
+      if (!isGroup) {
+        const dmHeaderLinks = conversationContainer.querySelectorAll('[data-testid="conversation-header"] a[href^="/"], [data-testid="DmRecipientName"] a[href^="/"], a[href^="/"]');
+        for (const link of dmHeaderLinks) {
+          const href = link.getAttribute('href') || '';
+          const match = href.match(/^\/([A-Za-z0-9_]+)$/);
+          if (match && match[1] && !['messages', 'home', 'explore', 'notifications', 'i', 'chat'].includes(match[1].toLowerCase())) {
+            const h = match[1].toLowerCase();
+            if (!this.currentUser || h !== this.currentUser) {
+              targetHandle = h;
+              displayName = link.innerText.trim() || h;
+              break;
+            }
+          }
+        }
+
+        // Check fallback handle in conversation container
+        if (!targetHandle) {
+          const text = conversationContainer.innerText || '';
+          const handleMatch = text.match(/@([A-Za-z0-9_]{1,15})/);
+          if (handleMatch && handleMatch[1]) {
+            const h = handleMatch[1].toLowerCase();
+            if (!this.currentUser || h !== this.currentUser) {
+              targetHandle = h;
+            }
           }
         }
       }
 
-      // 2. Check current URL if it has /messages/<id>-<handle>
-      if (!targetHandle && location.pathname.startsWith('/messages/')) {
-        const urlMatch = location.pathname.match(/\/messages\/\d+-([A-Za-z0-9_]+)/i);
-        if (urlMatch && urlMatch[1]) {
-          targetHandle = urlMatch[1].toLowerCase();
+      const composer = el.closest('[role="textbox"], [contenteditable="true"]') || document.querySelector('[data-testid="dmComposerTextInput"], [role="textbox"]') || el;
+      const textSnippet = composer && composer.innerText ? composer.innerText.slice(0, 140) : 'Message sent';
+
+      // Group Chat Outbound Message Handling
+      if (isGroup && convId) {
+        console.log(`[BondScore CRM] Group Message sent in ${convId} (${groupTitle || convId})!`);
+        if (window.bondStorage && window.bondStorage.recordDmMessage) {
+          await window.bondStorage.recordDmMessage(convId, {
+            direction: 'outbound',
+            senderHandle: this.currentUser,
+            textSnippet,
+            timestamp: Date.now(),
+            isGroup: true,
+            groupTitle: groupTitle || convId,
+            platform: 'x'
+          }, this.currentUser).catch(() => {});
         }
+        if (window.bondUI && window.bondUI.refreshDmHeaderPill) {
+          window.bondUI.refreshDmHeaderPill(convId);
+        }
+        setTimeout(() => this.scanActiveDmThread(), 400);
+        return;
       }
 
-      // 3. Fallback: Check any handle text inside the active DM drawer/window
-      if (!targetHandle) {
-        const text = conversationContainer.innerText || '';
-        const handleMatch = text.match(/@([A-Za-z0-9_]{1,15})/);
-        if (handleMatch && handleMatch[1]) {
-          const h = handleMatch[1].toLowerCase();
-          if (!this.currentUser || h !== this.currentUser) {
-            targetHandle = h;
-          }
-        }
-      }
-
+      // 1:1 Direct Message Handling
       if (targetHandle && targetHandle !== this.currentUser) {
         console.log(`[BondScore CRM] Direct Message sent to @${targetHandle}! Incrementing relationship score...`);
         
@@ -746,9 +794,6 @@ class InteractionDetector {
         if (window.bondUI) {
           window.bondUI.optimisticBoost(targetHandle, 10);
         }
-
-        const composer = el.closest('[role="textbox"]') || conversationContainer.querySelector('[data-testid="dmComposerTextInput"]') || el;
-        const textSnippet = composer && composer.innerText ? composer.innerText.slice(0, 140) : 'Direct Message sent';
 
         await window.bondStorage.recordInteraction(targetHandle, {
           type: 'dm_sent',
@@ -760,12 +805,7 @@ class InteractionDetector {
           isMutual: true
         }, this.currentUser);
 
-        // Record in DM conversation store
-        let convId = targetHandle;
-        const urlMatch = location.pathname.match(/\/messages\/([A-Za-z0-9_-]+)/i);
-        if (urlMatch && urlMatch[1]) {
-          convId = urlMatch[1].toLowerCase();
-        }
+        if (!convId) convId = targetHandle;
         if (window.bondStorage && window.bondStorage.recordDmMessage) {
           await window.bondStorage.recordDmMessage(convId, {
             direction: 'outbound',
@@ -775,7 +815,8 @@ class InteractionDetector {
             timestamp: Date.now(),
             displayName,
             avatarUrl,
-            isGroup: false
+            isGroup: false,
+            platform: 'x'
           }, this.currentUser).catch(() => {});
         }
 
@@ -785,6 +826,7 @@ class InteractionDetector {
             window.bondUI.refreshDmHeaderPill(convId);
           }
         }
+        setTimeout(() => this.scanActiveDmThread(), 400);
       }
     } catch (err) {
       console.warn('[BondScore CRM] Error capturing DM:', err);
@@ -918,26 +960,38 @@ class InteractionDetector {
 
   /**
    * Scans visible DM conversations in the messages list or DM drawer.
-   * Extracts participant handles, unread state, and triggers UI badge injection.
+   * Extracts participant handles, group titles, unread state, and triggers UI badge injection.
+   * Fully compatible with standard /messages and new X /i/chat/ layouts.
    */
   async scanDmInbox() {
     try {
       const settings = window.bondStorage && window.bondStorage.settingsCache;
       if (settings && settings.trackDirectMessages === false) return;
 
-      const convElements = document.querySelectorAll('[data-testid="conversation"]');
-      if (!convElements || convElements.length === 0) return;
+      const convCandidates = document.querySelectorAll(
+        '[data-testid="conversation"], ' +
+        '[data-testid="cellInnerDiv"] a[href*="/i/chat/"], ' +
+        '[data-testid="cellInnerDiv"] a[href*="/messages/"], ' +
+        'a[href^="/i/chat/"], ' +
+        'a[href^="/messages/"]'
+      );
+      if (!convCandidates || convCandidates.length === 0) return;
 
-      for (const el of convElements) {
+      const seenConvs = new Set();
+
+      for (const rawEl of convCandidates) {
         try {
-          const link = el.querySelector('a[href^="/messages/"]') || el.closest('a[href^="/messages/"]');
+          const link = rawEl.tagName === 'A' ? rawEl : (rawEl.querySelector('a[href*="/messages/"], a[href*="/i/chat/"]') || rawEl.closest('a[href*="/messages/"], a[href*="/i/chat/"]'));
           const href = link ? link.getAttribute('href') : '';
-          const match = href.match(/\/messages\/([A-Za-z0-9_-]+)/);
+          const match = href.match(/(?:\/messages\/|\/i\/chat\/)([A-Za-z0-9_-]+)/i);
           const convId = match ? match[1].toLowerCase() : null;
-          if (!convId) continue;
+          if (!convId || seenConvs.has(convId)) continue;
+          seenConvs.add(convId);
 
-          // Check if group (numeric ID or multiple members)
-          const isGroup = /^\d+$/.test(convId);
+          const el = rawEl.closest('[data-testid="conversation"], [data-testid="cellInnerDiv"]') || rawEl;
+
+          // Check if group (starts with 'g' followed by numbers or numeric ID)
+          const isGroup = /^(?:g\d+|\d+)$/i.test(convId) || convId.startsWith('g');
 
           const text = el.innerText || '';
           let participantHandle = null;
@@ -952,19 +1006,32 @@ class InteractionDetector {
 
           const img = el.querySelector('img[src*="profile_images"], img');
           const avatarUrl = img ? (img.currentSrc || img.src || '') : '';
-          const nameEl = el.querySelector('div[dir="ltr"] span, span');
-          const displayName = nameEl ? nameEl.innerText.trim() : (participantHandle || convId);
+          
+          // Extract group name or user display name
+          const titleCandidates = el.querySelectorAll('div[dir="ltr"] span, span[dir="auto"], span');
+          let displayName = '';
+          for (const c of titleCandidates) {
+            const t = (c.innerText || '').trim();
+            if (t && !t.startsWith('@') && !['Now', '1h', '2h', '3h', '13m', '40m', 'Screenshots protected', 'Sent a post', 'Sent a GIF', 'Pinned'].includes(t)) {
+              displayName = t;
+              break;
+            }
+          }
+          if (!displayName) {
+            displayName = participantHandle ? `@${participantHandle}` : convId;
+          }
 
-          const hasUnread = !!el.querySelector('[data-testid="unread-badge"], [aria-label*="unread" i]');
+          const hasUnread = !!el.querySelector('[data-testid="unread-badge"], [aria-label*="unread" i], [style*="background-color: rgb(29, 155, 240)"]');
 
-          // Auto-register conversation in storage if not already present so it never shows 0 on refresh
+          // Auto-register conversation in storage if not already present
           if (window.bondStorage) {
             const existing = await window.bondStorage.getDmConversation(convId, false, this.currentUser);
             if (!existing) {
               await window.bondStorage.saveDmConversation(convId, {
                 convId,
                 isGroup,
-                title: displayName || (participantHandle ? `@${participantHandle}` : convId),
+                platform: 'x',
+                title: displayName,
                 participants: participantHandle ? [participantHandle] : [],
                 participantDetails: participantHandle ? {
                   [participantHandle]: { displayName, avatarUrl }
@@ -979,8 +1046,16 @@ class InteractionDetector {
                 lastMessageTimestamp: Date.now(),
                 waitingForUserReply: hasUnread
               }, this.currentUser);
-            } else if (displayName || avatarUrl || hasUnread !== existing.waitingForUserReply) {
+            } else {
               let changed = false;
+              if (existing.isGroup !== isGroup) {
+                existing.isGroup = isGroup;
+                changed = true;
+              }
+              if (displayName && (!existing.title || existing.title === convId)) {
+                existing.title = displayName;
+                changed = true;
+              }
               if (participantHandle) {
                 if (!existing.participantDetails) existing.participantDetails = {};
                 const prev = existing.participantDetails[participantHandle];
@@ -1000,34 +1075,34 @@ class InteractionDetector {
           }
 
           if (window.bondUI && window.bondUI.injectDmRowBadge) {
-            await window.bondUI.injectDmRowBadge(el, convId, participantHandle, isGroup, { displayName, avatarUrl, hasUnread });
+            await window.bondUI.injectDmRowBadge(el, convId, participantHandle, isGroup, { displayName, avatarUrl, hasUnread, platform: 'x' });
           }
-        } catch (err) {
-          // continue
-        }
+        } catch (err) {}
       }
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
   }
 
   /**
    * Scans the active open DM thread to track inbound/outbound messages and waiting state.
+   * Compatible with /messages and /i/chat/ layouts.
    */
   async scanActiveDmThread() {
     try {
       const settings = window.bondStorage && window.bondStorage.settingsCache;
       if (settings && settings.trackDirectMessages === false) return;
 
-      const container = document.querySelector('[data-testid="DMConversation"], [data-testid="DMDrawer"]');
-      if (!container) return;
-
-      const header = container.querySelector('[data-testid="conversation-header"]');
-      if (!header) return;
+      const container = document.querySelector(
+        '[data-testid="DMConversation"], ' +
+        '[data-testid="DMDrawer"], ' +
+        'main[role="main"], ' +
+        'div[data-testid="primaryColumn"], ' +
+        'div[aria-label*="Timeline: Messages" i], ' +
+        'section[role="region"]'
+      ) || document.body;
 
       let convId = null;
       let targetHandle = null;
-      const urlMatch = location.pathname.match(/\/messages\/([A-Za-z0-9_-]+)/i);
+      const urlMatch = location.pathname.match(/(?:\/messages\/|\/i\/chat\/)([A-Za-z0-9_-]+)/i);
       if (urlMatch && urlMatch[1]) {
         convId = urlMatch[1].toLowerCase();
         if (convId.includes('-')) {
@@ -1035,13 +1110,19 @@ class InteractionDetector {
         }
       }
 
-      const isGroup = convId ? /^\d+$/.test(convId) : false;
+      const isGroup = convId ? (/^(?:g\d+|\d+)$/i.test(convId) || convId.startsWith('g')) : false;
 
-      if (!targetHandle && !isGroup) {
+      // Extract conversation header
+      const header = container.querySelector('[data-testid="conversation-header"], header, h2') || container;
+      let groupTitle = '';
+      if (isGroup) {
+        const titleEl = document.querySelector('[data-testid="conversation-header"] span, h2 span, main h2, [data-testid="DMConversation"] h2');
+        if (titleEl) groupTitle = titleEl.innerText.trim();
+      } else if (!targetHandle) {
         const headerLinks = header.querySelectorAll('a[href^="/"]');
         for (const l of headerLinks) {
           const m = (l.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]+)$/);
-          if (m && m[1] && !['messages', 'home', 'explore', 'notifications', 'i'].includes(m[1].toLowerCase())) {
+          if (m && m[1] && !['messages', 'home', 'explore', 'notifications', 'i', 'chat'].includes(m[1].toLowerCase())) {
             const h = m[1].toLowerCase();
             if (!this.currentUser || h !== this.currentUser) {
               targetHandle = h;
@@ -1056,18 +1137,41 @@ class InteractionDetector {
       }
       if (!convId) return;
 
-      // Ingest all message entries visible in active thread into conversation memory ledger
-      const messageEntries = container.querySelectorAll('[data-testid="messageEntry"]');
+      // Locate visible message entries in thread
+      const messageEntries = document.querySelectorAll(
+        '[data-testid="messageEntry"], ' +
+        'div[data-testid="cellInnerDiv"] div[dir="ltr"]'
+      );
+
       if (messageEntries.length > 0) {
         const parsedEntries = [];
         for (let idx = 0; idx < messageEntries.length; idx++) {
           const entry = messageEntries[idx];
-          const hasAvatar = !!entry.querySelector('img[src*="profile_images"]');
+          const hasAvatar = !!entry.querySelector('img[src*="profile_images"], img');
           const isOutbound = !hasAvatar && (
             !!entry.querySelector('[class*="r-18u37iz"], [style*="background-color: rgb(29, 155, 240)"]') ||
             !!entry.querySelector('div[style*="align-items: flex-end"]') ||
-            entry.closest('div[style*="align-items: flex-end"]') !== null
+            entry.closest('div[style*="align-items: flex-end"]') !== null ||
+            (entry.innerText && entry.innerText.includes('Seen'))
           );
+
+          let senderHandle = '';
+          if (!isOutbound) {
+            const authorLink = entry.querySelector('a[href^="/"]');
+            if (authorLink) {
+              const m = (authorLink.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]+)$/);
+              if (m && m[1] && !['messages', 'i', 'chat'].includes(m[1].toLowerCase())) {
+                senderHandle = m[1].toLowerCase();
+              }
+            }
+            if (!senderHandle) {
+              const senderSpan = entry.querySelector('div[dir="ltr"] span, span[dir="auto"]');
+              if (senderSpan) {
+                const txt = senderSpan.innerText.trim();
+                if (txt && !txt.includes('http') && txt.length < 30) senderHandle = txt;
+              }
+            }
+          }
 
           const textEl = entry.querySelector('[data-testid="tweetText"], span, dir[dir="auto"]') || entry;
           const text = (textEl.innerText || '').trim();
@@ -1085,6 +1189,7 @@ class InteractionDetector {
           parsedEntries.push({
             fingerprint: fp,
             direction: isOutbound ? 'outbound' : 'inbound',
+            senderHandle: isOutbound ? this.currentUser : (senderHandle || targetHandle || 'group_member'),
             text: text.slice(0, 100),
             timestamp,
             index: idx
@@ -1092,7 +1197,10 @@ class InteractionDetector {
         }
 
         if (window.bondStorage && window.bondStorage.ingestMessageEntries) {
-          await window.bondStorage.ingestMessageEntries(convId, parsedEntries, this.currentUser);
+          await window.bondStorage.ingestMessageEntries(convId, parsedEntries, this.currentUser, 'x', {
+            isGroup,
+            groupTitle: groupTitle || convId
+          });
         }
       }
 

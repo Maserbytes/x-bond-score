@@ -74,7 +74,7 @@ class XPlatformAdapter {
     if (!profileMatch || !profileMatch[1]) return;
 
     const profileHandle = profileMatch[1].toLowerCase();
-    const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
+    const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search', 'chat'];
     if (nonUserPaths.includes(profileHandle) || (currentUser && profileHandle === currentUser)) return;
 
     const profileHeader = document.querySelector('div[data-testid="UserName"]');
@@ -100,7 +100,10 @@ class XPlatformAdapter {
   async scanDms() {
     if (!window.bondStorage || !window.bondStorage.isDmsEnabled('x')) return;
     if (this.detector) {
-      if (location.pathname.startsWith('/messages') || document.querySelector('[data-testid="DMDrawer"]')) {
+      const isDMPage = location.pathname.startsWith('/messages') ||
+                       location.pathname.startsWith('/i/chat') ||
+                       !!document.querySelector('[data-testid="DMDrawer"], [data-testid="DMConversation"]');
+      if (isDMPage) {
         if (typeof this.detector.scanDmInbox === 'function') {
           await this.detector.scanDmInbox();
         }

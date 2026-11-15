@@ -1495,7 +1495,7 @@ class BondStorage {
    * Ingests a batch of parsed message entries from an active DM conversation thread.
    * Deduplicates messages against recordedMessageIds, updates lifetime counts, streaks, and memories.
    */
-  async ingestMessageEntries(convId, entries = [], account = null, platform = null) {
+  async ingestMessageEntries(convId, entries = [], account = null, platform = null, metadata = {}) {
     if (!convId || !Array.isArray(entries) || entries.length === 0) return null;
     const cleanConvId = convId.toLowerCase().trim();
     let activeAccount = this._resolveActiveAccount(account);
@@ -1504,13 +1504,25 @@ class BondStorage {
     const settings = await this.getSettings();
     if (settings.trackDirectMessages === false) return null;
 
+    let actualPlatform = platform;
+    let actualMetadata = metadata || {};
+    if (platform && typeof platform === 'object') {
+      actualMetadata = platform;
+      actualPlatform = actualMetadata.platform || 'x';
+    }
+
+    const isGroup = actualMetadata.isGroup !== undefined 
+      ? !!actualMetadata.isGroup 
+      : (/^(?:g\d+|\d+)$/i.test(cleanConvId) || cleanConvId.startsWith('g'));
+    const groupTitle = actualMetadata.groupTitle || '';
+
     const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
     const conv = existing || {
       convId: cleanConvId,
-      platform: platform || 'x',
-      isGroup: /^\d+$/.test(cleanConvId),
-      title: cleanConvId,
-      participants: [cleanConvId],
+      platform: actualPlatform || 'x',
+      isGroup,
+      title: groupTitle || cleanConvId,
+      participants: isGroup ? [] : [cleanConvId],
       participantDetails: {},
       sentCount: 0,
       receivedCount: 0,
@@ -1531,13 +1543,17 @@ class BondStorage {
       dailyStreak: 0,
       allTimeLongestStreak: 0,
       highestRankAchieved: null,
+      memberMessageCounts: {},
       memories: [],
       recordedMessageIds: []
     };
 
+    if (isGroup && !conv.isGroup) conv.isGroup = true;
+    if (groupTitle && (!conv.title || conv.title === cleanConvId)) conv.title = groupTitle;
+    if (!conv.memberMessageCounts) conv.memberMessageCounts = {};
     if (!Array.isArray(conv.recordedMessageIds)) conv.recordedMessageIds = [];
     if (!Array.isArray(conv.memories)) conv.memories = [];
-    if (platform) conv.platform = platform;
+    if (actualPlatform) conv.platform = actualPlatform;
     else if (!conv.platform) conv.platform = 'x';
 
     const recordedSet = new Set(conv.recordedMessageIds);
@@ -1562,6 +1578,15 @@ class BondStorage {
       } else {
         newInboundCount++;
         conv.lastReceivedTimestamp = Math.max(conv.lastReceivedTimestamp || 0, msgTime);
+        if (entry.senderHandle) {
+          const senderKey = entry.senderHandle.toLowerCase().replace(/^@/, '');
+          if (senderKey && senderKey !== activeAccount) {
+            if (!conv.memberMessageCounts) conv.memberMessageCounts = {};
+            conv.memberMessageCounts[senderKey] = (conv.memberMessageCounts[senderKey] || 0) + 1;
+            if (!Array.isArray(conv.participants)) conv.participants = [];
+            if (!conv.participants.includes(senderKey)) conv.participants.push(senderKey);
+          }
+        }
       }
 
       if (msgTime >= latestTimestamp) {
@@ -1675,12 +1700,15 @@ class BondStorage {
       return null;
     }
 
+    const isGroup = msgData.isGroup !== undefined ? !!msgData.isGroup : (/^(?:g\d+|\d+)$/i.test(cleanConvId) || cleanConvId.startsWith('g'));
+    const groupTitle = msgData.groupTitle || '';
+
     const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
     const conv = existing || {
       convId: cleanConvId,
       platform: msgData.platform || 'x',
-      isGroup: !!msgData.isGroup,
-      title: msgData.groupTitle || (msgData.recipientHandle ? `@${msgData.recipientHandle}` : cleanConvId),
+      isGroup,
+      title: groupTitle || (msgData.recipientHandle ? `@${msgData.recipientHandle}` : cleanConvId),
       participants: msgData.participants || (msgData.recipientHandle ? [msgData.recipientHandle.toLowerCase()] : []),
       participantDetails: {},
       sentCount: 0,
@@ -1706,6 +1734,10 @@ class BondStorage {
       memories: [],
       recordedMessageIds: []
     };
+
+    if (isGroup && !conv.isGroup) conv.isGroup = true;
+    if (groupTitle && (!conv.title || conv.title === cleanConvId)) conv.title = groupTitle;
+    if (!conv.memberMessageCounts) conv.memberMessageCounts = {};
 
     const now = msgData.timestamp || Date.now();
     const isOutbound = msgData.direction === 'outbound' || (msgData.senderHandle && activeAccount && msgData.senderHandle.toLowerCase() === activeAccount);

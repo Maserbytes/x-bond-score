@@ -1581,7 +1581,7 @@ function renderDmSubSections(allDms, filter = 'all') {
 
   if (countGroups) countGroups.innerText = groupItems.length;
   if (sectionGroups && listGroups) {
-    const showGroups = filter === 'groups' || (filter === 'all' && groupItems.length > 0);
+    const showGroups = filter === 'groups' || filter === 'all';
     sectionGroups.style.display = showGroups ? 'block' : 'none';
 
     if (groupItems.length === 0) {
@@ -1591,6 +1591,8 @@ function renderDmSubSections(allDms, filter = 'all') {
         const energyLevel = d.groupEnergyLevel || BondScoring.getGroupEnergyLevel(d.groupEnergyScore || 0);
         const score = Math.round(d.groupEnergyScore || 0);
         const activeMembers = (d.energyMetrics && d.energyMetrics.activeMembers) || [];
+        const totalMsgs = d.totalMessages || d.lifetimeTotal || d.totalCount || 0;
+        const chatUrl = d.convId.startsWith('g') ? `https://x.com/i/chat/${escapeHtml(d.convId)}` : `https://x.com/messages/${escapeHtml(d.convId)}`;
 
         return `
           <div class="dm-group-card" data-conv="${escapeHtml(d.convId)}">
@@ -1615,8 +1617,8 @@ function renderDmSubSections(allDms, filter = 'all') {
             </div>
 
             <div class="dm-group-footer">
-              <span class="dm-group-activity">${d.isDying ? '⚠️ Group is quiet / dormant' : `🔥 ${d.totalMessages || 0} messages recorded`}</span>
-              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open Group ↗</button>
+              <span class="dm-group-activity">${d.isDying ? '⚠️ Group is quiet / dormant' : `🔥 ${totalMsgs} messages recorded`}</span>
+              <button class="dm-open-btn" data-url="${chatUrl}">Open Group ↗</button>
             </div>
           </div>
         `;
