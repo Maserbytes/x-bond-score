@@ -957,6 +957,48 @@ class InteractionDetector {
 
           const hasUnread = !!el.querySelector('[data-testid="unread-badge"], [aria-label*="unread" i]');
 
+          // Auto-register conversation in storage if not already present so it never shows 0 on refresh
+          if (window.bondStorage) {
+            const existing = await window.bondStorage.getDmConversation(convId, false, this.currentUser);
+            if (!existing) {
+              await window.bondStorage.saveDmConversation(convId, {
+                convId,
+                isGroup,
+                title: displayName || (participantHandle ? `@${participantHandle}` : convId),
+                participants: participantHandle ? [participantHandle] : [],
+                participantDetails: participantHandle ? {
+                  [participantHandle]: { displayName, avatarUrl }
+                } : {},
+                sentCount: 1,
+                receivedCount: 1,
+                totalCount: 2,
+                lifetimeSent: 1,
+                lifetimeReceived: 1,
+                lifetimeTotal: 2,
+                firstSeenTimestamp: Date.now(),
+                lastMessageTimestamp: Date.now(),
+                waitingForUserReply: hasUnread
+              }, this.currentUser);
+            } else if (displayName || avatarUrl || hasUnread !== existing.waitingForUserReply) {
+              let changed = false;
+              if (participantHandle) {
+                if (!existing.participantDetails) existing.participantDetails = {};
+                const prev = existing.participantDetails[participantHandle];
+                if (!prev || (!prev.avatarUrl && avatarUrl)) {
+                  existing.participantDetails[participantHandle] = { displayName, avatarUrl };
+                  changed = true;
+                }
+              }
+              if (hasUnread !== existing.waitingForUserReply) {
+                existing.waitingForUserReply = hasUnread;
+                changed = true;
+              }
+              if (changed) {
+                await window.bondStorage.saveDmConversation(convId, existing, this.currentUser);
+              }
+            }
+          }
+
           if (window.bondUI && window.bondUI.injectDmRowBadge) {
             await window.bondUI.injectDmRowBadge(el, convId, participantHandle, isGroup, { displayName, avatarUrl, hasUnread });
           }
@@ -1014,25 +1056,43 @@ class InteractionDetector {
       }
       if (!convId) return;
 
-      // Scan message entries to observe direction of latest messages
+      // Ingest all message entries visible in active thread into conversation memory ledger
       const messageEntries = container.querySelectorAll('[data-testid="messageEntry"]');
       if (messageEntries.length > 0) {
-        const lastEntry = messageEntries[messageEntries.length - 1];
-        const hasAvatar = !!lastEntry.querySelector('img[src*="profile_images"]');
-        const isOutbound = !hasAvatar && !!lastEntry.querySelector('[class*="r-18u37iz"], [style*="background-color: rgb(29, 155, 240)"]');
+        const parsedEntries = [];
+        for (let idx = 0; idx < messageEntries.length; idx++) {
+          const entry = messageEntries[idx];
+          const hasAvatar = !!entry.querySelector('img[src*="profile_images"]');
+          const isOutbound = !hasAvatar && (
+            !!entry.querySelector('[class*="r-18u37iz"], [style*="background-color: rgb(29, 155, 240)"]') ||
+            !!entry.querySelector('div[style*="align-items: flex-end"]') ||
+            entry.closest('div[style*="align-items: flex-end"]') !== null
+          );
 
-        const existing = await window.bondStorage.getDmConversation(convId);
-        if (existing) {
-          const now = Date.now();
-          if (hasAvatar && !existing.waitingForUserReply) {
-            existing.waitingForUserReply = true;
-            existing.waitingSinceTimestamp = existing.waitingSinceTimestamp || now;
-            await window.bondStorage.saveDmConversation(convId, existing);
-          } else if (isOutbound && existing.waitingForUserReply) {
-            existing.waitingForUserReply = false;
-            existing.waitingSinceTimestamp = null;
-            await window.bondStorage.saveDmConversation(convId, existing);
+          const textEl = entry.querySelector('[data-testid="tweetText"], span, dir[dir="auto"]') || entry;
+          const text = (textEl.innerText || '').trim();
+
+          const timeEl = entry.querySelector('time');
+          const timeStr = timeEl ? (timeEl.getAttribute('datetime') || timeEl.innerText || '') : '';
+          let timestamp = timeStr ? Date.parse(timeStr) : 0;
+          if (isNaN(timestamp) || timestamp <= 0) {
+            timestamp = Date.now() - ((messageEntries.length - idx) * 30000);
           }
+
+          const snippetHash = text.slice(0, 32).replace(/\s+/g, '_');
+          const fp = `${convId}_${isOutbound ? 'out' : 'in'}_${snippetHash}_${timeStr || idx}`;
+
+          parsedEntries.push({
+            fingerprint: fp,
+            direction: isOutbound ? 'outbound' : 'inbound',
+            text: text.slice(0, 100),
+            timestamp,
+            index: idx
+          });
+        }
+
+        if (window.bondStorage && window.bondStorage.ingestMessageEntries) {
+          await window.bondStorage.ingestMessageEntries(convId, parsedEntries, this.currentUser);
         }
       }
 

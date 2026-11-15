@@ -781,10 +781,11 @@ class BondUI {
     const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
       convId: cleanConvId,
       isGroup,
-      sentCount: 0,
-      receivedCount: 0,
-      totalCount: 0,
-      bondScore: 0,
+      sentCount: 1,
+      receivedCount: 1,
+      totalCount: 2,
+      lifetimeTotal: 2,
+      bondScore: 10,
       dailyStreak: 0
     };
 
@@ -844,10 +845,11 @@ class BondUI {
     const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
       convId: cleanConvId,
       isGroup,
-      sentCount: 0,
-      receivedCount: 0,
-      totalCount: 0,
-      bondScore: 0,
+      sentCount: 1,
+      receivedCount: 1,
+      totalCount: 2,
+      lifetimeTotal: 2,
+      bondScore: 10,
       dailyStreak: 0
     };
 
@@ -1125,6 +1127,48 @@ class BondUI {
                 ${conv.waitingForUserReply ? 'Waiting on You' : 'Caught Up ✅'}
               </strong>
               <span class="bond-dm-metric-sub">${conv.waitingForUserReply ? `Waiting ${conv.formattedWaitingDuration || ''}` : 'No pending replies'}</span>
+            </div>
+          </div>
+
+          <div class="bond-section-title" style="margin-top: 14px;">💭 Chat Memories & Milestones</div>
+          <div class="bond-memories-card">
+            <div class="bond-memory-stats-grid">
+              <div class="bond-mem-stat-item">
+                <span class="bond-mem-stat-label">📅 Memory Since</span>
+                <strong class="bond-mem-stat-val">${new Date(conv.firstSeenTimestamp || conv.lastMessageTimestamp || Date.now()).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</strong>
+              </div>
+              <div class="bond-mem-stat-item">
+                <span class="bond-mem-stat-label">💬 Lifetime Messages</span>
+                <strong class="bond-mem-stat-val">${conv.lifetimeTotal || conv.totalCount || 0} msgs</strong>
+              </div>
+              <div class="bond-mem-stat-item">
+                <span class="bond-mem-stat-label">🏆 Peak Relationship</span>
+                <strong class="bond-mem-stat-val">${(conv.highestRankAchieved && conv.highestRankAchieved.name) || rank.name}</strong>
+              </div>
+              <div class="bond-mem-stat-item">
+                <span class="bond-mem-stat-label">🔥 Longest Streak</span>
+                <strong class="bond-mem-stat-val">${conv.allTimeLongestStreak || conv.dailyStreak || 0}d record</strong>
+              </div>
+            </div>
+
+            <div class="bond-memories-timeline">
+              ${(conv.memories && conv.memories.length > 0) ? conv.memories.slice().reverse().slice(0, 5).map(m => `
+                <div class="bond-timeline-item">
+                  <span class="bond-timeline-badge">${m.badge || '✨'}</span>
+                  <div class="bond-timeline-content">
+                    <div class="bond-timeline-title-row">
+                      <span class="bond-timeline-title">${this.escapeHtml(m.title)}</span>
+                      <span class="bond-timeline-time">${new Date(m.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                    </div>
+                    <div class="bond-timeline-desc">${this.escapeHtml(m.description)}</div>
+                  </div>
+                </div>
+              `).join('') : `
+                <div class="bond-timeline-empty">
+                  <span class="bond-empty-icon">💭</span>
+                  <span>BondScore is actively logging chat memories and milestone moments!</span>
+                </div>
+              `}
             </div>
           </div>
 

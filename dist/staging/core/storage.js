@@ -168,11 +168,18 @@ class BondStorage {
   }
 
   _resolveActiveAccount(account = null) {
-    if (account) return account.replace(/^@/, '').toLowerCase().trim();
-    if (this.currentUser) return this.currentUser.replace(/^@/, '').toLowerCase().trim();
+    if (account && account.toLowerCase().trim() !== 'you') {
+      return account.replace(/^@/, '').toLowerCase().trim();
+    }
+    if (this.currentUser && this.currentUser.toLowerCase().trim() !== 'you') {
+      return this.currentUser.replace(/^@/, '').toLowerCase().trim();
+    }
     if (typeof window !== 'undefined' && window.interactionDetector && window.interactionDetector.currentUser) {
-      this.currentUser = window.interactionDetector.currentUser.replace(/^@/, '').toLowerCase().trim();
-      return this.currentUser;
+      const detected = window.interactionDetector.currentUser.replace(/^@/, '').toLowerCase().trim();
+      if (detected && detected !== 'you') {
+        this.currentUser = detected;
+        return this.currentUser;
+      }
     }
     return '';
   }
@@ -256,6 +263,19 @@ class BondStorage {
         });
       } else {
         const res = {};
+        if (keys === null) {
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k.startsWith('bond_')) {
+              const cleanK = k.replace(/^bond_/, '');
+              try {
+                res[cleanK] = JSON.parse(localStorage.getItem(k));
+              } catch (e) {}
+            }
+          }
+          resolve(res);
+          return;
+        }
         const keyList = Array.isArray(keys) ? keys : [keys];
         keyList.forEach(k => {
           try {
@@ -266,6 +286,10 @@ class BondStorage {
         resolve(res);
       }
     });
+  }
+
+  _getAllRaw() {
+    return this._getRaw(null);
   }
 
   _setRaw(items) {
@@ -911,7 +935,7 @@ class BondStorage {
 
       if (this._hasChromeStorage()) {
         chrome.storage.local.get(null, (allData) => {
-          if (chrome.runtime.lastError || !allData) {
+          if ((typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || !allData) {
             resolve([]);
             return;
           }
@@ -1035,6 +1059,80 @@ class BondStorage {
   }
 
   /**
+   * Evaluates and records key relationship milestones into the conversation's memory ledger.
+   */
+  _evaluateChatMilestones(conv, prevRankName = null) {
+    if (!conv) return;
+    if (!Array.isArray(conv.memories)) conv.memories = [];
+    const now = Date.now();
+    const lifetime = conv.lifetimeTotal || conv.totalCount || 0;
+    const streak = conv.dailyStreak || 0;
+    const rank = conv.rank ? conv.rank.name : null;
+
+    // 1. Initial Connection Milestone
+    if (!conv.memories.some(m => m.type === 'first_seen')) {
+      conv.memories.push({
+        id: `mem_first_${conv.convId}`,
+        type: 'first_seen',
+        title: 'Chat Memory Established',
+        description: `BondScore began remembering chats with ${conv.title || conv.convId}.`,
+        timestamp: conv.firstSeenTimestamp || now,
+        badge: '🌱'
+      });
+    }
+
+    // 2. Volume Milestones
+    const volumeCheckpoints = [10, 25, 50, 100, 250, 500, 1000];
+    for (const cp of volumeCheckpoints) {
+      if (lifetime >= cp && !conv.memories.some(m => m.type === 'volume' && m.milestoneValue === cp)) {
+        conv.memories.push({
+          id: `mem_vol_${cp}_${conv.convId}`,
+          type: 'volume',
+          milestoneValue: cp,
+          title: `${cp} Messages Exchanged!`,
+          description: `Passed the ${cp} total message milestone across all conversations.`,
+          timestamp: now,
+          badge: '💬'
+        });
+      }
+    }
+
+    // 3. Streak Milestones
+    const streakCheckpoints = [3, 7, 14, 30, 60, 100];
+    for (const scp of streakCheckpoints) {
+      if (streak >= scp && !conv.memories.some(m => m.type === 'streak' && m.milestoneValue === scp)) {
+        conv.memories.push({
+          id: `mem_streak_${scp}_${conv.convId}`,
+          type: 'streak',
+          milestoneValue: scp,
+          title: `🔥 ${scp}-Day Chat Streak!`,
+          description: `Maintained consecutive daily messaging for ${scp} full days!`,
+          timestamp: now,
+          badge: '🔥'
+        });
+      }
+    }
+
+    // 4. Rank Promotion Milestones
+    if (rank && prevRankName && rank !== prevRankName) {
+      const rankBadge = conv.rank ? conv.rank.emoji : '⭐';
+      conv.memories.push({
+        id: `mem_rank_${conv.rank.id || 'tier'}_${now}`,
+        type: 'rank_upgrade',
+        title: `Promoted to ${rank}!`,
+        description: `Relationship evolved to ${rank} (${Math.round(conv.bondScore || 0)} Bond Score).`,
+        timestamp: now,
+        badge: rankBadge
+      });
+    }
+
+    // Cap memories array at 50 to preserve local storage budget
+    if (conv.memories.length > 50) {
+      conv.memories = conv.memories.slice(-50);
+    }
+  }
+
+  /**
    * Retrieves a DM conversation record by conversation ID or recipient handle.
    */
   async getDmConversation(convId, forceRefresh = false, account = null) {
@@ -1054,7 +1152,7 @@ class BondStorage {
     const res = await this._getRaw([key]);
     let conv = res[key] || null;
 
-    // Fallback: check legacy un-scoped key
+    // Fallback 1: check legacy un-scoped key
     if (!conv) {
       const legacyKey = `dm:${cleanId}`;
       const legacyRes = await this._getRaw([legacyKey]);
@@ -1066,7 +1164,21 @@ class BondStorage {
       }
     }
 
-    // Fallback: search by participant handle if convId is handle
+    // Fallback 2: search across any account if not found
+    if (!conv && this._hasChromeStorage()) {
+      const allData = await this._getAllRaw();
+      for (const [k, v] of Object.entries(allData)) {
+        if (k.endsWith(`:dm:${cleanId}`) && v && v.convId) {
+          conv = v;
+          if (activeAccount) {
+            await this._setRaw({ [key]: conv });
+          }
+          break;
+        }
+      }
+    }
+
+    // Fallback 3: search by participant handle if convId is handle
     if (!conv) {
       const allDms = await this.getAllDmConversations(activeAccount);
       conv = allDms.find(d => {
@@ -1103,6 +1215,10 @@ class BondStorage {
       sentCount: 0,
       receivedCount: 0,
       totalCount: 0,
+      lifetimeSent: 0,
+      lifetimeReceived: 0,
+      lifetimeTotal: 0,
+      firstSeenTimestamp: Date.now(),
       lastSentTimestamp: 0,
       lastReceivedTimestamp: 0,
       lastMessageTimestamp: Date.now(),
@@ -1113,21 +1229,34 @@ class BondStorage {
       medianReplyTimeMs: 0,
       replyRate: 100,
       dailyStreak: 0,
+      allTimeLongestStreak: 0,
+      highestRankAchieved: null,
       bondScore: 0,
       rank: null,
       isFading: false,
       memberMessageCounts: {},
       groupEnergyScore: 0,
       groupEnergyLevel: null,
-      isDying: false
+      isDying: false,
+      memories: [],
+      recordedMessageIds: []
     };
+
+    const prevRankName = existing.rank ? existing.rank.name : null;
 
     const updated = {
       ...existing,
       ...convData,
       convId: cleanId,
+      firstSeenTimestamp: existing.firstSeenTimestamp || convData.firstSeenTimestamp || Date.now(),
+      lifetimeSent: Math.max(existing.lifetimeSent || 0, convData.sentCount || existing.sentCount || 0, convData.lifetimeSent || 0),
+      lifetimeReceived: Math.max(existing.lifetimeReceived || 0, convData.receivedCount || existing.receivedCount || 0, convData.lifetimeReceived || 0),
+      allTimeLongestStreak: Math.max(existing.allTimeLongestStreak || 0, convData.dailyStreak || existing.dailyStreak || 0, convData.allTimeLongestStreak || 0),
+      memories: Array.isArray(convData.memories) ? convData.memories : (existing.memories || []),
+      recordedMessageIds: Array.isArray(convData.recordedMessageIds) ? convData.recordedMessageIds : (existing.recordedMessageIds || []),
       lastUpdated: Date.now()
     };
+    updated.lifetimeTotal = updated.lifetimeSent + updated.lifetimeReceived;
 
     // Calculate metrics using scoring engine
     const scoringEngine = this._getScoringEngine();
@@ -1159,8 +1288,18 @@ class BondStorage {
         updated.isFading = metrics.isFading;
         updated.isCoolingCandidate = metrics.isCoolingCandidate;
         updated.dmMetrics = metrics;
+
+        // Track highest rank ever achieved
+        if (updated.rank) {
+          if (!updated.highestRankAchieved || (updated.rank.level > (updated.highestRankAchieved.level || 0))) {
+            updated.highestRankAchieved = updated.rank;
+          }
+        }
       }
     }
+
+    // Evaluate milestones & memories
+    this._evaluateChatMilestones(updated, prevRankName);
 
     if (!activeAccount || activeAccount === (this.currentUser || '')) {
       this.dmCache.set(cleanId, updated);
@@ -1180,23 +1319,25 @@ class BondStorage {
    */
   async getAllDmConversations(account = this.currentUser) {
     return new Promise((resolve) => {
-      let targetAccount = (account || this.currentUser || '').toLowerCase().trim();
+      let targetAccount = this._resolveActiveAccount(account);
 
       if (this._hasChromeStorage()) {
         chrome.storage.local.get(null, async (allData) => {
-          if (chrome.runtime.lastError || !allData) {
+          if ((typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.lastError) || !allData) {
             resolve([]);
             return;
           }
 
-          if (!targetAccount && allData.currentUser) {
+          if (!targetAccount && allData.currentUser && allData.currentUser !== 'you') {
             targetAccount = (allData.currentUser || '').toLowerCase().trim();
           }
 
           const convs = [];
+          const seenConvIds = new Set();
           const scoringEngine = this._getScoringEngine();
           const settings = await this.getSettings().catch(() => DEFAULT_SETTINGS);
 
+          // Pass 1: find explicitly matching account conversations
           for (const [key, value] of Object.entries(allData)) {
             let isMatch = false;
             if (targetAccount) {
@@ -1206,37 +1347,53 @@ class BondStorage {
             }
 
             if (isMatch && value && value.convId) {
-              // Ensure metrics are computed
-              if (scoringEngine) {
-                if (value.isGroup) {
-                  const energy = scoringEngine.calculateGroupEnergy(value);
-                  value.groupEnergyScore = energy.energyScore;
-                  value.groupEnergyLevel = energy.energyLevel;
-                  value.isDying = energy.isDying;
-                  value.energyMetrics = energy;
-                } else {
-                  const metrics = scoringEngine.calculateDmMetrics(value, settings);
-                  value.bondScore = metrics.bondScore;
-                  value.rank = metrics.rank;
-                  value.nextRank = metrics.nextRank;
-                  value.pointsToNext = metrics.pointsToNext;
-                  value.progressToNextPct = metrics.progressToNextPct;
-                  value.sentPercent = metrics.sentPercent;
-                  value.receivedPercent = metrics.receivedPercent;
-                  value.balanceRatio = metrics.balanceRatio;
-                  value.replyRate = metrics.replyRate;
-                  value.medianReplyTimeMs = metrics.medianReplyTimeMs;
-                  value.formattedMedianReply = metrics.formattedMedianReply;
-                  value.waitingForUserReply = metrics.waitingForUserReply;
-                  value.waitingSinceTimestamp = metrics.waitingSinceTimestamp;
-                  value.waitingDurationMs = metrics.waitingDurationMs;
-                  value.formattedWaitingDuration = metrics.formattedWaitingDuration;
-                  value.isFading = metrics.isFading;
-                  value.isCoolingCandidate = metrics.isCoolingCandidate;
-                  value.dmMetrics = metrics;
-                }
-              }
+              const cleanConvId = value.convId.toLowerCase().trim();
+              seenConvIds.add(cleanConvId);
               convs.push(value);
+            }
+          }
+
+          // Pass 2: Fallback check for un-scoped dm: keys or other accounts if empty
+          for (const [key, value] of Object.entries(allData)) {
+            if (value && value.convId) {
+              const cleanConvId = value.convId.toLowerCase().trim();
+              if (!seenConvIds.has(cleanConvId) && (key.startsWith('dm:') || convs.length === 0 && key.includes(':dm:'))) {
+                seenConvIds.add(cleanConvId);
+                convs.push(value);
+              }
+            }
+          }
+
+          // Recalculate metrics on retrieved items
+          for (const value of convs) {
+            if (scoringEngine) {
+              if (value.isGroup) {
+                const energy = scoringEngine.calculateGroupEnergy(value);
+                value.groupEnergyScore = energy.energyScore;
+                value.groupEnergyLevel = energy.energyLevel;
+                value.isDying = energy.isDying;
+                value.energyMetrics = energy;
+              } else {
+                const metrics = scoringEngine.calculateDmMetrics(value, settings);
+                value.bondScore = metrics.bondScore;
+                value.rank = metrics.rank;
+                value.nextRank = metrics.nextRank;
+                value.pointsToNext = metrics.pointsToNext;
+                value.progressToNextPct = metrics.progressToNextPct;
+                value.sentPercent = metrics.sentPercent;
+                value.receivedPercent = metrics.receivedPercent;
+                value.balanceRatio = metrics.balanceRatio;
+                value.replyRate = metrics.replyRate;
+                value.medianReplyTimeMs = metrics.medianReplyTimeMs;
+                value.formattedMedianReply = metrics.formattedMedianReply;
+                value.waitingForUserReply = metrics.waitingForUserReply;
+                value.waitingSinceTimestamp = metrics.waitingSinceTimestamp;
+                value.waitingDurationMs = metrics.waitingDurationMs;
+                value.formattedWaitingDuration = metrics.formattedWaitingDuration;
+                value.isFading = metrics.isFading;
+                value.isCoolingCandidate = metrics.isCoolingCandidate;
+                value.dmMetrics = metrics;
+              }
             }
           }
 
@@ -1245,6 +1402,7 @@ class BondStorage {
         });
       } else {
         const convs = [];
+        const seen = new Set();
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           let isMatch = false;
@@ -1256,7 +1414,10 @@ class BondStorage {
           if (isMatch) {
             try {
               const val = JSON.parse(localStorage.getItem(k));
-              if (val && val.convId) convs.push(val);
+              if (val && val.convId && !seen.has(val.convId)) {
+                seen.add(val.convId);
+                convs.push(val);
+              }
             } catch (e) {}
           }
         }
@@ -1264,6 +1425,170 @@ class BondStorage {
         resolve(convs);
       }
     });
+  }
+
+  /**
+   * Ingests a batch of parsed message entries from an active DM conversation thread.
+   * Deduplicates messages against recordedMessageIds, updates lifetime counts, streaks, and memories.
+   */
+  async ingestMessageEntries(convId, entries = [], account = null) {
+    if (!convId || !Array.isArray(entries) || entries.length === 0) return null;
+    const cleanConvId = convId.toLowerCase().trim();
+    let activeAccount = this._resolveActiveAccount(account);
+    if (!activeAccount) activeAccount = (await this.getCurrentUser()) || '';
+
+    const settings = await this.getSettings();
+    if (settings.trackDirectMessages === false) return null;
+
+    const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
+    const conv = existing || {
+      convId: cleanConvId,
+      isGroup: /^\d+$/.test(cleanConvId),
+      title: cleanConvId,
+      participants: [cleanConvId],
+      participantDetails: {},
+      sentCount: 0,
+      receivedCount: 0,
+      totalCount: 0,
+      lifetimeSent: 0,
+      lifetimeReceived: 0,
+      lifetimeTotal: 0,
+      firstSeenTimestamp: Date.now(),
+      lastSentTimestamp: 0,
+      lastReceivedTimestamp: 0,
+      lastMessageTimestamp: Date.now(),
+      lastSenderHandle: '',
+      waitingForUserReply: false,
+      waitingSinceTimestamp: null,
+      replyTimes: [],
+      medianReplyTimeMs: 0,
+      replyRate: 100,
+      dailyStreak: 0,
+      allTimeLongestStreak: 0,
+      highestRankAchieved: null,
+      memories: [],
+      recordedMessageIds: []
+    };
+
+    if (!Array.isArray(conv.recordedMessageIds)) conv.recordedMessageIds = [];
+    if (!Array.isArray(conv.memories)) conv.memories = [];
+
+    const recordedSet = new Set(conv.recordedMessageIds);
+    let newInboundCount = 0;
+    let newOutboundCount = 0;
+    let latestTimestamp = conv.lastMessageTimestamp || 0;
+    let latestDirection = null;
+
+    for (const entry of entries) {
+      const fp = entry.fingerprint || `${entry.direction}_${(entry.text || '').slice(0, 32)}_${entry.timestamp || ''}`;
+      if (recordedSet.has(fp)) continue; // Already ingested
+
+      recordedSet.add(fp);
+      conv.recordedMessageIds.push(fp);
+
+      const isOutbound = entry.direction === 'outbound';
+      const msgTime = entry.timestamp || Date.now();
+
+      if (isOutbound) {
+        newOutboundCount++;
+        conv.lastSentTimestamp = Math.max(conv.lastSentTimestamp || 0, msgTime);
+      } else {
+        newInboundCount++;
+        conv.lastReceivedTimestamp = Math.max(conv.lastReceivedTimestamp || 0, msgTime);
+      }
+
+      if (msgTime >= latestTimestamp) {
+        latestTimestamp = msgTime;
+        latestDirection = entry.direction;
+      }
+    }
+
+    // Keep recordedMessageIds capped to 600
+    if (conv.recordedMessageIds.length > 600) {
+      conv.recordedMessageIds = conv.recordedMessageIds.slice(-500);
+    }
+
+    if (newInboundCount === 0 && newOutboundCount === 0) {
+      return conv;
+    }
+
+    conv.sentCount = (conv.sentCount || 0) + newOutboundCount;
+    conv.receivedCount = (conv.receivedCount || 0) + newInboundCount;
+    conv.totalCount = conv.sentCount + conv.receivedCount;
+
+    conv.lifetimeSent = Math.max(conv.lifetimeSent || 0, conv.sentCount);
+    conv.lifetimeReceived = Math.max(conv.lifetimeReceived || 0, conv.receivedCount);
+    conv.lifetimeTotal = conv.lifetimeSent + conv.lifetimeReceived;
+
+    conv.lastMessageTimestamp = Math.max(conv.lastMessageTimestamp || 0, latestTimestamp || Date.now());
+
+    // Update waiting state based on latest message
+    if (latestDirection === 'inbound') {
+      conv.waitingForUserReply = true;
+      conv.waitingSinceTimestamp = conv.waitingSinceTimestamp || latestTimestamp;
+    } else if (latestDirection === 'outbound') {
+      conv.waitingForUserReply = false;
+      conv.waitingSinceTimestamp = null;
+    }
+
+    // Update streak
+    const now = Date.now();
+    const msInDay = 86400000;
+    const currentDay = Math.floor(now / msInDay);
+    if (!conv.lastActiveDay) {
+      conv.lastActiveDay = currentDay;
+      conv.dailyStreak = 1;
+    } else if (currentDay === conv.lastActiveDay + 1) {
+      conv.dailyStreak = (conv.dailyStreak || 0) + 1;
+      conv.lastActiveDay = currentDay;
+    } else if (currentDay > conv.lastActiveDay + 1) {
+      conv.dailyStreak = 1;
+      conv.lastActiveDay = currentDay;
+    }
+    conv.allTimeLongestStreak = Math.max(conv.allTimeLongestStreak || 0, conv.dailyStreak || 0);
+
+    return await this.saveDmConversation(cleanConvId, conv, activeAccount);
+  }
+
+  /**
+   * Retrieves memories & milestone ledger for a specific conversation.
+   */
+  async getChatMemories(convId, account = null) {
+    const conv = await this.getDmConversation(convId, false, account);
+    if (!conv) return null;
+    return {
+      convId: conv.convId,
+      title: conv.title,
+      firstSeenTimestamp: conv.firstSeenTimestamp || conv.lastMessageTimestamp || Date.now(),
+      lifetimeTotal: conv.lifetimeTotal || conv.totalCount || 0,
+      lifetimeSent: conv.lifetimeSent || conv.sentCount || 0,
+      lifetimeReceived: conv.lifetimeReceived || conv.receivedCount || 0,
+      highestRankAchieved: conv.highestRankAchieved || conv.rank || null,
+      allTimeLongestStreak: conv.allTimeLongestStreak || conv.dailyStreak || 0,
+      memories: Array.isArray(conv.memories) ? conv.memories : []
+    };
+  }
+
+  /**
+   * Retrieves all chat milestones across all conversations (for popup dashboard).
+   */
+  async getAllChatMilestones(account = this.currentUser) {
+    const all = await this.getAllDmConversations(account);
+    const milestones = [];
+    for (const c of all) {
+      if (Array.isArray(c.memories)) {
+        for (const m of c.memories) {
+          milestones.push({
+            ...m,
+            convId: c.convId,
+            convTitle: c.title || c.convId,
+            isGroup: !!c.isGroup
+          });
+        }
+      }
+    }
+    milestones.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    return milestones.slice(0, 30);
   }
 
   /**
@@ -1293,6 +1618,10 @@ class BondStorage {
       sentCount: 0,
       receivedCount: 0,
       totalCount: 0,
+      lifetimeSent: 0,
+      lifetimeReceived: 0,
+      lifetimeTotal: 0,
+      firstSeenTimestamp: Date.now(),
       lastSentTimestamp: 0,
       lastReceivedTimestamp: 0,
       lastMessageTimestamp: 0,
@@ -1303,7 +1632,11 @@ class BondStorage {
       medianReplyTimeMs: 0,
       replyRate: 100,
       dailyStreak: 0,
-      memberMessageCounts: {}
+      allTimeLongestStreak: 0,
+      highestRankAchieved: null,
+      memberMessageCounts: {},
+      memories: [],
+      recordedMessageIds: []
     };
 
     const now = msgData.timestamp || Date.now();
@@ -1329,7 +1662,6 @@ class BondStorage {
     // Directional counts and response timing calculation
     if (isOutbound) {
       conv.sentCount = (conv.sentCount || 0) + 1;
-      // If user is replying to an inbound message, calculate turnaround duration
       if (conv.lastReceivedTimestamp && conv.lastSentTimestamp < conv.lastReceivedTimestamp) {
         const latencyMs = now - conv.lastReceivedTimestamp;
         if (latencyMs > 0 && latencyMs < 7 * 86400000) {
@@ -1349,6 +1681,9 @@ class BondStorage {
     }
 
     conv.totalCount = (conv.sentCount || 0) + (conv.receivedCount || 0);
+    conv.lifetimeSent = Math.max(conv.lifetimeSent || 0, conv.sentCount);
+    conv.lifetimeReceived = Math.max(conv.lifetimeReceived || 0, conv.receivedCount);
+    conv.lifetimeTotal = conv.lifetimeSent + conv.lifetimeReceived;
     conv.lastMessageTimestamp = now;
     conv.lastSenderHandle = sender;
 
@@ -1371,6 +1706,7 @@ class BondStorage {
       conv.dailyStreak = 1;
       conv.lastActiveDay = currentDay;
     }
+    conv.allTimeLongestStreak = Math.max(conv.allTimeLongestStreak || 0, conv.dailyStreak || 0);
 
     // For 1:1 DMs, also log into the user's public CRM ledger to keep timeline scores aligned
     if (!conv.isGroup && conv.participants.length > 0) {

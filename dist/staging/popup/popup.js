@@ -1299,7 +1299,8 @@ function setupDmSearchHandler() {
  * 💬 Render DMs & Group Chats Analytics and Relationship System
  */
 async function renderDmsTab() {
-  const allDms = await window.bondStorage.getAllDmConversations(currentUsername);
+  const activeAcc = (currentUsername && currentUsername !== 'you') ? currentUsername : null;
+  const allDms = await window.bondStorage.getAllDmConversations(activeAcc);
   cachedDms = allDms;
 
   const total = allDms.length;
@@ -1552,6 +1553,91 @@ function renderDmSubSections(allDms, filter = 'all') {
           </div>
         `;
       }).join('');
+    }
+  }
+
+  // 5. Chat Memories & Milestones (Lifetime Log)
+  const sectionMemories = document.getElementById('dm-section-memories');
+  const listMemories = document.getElementById('dm-memories-list');
+  const countMemories = document.getElementById('dm-memories-count');
+
+  const allMilestones = [];
+  filtered.forEach(d => {
+    if (Array.isArray(d.memories)) {
+      d.memories.forEach(m => {
+        allMilestones.push({
+          ...m,
+          convId: d.convId,
+          convTitle: d.title || (d.participants && d.participants[0]) || d.convId
+        });
+      });
+    }
+  });
+  allMilestones.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  const topLifetime = [...filtered].sort((a, b) => (b.lifetimeTotal || b.totalCount || 0) - (a.lifetimeTotal || a.totalCount || 0));
+
+  if (countMemories) countMemories.innerText = allMilestones.length || topLifetime.filter(d => (d.lifetimeTotal || d.totalCount) > 0).length;
+
+  if (sectionMemories && listMemories) {
+    const showMemories = filter === 'memories' || (filter === 'all' && (topLifetime.length > 0 || allMilestones.length > 0));
+    sectionMemories.style.display = showMemories ? 'block' : 'none';
+
+    if (topLifetime.length === 0 && allMilestones.length === 0) {
+      listMemories.innerHTML = '<div class="dm-empty-state">💭 No chat memories recorded yet. Chat on X to build your permanent memory ledger!</div>';
+    } else {
+      let html = '';
+
+      // Top Lifetime Chats
+      if (topLifetime.length > 0 && (topLifetime[0].lifetimeTotal || topLifetime[0].totalCount || 0) > 0) {
+        html += `
+          <div class="dm-memory-subhead">🌟 All-Time Chat Champions (Lifetime Volume)</div>
+          <div class="dm-champions-grid">
+            ${topLifetime.slice(0, 3).map((d) => {
+              const title = d.title || (d.participants && d.participants[0]) || d.convId;
+              const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
+              const avatar = details ? details.avatarUrl : '';
+              const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
+              const lifetime = d.lifetimeTotal || d.totalCount || 0;
+              return `
+                <div class="dm-champion-card" data-conv="${escapeHtml(d.convId)}">
+                  <div class="dm-action-avatar">
+                    ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
+                  </div>
+                  <div class="dm-champ-info">
+                    <strong class="dm-champ-title">${escapeHtml(title)}</strong>
+                    <span class="dm-champ-count">${lifetime} lifetime msgs</span>
+                    <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.shortLabel}</span>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }
+
+      // Recent Milestone Feed
+      if (allMilestones.length > 0) {
+        html += `
+          <div class="dm-memory-subhead" style="margin-top: 10px;">📜 Recent Milestone Moments</div>
+          <div class="dm-milestones-feed">
+            ${allMilestones.slice(0, 5).map(m => `
+              <div class="dm-milestone-item">
+                <span class="dm-milestone-badge">${m.badge || '✨'}</span>
+                <div class="dm-milestone-info">
+                  <div class="dm-milestone-title-row">
+                    <strong>${escapeHtml(m.title)}</strong>
+                    <span class="dm-milestone-date">${new Date(m.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                  </div>
+                  <span class="dm-milestone-desc">${escapeHtml(m.description)}</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
+      listMemories.innerHTML = html;
     }
   }
 

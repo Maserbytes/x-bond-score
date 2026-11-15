@@ -224,3 +224,97 @@ test('BondStorage handles DM conversation storage, recording, and querying', asy
   const closest = await storage.getTopClosestFriends();
   assert.ok(closest.length >= 1);
 });
+
+test('Chat Memories & Lifetime History: retains permanent memories and never resets to 0 after restart or 2-day gap', async () => {
+  const mockStore = {};
+  global.chrome = {
+    storage: {
+      local: {
+        get(keys, cb) {
+          if (!keys) return cb(Object.assign({}, mockStore));
+          const res = {};
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          keyList.forEach(k => { if (mockStore[k] !== undefined) res[k] = mockStore[k]; });
+          cb(res);
+        },
+        set(obj, cb) {
+          Object.assign(mockStore, obj);
+          if (cb) cb();
+        }
+      }
+    }
+  };
+
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('masertest');
+
+  const now = Date.now();
+  const msInDay = 86400000;
+
+  // 1. Ingest batch messages for alice
+  const entries = [
+    { fingerprint: 'alice_msg_1', direction: 'inbound', text: 'Hey there!', timestamp: now - 2 * msInDay },
+    { fingerprint: 'alice_msg_2', direction: 'outbound', text: 'Hello Alice! How are you?', timestamp: now - 2 * msInDay + 60000 },
+    { fingerprint: 'alice_msg_3', direction: 'inbound', text: 'Working on code!', timestamp: now - msInDay },
+    { fingerprint: 'alice_msg_4', direction: 'outbound', text: 'Same here, building BondScore!', timestamp: now - msInDay + 120000 }
+  ];
+
+  await storage.ingestMessageEntries('alice', entries);
+
+  let conv = await storage.getDmConversation('alice');
+  assert.ok(conv, 'Conversation should exist');
+  assert.equal(conv.lifetimeTotal, 4);
+  assert.equal(conv.lifetimeSent, 2);
+  assert.equal(conv.lifetimeReceived, 2);
+  assert.ok(conv.bondScore > 0, `Expected bondScore > 0, got ${conv.bondScore}`);
+  assert.ok(conv.memories.length >= 1, 'Should have initial first_seen memory');
+
+  // 2. Simulate page refresh / new session: re-instantiate BondStorage
+  const freshStorage = new BondStorage();
+  await freshStorage.init();
+  await freshStorage.switchAccount('masertest');
+
+  // Verify conversation is NOT 0 after refresh / restart
+  const reloadedConv = await freshStorage.getDmConversation('alice');
+  assert.ok(reloadedConv, 'Should find conversation after refresh');
+  assert.equal(reloadedConv.lifetimeTotal, 4, 'Lifetime total must not reset to 0');
+  assert.equal(reloadedConv.lifetimeSent, 2);
+  assert.equal(reloadedConv.lifetimeReceived, 2);
+  assert.ok(reloadedConv.bondScore > 0, 'Bond score must not drop to 0');
+
+  // 3. Ingest same entries again (simulating re-reading same DOM thread)
+  await freshStorage.ingestMessageEntries('alice', entries);
+  const deduplicatedConv = await freshStorage.getDmConversation('alice');
+  assert.equal(deduplicatedConv.lifetimeTotal, 4, 'Deduplication must prevent double-counting same messages');
+
+  // 4. Ingest enough messages to cross volume milestone (10 messages)
+  const moreEntries = [];
+  for (let i = 5; i <= 12; i++) {
+    moreEntries.push({
+      fingerprint: `alice_msg_${i}`,
+      direction: i % 2 === 0 ? 'outbound' : 'inbound',
+      text: `Exchange number ${i}`,
+      timestamp: now - 1000 * 60 * (15 - i)
+    });
+  }
+  await freshStorage.ingestMessageEntries('alice', moreEntries);
+
+  const milestoneConv = await freshStorage.getDmConversation('alice');
+  assert.equal(milestoneConv.lifetimeTotal, 12);
+  assert.ok(milestoneConv.memories.some(m => m.type === 'volume' && m.milestoneValue === 10), 'Should have 10-message milestone');
+
+  // 5. Test Chat Memories query
+  const memories = await freshStorage.getChatMemories('alice');
+  assert.ok(memories);
+  assert.equal(memories.lifetimeTotal, 12);
+  assert.ok(memories.memories.length >= 2);
+
+  // 6. Test 2-day gap: score must not be 0 due to 3-day grace period
+  const metricsAfter2Days = BondScoring.calculateDmMetrics({
+    ...milestoneConv,
+    lastMessageTimestamp: now - (2 * msInDay) // 2 days ago
+  });
+  assert.ok(metricsAfter2Days.bondScore >= 20, `Score after 2 days should remain strong, got ${metricsAfter2Days.bondScore}`);
+  assert.notEqual(metricsAfter2Days.rank.id, null);
+});

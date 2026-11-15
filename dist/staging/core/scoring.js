@@ -310,33 +310,46 @@ class BondScoring {
     const waitingSinceTimestamp = waitingForUserReply ? lastReceived : null;
     const waitingDurationMs = waitingForUserReply ? Math.max(0, now - lastReceived) : 0;
 
-    // 6. Recency Factor & Inactivity Decay
+    // 6. Recency Factor & Grace Period (Never drops to 0 after 1-3 days)
     let recencyFactor = 1.0;
-    const daysSinceLast = lastMessage ? (now - lastMessage) / msInDay : 999;
-    if (daysSinceLast <= 1) {
+    const daysSinceLast = lastMessage 
+      ? Math.max(0, (now - lastMessage) / msInDay) 
+      : (dmData.firstSeenTimestamp ? Math.max(0, (now - dmData.firstSeenTimestamp) / msInDay) : 0);
+
+    // 3-day grace period: full 1.0 strength before gentle decay starts
+    if (daysSinceLast <= 3) {
       recencyFactor = 1.0;
-    } else if (daysSinceLast <= 3) {
-      recencyFactor = 0.92;
     } else if (daysSinceLast <= 7) {
-      recencyFactor = 0.78;
+      recencyFactor = 0.90;
     } else if (daysSinceLast <= 14) {
+      recencyFactor = 0.75;
+    } else if (daysSinceLast <= 30) {
       recencyFactor = 0.60;
     } else {
       const halfLife = settings.decayHalfLifeDays || 14;
       const lambda = Math.LN2 / halfLife;
-      recencyFactor = 0.60 * Math.exp(-lambda * (daysSinceLast - 14));
+      recencyFactor = 0.60 * Math.exp(-lambda * (daysSinceLast - 30));
     }
 
-    // 7. Volume Factor (asymptotic scaling up to ~45 messages)
-    const volumeFactor = 1 - Math.exp(-totalCount / 32);
+    // 7. Volume Factor (asymptotic scaling with lifetime memory support)
+    const effectiveVolume = Math.max(totalCount, dmData.lifetimeTotal || 0);
+    const volumeFactor = effectiveVolume > 0 ? (1 - Math.exp(-effectiveVolume / 32)) : 0;
 
-    // 8. Streak Bonus
+    // 8. Streak Bonus & Historical Record
     const dailyStreak = dmData.dailyStreak || 0;
+    const allTimeLongestStreak = Math.max(dmData.allTimeLongestStreak || 0, dailyStreak);
     const streakBonus = Math.min(15, dailyStreak * 1.5);
 
-    // 9. Final Bond Score
+    // 9. Final Bond Score & Never-Zero Memory Baseline
     let rawScore = (volumeFactor * balanceMultiplier * recencyFactor * speedFactor * 85) + streakBonus;
-    if (totalCount === 0) rawScore = 0;
+    if (totalCount === 0 && effectiveVolume === 0) {
+      rawScore = 0;
+    } else if (effectiveVolume >= 10 && rawScore < 15) {
+      // Historical memory protection: a high exchange history keeps minimum connection score
+      rawScore = 15;
+    } else if (effectiveVolume >= 1 && rawScore < 5) {
+      rawScore = 5;
+    }
     const bondScore = Math.min(100, Math.max(0, Math.round(rawScore * 10) / 10));
     const rank = BondScoring.getDmRank(bondScore);
 
