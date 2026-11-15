@@ -79,9 +79,9 @@ class BondUI {
 
   /**
    * Injects a badge next to a user handle on tweets or profile headers.
-   * Completely immune to async race duplication.
+   * Completely immune to async race duplication. Multi-platform aware.
    */
-  async injectBadge(containerEl, handle, isProfileHeader = false) {
+  async injectBadge(containerEl, handle, isProfileHeader = false, platform = 'x') {
     if (!containerEl || !handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
 
@@ -142,10 +142,13 @@ class BondUI {
       const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
       const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
+      const platIcon = platform === 'threads' ? '🧵' : platform === 'bsky' ? '🦋' : '𝕏';
+
       const badge = document.createElement('span');
       badge.className = `bond-badge ${isProfileHeader ? 'bond-badge-profile' : ''}`;
       badge.setAttribute('data-bond-handle', cleanHandle);
-      badge.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
+      badge.setAttribute('data-bond-platform', platform);
+      badge.title = `BondScore: ${scoreVal} (${tier.name}) • [${platform.toUpperCase()}] • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
       badge.style.setProperty('--bond-color', tier.color);
       badge.style.setProperty('--bond-bg', tier.bg);
 
@@ -155,6 +158,7 @@ class BondUI {
       badge.innerHTML = `
         <span class="bond-badge-inner">
           ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
+          ${platform !== 'x' ? `<span class="bond-plat-icon" title="${platform.toUpperCase()}">${platIcon}</span>` : ''}
           <span class="bond-emoji">${tier.emoji}</span>
           <span class="bond-score-num">${scoreVal}</span>
           ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
@@ -166,7 +170,7 @@ class BondUI {
       badge.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.openScoreCard(cleanHandle, badge);
+        this.openScoreCard(cleanHandle, badge, platform);
       });
 
       containerEl.appendChild(badge);
@@ -335,7 +339,7 @@ class BondUI {
   /**
    * Opens the interactive Score Card popover/modal
    */
-  async openScoreCard(handle, anchorEl = null) {
+  async openScoreCard(handle, anchorEl = null, platform = 'x') {
     this.closeScoreCard();
 
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
@@ -397,9 +401,13 @@ class BondUI {
       engagementMemoryText += ` • ❄️ Dormant for ${daysSinceInteraction}d`;
     }
 
+    const platName = platform === 'threads' ? 'Threads' : platform === 'bsky' ? 'Bluesky' : 'X';
+    const platIcon = platform === 'threads' ? '🧵' : platform === 'bsky' ? '🦋' : '𝕏';
+
     const modal = document.createElement('div');
     modal.className = 'bond-modal-backdrop';
     modal.dataset.handle = cleanHandle;
+    modal.dataset.platform = platform;
     if (settings && settings.theme && settings.theme !== 'system') {
       modal.setAttribute('data-theme', settings.theme);
     }
@@ -414,6 +422,7 @@ class BondUI {
             <div class="bond-user-meta">
               <div class="bond-display-name-row">
                 <span class="bond-display-name">${this.escapeHtml(user.displayName || cleanHandle)}</span>
+                <span class="bond-plat-pill bond-plat-${platform}">${platIcon} ${platName}</span>
                 ${signalStatusHtml}
                 <button class="bond-pin-btn ${user.isPinned ? 'pinned' : ''}" id="bond-pin-toggle-btn" title="${user.isPinned ? 'Unpin VIP' : 'Pin as VIP'}">
                   ${user.isPinned ? '★ VIP' : '☆ Pin'}
@@ -777,10 +786,24 @@ class BondUI {
     const settings = await window.bondStorage.getSettings();
     if (settings.showBadgesInDMs === false || settings.trackDirectMessages === false) return;
 
+    // Normalize arguments if called with (convElement, convId, isGroup, platform)
+    let actualIsGroup = isGroup;
+    let platform = 'x';
+    if (typeof participantHandle === 'boolean') {
+      actualIsGroup = participantHandle;
+      platform = typeof isGroup === 'string' ? isGroup : 'x';
+    } else if (metadata && metadata.platform) {
+      platform = metadata.platform;
+    } else if (typeof metadata === 'string') {
+      platform = metadata;
+    }
+
+    if (window.bondStorage && !window.bondStorage.isDmsEnabled(platform)) return;
+
     let badge = convElement.querySelector(`.bond-dm-row-badge[data-bond-dm-conv="${cleanConvId}"]`);
     const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
       convId: cleanConvId,
-      isGroup,
+      isGroup: actualIsGroup,
       sentCount: 1,
       receivedCount: 1,
       totalCount: 2,
@@ -819,10 +842,11 @@ class BondUI {
       badge = document.createElement('span');
       badge.className = 'bond-dm-row-badge';
       badge.setAttribute('data-bond-dm-conv', cleanConvId);
+      badge.setAttribute('data-bond-platform', platform);
       badge.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        this.openDmScoreCard(cleanConvId, badge);
+        this.openDmScoreCard(cleanConvId, badge, platform);
       });
 
       const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"]') || convElement;
@@ -916,7 +940,7 @@ class BondUI {
   /**
    * Opens the rich 1:1 Direct Message or Group Chat Analytics Modal.
    */
-  async openDmScoreCard(convId, anchorEl = null) {
+  async openDmScoreCard(convId, anchorEl = null, platform = 'x') {
     this.closeScoreCard();
     const cleanConvId = (convId || '').toLowerCase().trim();
     const currentUser = await window.bondStorage.getCurrentUser();
@@ -932,6 +956,10 @@ class BondUI {
       bondScore: 0,
       dailyStreak: 0
     };
+
+    const effectivePlat = conv.platform || platform || 'x';
+    const platName = effectivePlat === 'threads' ? 'Threads' : effectivePlat === 'bsky' ? 'Bluesky' : 'X';
+    const platIcon = effectivePlat === 'threads' ? '🧵' : effectivePlat === 'bsky' ? '🦋' : '𝕏';
 
     const isGroup = !!conv.isGroup;
     let participantHandle = null;
@@ -949,6 +977,7 @@ class BondUI {
     const modal = document.createElement('div');
     modal.className = 'bond-modal-backdrop';
     modal.dataset.dmConv = cleanConvId;
+    modal.dataset.platform = effectivePlat;
     if (settings && settings.theme && settings.theme !== 'system') {
       modal.setAttribute('data-theme', settings.theme);
     }
@@ -968,6 +997,7 @@ class BondUI {
               <div class="bond-user-meta">
                 <div class="bond-display-name-row">
                   <span class="bond-display-name">${this.escapeHtml(conv.title || 'Group Chat')}</span>
+                  <span class="bond-plat-pill bond-plat-${effectivePlat}">${platIcon} ${platName}</span>
                   <span class="bond-energy-tag bond-energy-${energyLevel.id}">${energyLevel.emoji} ${energyLevel.name}</span>
                 </div>
                 <div class="bond-handle">${conv.participants ? conv.participants.length : activeMembers.length} participants</div>
@@ -1039,6 +1069,7 @@ class BondUI {
               <div class="bond-user-meta">
                 <div class="bond-display-name-row">
                   <span class="bond-display-name">${this.escapeHtml(displayName || participantHandle)}</span>
+                  <span class="bond-plat-pill bond-plat-${effectivePlat}">${platIcon} ${platName}</span>
                   <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
                 </div>
                 <div class="bond-handle">@${this.escapeHtml(participantHandle || cleanConvId)} <span class="bond-viewing-account" style="font-size: 11px; opacity: 0.7; margin-left: 6px;">(1:1 Private DM)</span></div>

@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Content Script Coordinator
+ * BondScore - Content Script Coordinator (Multi-Platform: X, Threads, Bluesky)
  * Observes timeline DOM mutations, coordinates badge injection, and handles SPA navigation.
  */
 
@@ -8,11 +8,58 @@
   if (window.__bondScoreContentScriptLoaded) return;
   window.__bondScoreContentScriptLoaded = true;
 
-  console.log('[BondScore] Extension loaded on X (Twitter).');
-
   // Initialize storage
-  await window.bondStorage.init();
-  await window.interactionDetector.init();
+  if (window.bondStorage) {
+    await window.bondStorage.init();
+  }
+
+  // 1. Determine active platform from hostname
+  const hostname = location.hostname.toLowerCase();
+  let activePlatform = 'x';
+  if (hostname.includes('threads.net')) {
+    activePlatform = 'threads';
+  } else if (hostname.includes('bsky.app')) {
+    activePlatform = 'bsky';
+  } else {
+    activePlatform = 'x';
+  }
+
+  console.log(`[BondScore] Initializing on platform: ${activePlatform} (${hostname})`);
+
+  // 2. Check if platform is enabled in user settings
+  const isEnabled = window.bondStorage ? window.bondStorage.isPlatformEnabled(activePlatform) : (activePlatform === 'x');
+  if (!isEnabled) {
+    console.log(`[BondScore] Platform '${activePlatform}' is currently disabled in user settings. Skipping DOM observers.`);
+    // Listen for settings change in case user turns it on from popup
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === 'local' && changes.settings) {
+          const newSettings = changes.settings.newValue || {};
+          const p = newSettings.platforms && newSettings.platforms[activePlatform];
+          if (p && p.enabled) {
+            location.reload();
+          }
+        }
+      });
+    }
+    return;
+  }
+
+  // 3. Initialize appropriate platform adapter
+  let adapter = null;
+  if (activePlatform === 'threads' && window.ThreadsPlatformAdapter) {
+    adapter = new window.ThreadsPlatformAdapter();
+    await adapter.init();
+  } else if (activePlatform === 'bsky' && window.BskyPlatformAdapter) {
+    adapter = new window.BskyPlatformAdapter();
+    await adapter.init();
+  } else {
+    adapter = new window.XPlatformAdapter();
+    if (window.interactionDetector) {
+      await window.interactionDetector.init();
+      await adapter.init(window.interactionDetector);
+    }
+  }
 
   let scanScheduled = false;
   let isScanning = false;
@@ -23,24 +70,27 @@
     const cleanHandle = (handle || '').replace(/^@/, '').toLowerCase().trim();
     if (!cleanHandle || !currentUser || historyBackfillScheduled.has(cleanHandle)) return;
 
-    await window.bondStorage.rebuildDirectionalStats(cleanHandle).catch(() => {});
-    const user = await window.bondStorage.getUser(cleanHandle);
-    if (user && user.historyBackfillAt) return;
-    if (user && Date.now() - (user.historyBackfillAttemptAt || 0) < 24 * 60 * 60 * 1000) return;
+    if (window.bondStorage) {
+      await window.bondStorage.rebuildDirectionalStats(cleanHandle).catch(() => {});
+      const user = await window.bondStorage.getUser(cleanHandle);
+      if (user && user.historyBackfillAt) return;
+      if (user && Date.now() - (user.historyBackfillAttemptAt || 0) < 24 * 60 * 60 * 1000) return;
 
-    historyBackfillScheduled.add(cleanHandle);
-    await window.bondStorage.saveUser(cleanHandle, { historyBackfillAttemptAt: Date.now() });
-    // One bounded seven-day scan per profile, then passive DOM tracking takes over.
-    setTimeout(() => {
-      window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, () => {}, { windowDays: 7 })
-        .catch(() => {})
-        .finally(() => historyBackfillScheduled.delete(cleanHandle));
-    }, 250);
+      historyBackfillScheduled.add(cleanHandle);
+      await window.bondStorage.saveUser(cleanHandle, { historyBackfillAttemptAt: Date.now() });
+    }
+
+    if (window.deepAnalyzer && activePlatform === 'x') {
+      setTimeout(() => {
+        window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, () => {}, { windowDays: 7 })
+          .catch(() => {})
+          .finally(() => historyBackfillScheduled.delete(cleanHandle));
+      }, 250);
+    }
   }
 
   /**
-   * Scans visible DOM for tweets and profile headers to inject BondScore badges.
-   * Completely immune to async race duplication.
+   * Scans visible DOM for posts, profile headers, and chats to inject BondScore badges.
    */
   async function scanDom() {
     scanScheduled = false;
@@ -48,80 +98,97 @@
     isScanning = true;
 
     try {
-      // Check if account has been switched
-      await window.interactionDetector.checkAccountSwitch();
-
-      const currentUser = window.interactionDetector.currentUser;
-
-      // 1. Process Timeline Tweets (Badge Injection & Incoming Engagement Detection)
-      const tweets = document.querySelectorAll('article[data-testid="tweet"]');
-      for (const tweet of tweets) {
-        try {
-          // Detect incoming reply to currentUser or mention
-          await window.interactionDetector.detectIncomingTweet(tweet);
-
-          const userNameContainer = tweet.querySelector('[data-testid="User-Name"]');
-          if (!userNameContainer) continue;
-
-          // Deduplicate immediately: if badge already exists, keep only 1 and skip
-          const existingBadges = userNameContainer.querySelectorAll('.bond-badge');
-          if (existingBadges.length > 0) {
-            for (let i = 1; i < existingBadges.length; i++) {
-              existingBadges[i].remove();
-            }
-            continue;
-          }
-
-          // Skip if injection already pending or completed
-          if (userNameContainer.getAttribute('data-bond-injected')) continue;
-
-          const author = window.interactionDetector.extractTweetAuthor(tweet);
-          if (!author || !author.handle) continue;
-
-          // Skip if current user's own tweet
-          if (currentUser && author.handle === currentUser) continue;
-
-          // Synchronous lock attribute
-          userNameContainer.setAttribute('data-bond-injected', 'true');
-
-          // Inject badge
-          await window.bondUI.injectBadge(userNameContainer, author.handle, false);
-        } catch (err) {
-          // silently continue
+      if (activePlatform === 'threads' && adapter) {
+        const cur = adapter.extractActiveAccountFromDOM();
+        if (cur && cur.handle) adapter.setCurrentUser(cur.handle);
+        await adapter.scanTimeline(adapter.currentUser);
+        await adapter.scanProfile(adapter.currentUser);
+        await adapter.scanDms();
+      } else if (activePlatform === 'bsky' && adapter) {
+        const cur = adapter.extractActiveAccountFromDOM();
+        if (cur && cur.handle) adapter.setCurrentUser(cur.handle);
+        await adapter.scanTimeline(adapter.currentUser);
+        await adapter.scanProfile(adapter.currentUser);
+        await adapter.scanDms();
+      } else {
+        // Platform: X (Twitter)
+        if (window.interactionDetector) {
+          await window.interactionDetector.checkAccountSwitch();
         }
-      }
 
-      // 2. Process Notifications (Passive Incoming Engagement)
-      if (location.pathname.startsWith('/notifications')) {
-        const cells = document.querySelectorAll('[data-testid="cellInnerDiv"]');
-        for (const cell of cells) {
+        const currentUser = window.interactionDetector ? window.interactionDetector.currentUser : null;
+
+        // 1. Process Timeline Tweets
+        const tweets = document.querySelectorAll('article[data-testid="tweet"]');
+        for (const tweet of tweets) {
           try {
-            await window.interactionDetector.detectNotificationCell(cell);
-          } catch (e) {}
-        }
-      }
-
-      // 3. Process Profile Page Header & Relationship Signals
-      const profileMatch = location.pathname.match(/^\/([A-Za-z0-9_]+)$/);
-      if (profileMatch && profileMatch[1]) {
-        const profileHandle = profileMatch[1].toLowerCase();
-        const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
-        if (!nonUserPaths.includes(profileHandle) && (!currentUser || profileHandle !== currentUser)) {
-          const profileHeader = document.querySelector('div[data-testid="UserName"]');
-          if (profileHeader) {
-            const existingHeaderBadges = profileHeader.querySelectorAll('.bond-badge');
-            if (existingHeaderBadges.length > 0) {
-              for (let i = 1; i < existingHeaderBadges.length; i++) {
-                existingHeaderBadges[i].remove();
-              }
-            } else if (!profileHeader.getAttribute('data-bond-injected')) {
-              profileHeader.setAttribute('data-bond-injected', 'true');
-              await window.bondUI.injectBadge(profileHeader, profileHandle, true);
+            if (window.interactionDetector) {
+              await window.interactionDetector.detectIncomingTweet(tweet);
             }
+
+            const userNameContainer = tweet.querySelector('[data-testid="User-Name"]');
+            if (!userNameContainer) continue;
+
+            const existingBadges = userNameContainer.querySelectorAll('.bond-badge');
+            if (existingBadges.length > 0) {
+              for (let i = 1; i < existingBadges.length; i++) existingBadges[i].remove();
+              continue;
+            }
+
+            if (userNameContainer.getAttribute('data-bond-injected')) continue;
+
+            const author = window.interactionDetector ? window.interactionDetector.extractTweetAuthor(tweet) : null;
+            if (!author || !author.handle) continue;
+            if (currentUser && author.handle === currentUser) continue;
+
+            userNameContainer.setAttribute('data-bond-injected', 'true');
+            if (window.bondUI) {
+              await window.bondUI.injectBadge(userNameContainer, author.handle, false, 'x');
+            }
+          } catch (err) {}
+        }
+
+        // 2. Process Notifications
+        if (location.pathname.startsWith('/notifications') && window.interactionDetector) {
+          const cells = document.querySelectorAll('[data-testid="cellInnerDiv"]');
+          for (const cell of cells) {
+            try {
+              await window.interactionDetector.detectNotificationCell(cell);
+            } catch (e) {}
           }
-          // Observe relationship signals (mutuals, follow-back, unfollow, blocks)
-          await window.interactionDetector.observeProfileSignals(profileHandle);
-          scheduleRecentHistoryBackfill(profileHandle, currentUser).catch(() => {});
+        }
+
+        // 3. Process Profile Page Header & Relationship Signals
+        const profileMatch = location.pathname.match(/^\/([A-Za-z0-9_]+)$/);
+        if (profileMatch && profileMatch[1]) {
+          const profileHandle = profileMatch[1].toLowerCase();
+          const nonUserPaths = ['home', 'explore', 'notifications', 'messages', 'settings', 'i', 'compose', 'search'];
+          if (!nonUserPaths.includes(profileHandle) && (!currentUser || profileHandle !== currentUser)) {
+            const profileHeader = document.querySelector('div[data-testid="UserName"]');
+            if (profileHeader) {
+              const existingHeaderBadges = profileHeader.querySelectorAll('.bond-badge');
+              if (existingHeaderBadges.length > 0) {
+                for (let i = 1; i < existingHeaderBadges.length; i++) existingHeaderBadges[i].remove();
+              } else if (!profileHeader.getAttribute('data-bond-injected')) {
+                profileHeader.setAttribute('data-bond-injected', 'true');
+                if (window.bondUI) {
+                  await window.bondUI.injectBadge(profileHeader, profileHandle, true, 'x');
+                }
+              }
+            }
+            if (window.interactionDetector) {
+              await window.interactionDetector.observeProfileSignals(profileHandle);
+            }
+            scheduleRecentHistoryBackfill(profileHandle, currentUser).catch(() => {});
+          }
+        }
+
+        // 4. Process Direct Messages
+        if (location.pathname.startsWith('/messages') || document.querySelector('[data-testid="DMDrawer"]')) {
+          if (window.interactionDetector) {
+            await window.interactionDetector.scanDmInbox();
+            await window.interactionDetector.scanActiveDmThread();
+          }
         }
       }
 
@@ -166,9 +233,17 @@
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg && msg.type === 'bondscore:get_active_account') {
-        const info = window.interactionDetector.extractActiveAccountFromDOM();
+        let info = null;
+        if (activePlatform === 'threads' && adapter) {
+          info = adapter.extractActiveAccountFromDOM();
+        } else if (activePlatform === 'bsky' && adapter) {
+          info = adapter.extractActiveAccountFromDOM();
+        } else if (window.interactionDetector) {
+          info = window.interactionDetector.extractActiveAccountFromDOM();
+        }
         sendResponse({
-          handle: window.interactionDetector.currentUser,
+          platform: activePlatform,
+          handle: info ? info.handle : null,
           metadata: info || null
         });
         return true;
@@ -180,14 +255,18 @@
   setInterval(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
-      window.interactionDetector.checkAccountSwitch();
+      if (window.interactionDetector && activePlatform === 'x') {
+        window.interactionDetector.checkAccountSwitch();
+      }
       scheduleScan();
     }
   }, 500);
 
   // Periodic active account verification
   setInterval(() => {
-    window.interactionDetector.checkAccountSwitch();
+    if (window.interactionDetector && activePlatform === 'x') {
+      window.interactionDetector.checkAccountSwitch();
+    }
   }, 2000);
 
   // Initial scan

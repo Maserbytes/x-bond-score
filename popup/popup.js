@@ -6,6 +6,7 @@
 
 let cachedUsers = [];
 let currentFilter = 'all';
+let currentPlatformFilter = 'all'; // 'all' | 'x' | 'threads' | 'bsky'
 let currentUsername = 'you';
 let currentTheme = 'system'; // 'system' | 'dark' | 'light'
 let leaderboardRefreshTimer = null;
@@ -165,6 +166,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadLeaderboard();
   await loadSettingsForm();
   renderRadarTab();
+  setupPlatformFilterPills();
   setupFilterPills();
   setupSearchHandler();
   setupDmFilterPills();
@@ -352,7 +354,7 @@ async function loadLeaderboard() {
   const topScoreEl = document.getElementById('stat-top-score');
   const mutualRepliesEl = document.getElementById('stat-mutual-replies');
 
-  const users = await window.bondStorage.getAllUsers();
+  const users = await window.bondStorage.getAllUsers(null, currentPlatformFilter);
   if (loadGeneration !== leaderboardLoadGeneration) return;
   cachedUsers = users;
   totalAccountsEl.innerText = cachedUsers.length;
@@ -379,6 +381,20 @@ function setupFilterPills() {
       pill.classList.add('active');
       currentFilter = pill.dataset.filter;
       applyFilterAndRender();
+    });
+  });
+}
+
+function setupPlatformFilterPills() {
+  const pills = document.querySelectorAll('.platform-pill');
+  pills.forEach((pill) => {
+    pill.addEventListener('click', async () => {
+      pills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      currentPlatformFilter = pill.dataset.platform || 'all';
+      await loadLeaderboard();
+      await renderDmsTab();
+      renderRadarTab();
     });
   });
 }
@@ -469,6 +485,9 @@ function renderUserList(users) {
     const isPinned = !!u.isPinned;
     const crm = getCRMStatusForUser(u);
     const dmsTotal = ((u.stats && u.stats.dmsSent) || 0) + ((u.stats && u.stats.dmsReceived) || 0);
+    const plat = u.platform || 'x';
+    const platIcon = plat === 'threads' ? '🧵' : (plat === 'bsky' ? '🦋' : '𝕏');
+    const platTitle = plat === 'threads' ? 'Threads' : (plat === 'bsky' ? 'Bluesky' : 'X (Twitter)');
 
     const item = document.createElement('div');
     item.className = 'mutual-item';
@@ -492,6 +511,7 @@ function renderUserList(users) {
         </div>
         <div class="mutual-names">
           <div class="mutual-name-row">
+            <span class="mutual-plat-pill plat-${plat}" title="${platTitle}">${platIcon}</span>
             <span class="mutual-name">${escapeHtml(u.displayName || u.handle)}</span>
             <span class="popup-crm-pill ${crm.id}" title="${crm.desc}">${crm.emoji} ${crm.label}</span>
             ${signalHtml}
@@ -931,6 +951,37 @@ async function loadSettingsForm() {
   weightReplyInput.addEventListener('input', () => weightReplyVal.innerText = `${weightReplyInput.value} pts`);
   weightLikeInput.addEventListener('input', () => weightLikeVal.innerText = `${weightLikeInput.value} pts`);
 
+  // Multi-Platform Controls
+  const platXEnabled = document.getElementById('setting-plat-x-enabled');
+  const platXTimeline = document.getElementById('setting-plat-x-timeline');
+  const platXDms = document.getElementById('setting-plat-x-dms');
+
+  const platThreadsEnabled = document.getElementById('setting-plat-threads-enabled');
+  const platThreadsTimeline = document.getElementById('setting-plat-threads-timeline');
+  const platThreadsDms = document.getElementById('setting-plat-threads-dms');
+
+  const platBskyEnabled = document.getElementById('setting-plat-bsky-enabled');
+  const platBskyTimeline = document.getElementById('setting-plat-bsky-timeline');
+  const platBskyDms = document.getElementById('setting-plat-bsky-dms');
+
+  const platforms = settings.platforms || {
+    x: { enabled: true, timeline: true, dms: true },
+    threads: { enabled: false, timeline: false, dms: false },
+    bsky: { enabled: false, timeline: false, dms: false }
+  };
+
+  if (platXEnabled) platXEnabled.checked = platforms.x?.enabled !== false;
+  if (platXTimeline) platXTimeline.checked = platforms.x?.timeline !== false;
+  if (platXDms) platXDms.checked = platforms.x?.dms !== false;
+
+  if (platThreadsEnabled) platThreadsEnabled.checked = !!platforms.threads?.enabled;
+  if (platThreadsTimeline) platThreadsTimeline.checked = !!platforms.threads?.timeline;
+  if (platThreadsDms) platThreadsDms.checked = !!platforms.threads?.dms;
+
+  if (platBskyEnabled) platBskyEnabled.checked = !!platforms.bsky?.enabled;
+  if (platBskyTimeline) platBskyTimeline.checked = !!platforms.bsky?.timeline;
+  if (platBskyDms) platBskyDms.checked = !!platforms.bsky?.dms;
+
   // Direct Messages & Privacy Controls
   const trackDmsInput = document.getElementById('setting-track-dms');
   const fadingInput = document.getElementById('setting-fading-threshold');
@@ -971,6 +1022,23 @@ async function loadSettingsForm() {
       trackDirectMessages: trackDmsInput ? trackDmsInput.checked : true,
       fadingThresholdDays: fadingInput ? parseInt(fadingInput.value, 10) : 3,
       dmScoreWeightPercent: dmWeightInput ? parseInt(dmWeightInput.value, 10) : 50,
+      platforms: {
+        x: {
+          enabled: platXEnabled ? platXEnabled.checked : true,
+          timeline: platXTimeline ? platXTimeline.checked : true,
+          dms: platXDms ? platXDms.checked : true
+        },
+        threads: {
+          enabled: platThreadsEnabled ? platThreadsEnabled.checked : false,
+          timeline: platThreadsTimeline ? platThreadsTimeline.checked : false,
+          dms: platThreadsDms ? platThreadsDms.checked : false
+        },
+        bsky: {
+          enabled: platBskyEnabled ? platBskyEnabled.checked : false,
+          timeline: platBskyTimeline ? platBskyTimeline.checked : false,
+          dms: platBskyDms ? platBskyDms.checked : false
+        }
+      },
       weights: {
         ...(current.weights || {}),
         mutualReply: parseInt(weightMutualInput.value, 10),
@@ -1300,7 +1368,7 @@ function setupDmSearchHandler() {
  */
 async function renderDmsTab() {
   const activeAcc = (currentUsername && currentUsername !== 'you') ? currentUsername : null;
-  const allDms = await window.bondStorage.getAllDmConversations(activeAcc);
+  const allDms = await window.bondStorage.getAllDmConversations(activeAcc, currentPlatformFilter);
   cachedDms = allDms;
 
   const total = allDms.length;

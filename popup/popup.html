@@ -16,7 +16,7 @@
           </svg>
         </div>
         <div>
-          <h1 class="brand-title">BondScore <span class="badge-v11">v1.3.1</span></h1>
+          <h1 class="brand-title">BondScore <span class="badge-v11">v1.4.0</span></h1>
           <div class="creator-tag">Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></div>
         </div>
       </div>
@@ -57,6 +57,26 @@
       <div class="account-badge-pill" id="account-badge-pill" title="Interactions & CRM data are strictly isolated for this account">
         Isolated CRM
       </div>
+    </div>
+
+    <!-- Platform Filter Bar (Unified Cross-Platform Navigation) -->
+    <div class="platform-filter-bar" id="platform-filter-bar">
+      <button class="platform-pill active" data-platform="all" id="pill-plat-all" title="View unified connections across all platforms">
+        <span class="plat-icon">🌐</span>
+        <span class="plat-name">All Platforms</span>
+      </button>
+      <button class="platform-pill" data-platform="x" id="pill-plat-x" title="Filter to X (Twitter)">
+        <span class="plat-icon">𝕏</span>
+        <span class="plat-name">X</span>
+      </button>
+      <button class="platform-pill" data-platform="threads" id="pill-plat-threads" title="Filter to Threads">
+        <span class="plat-icon">🧵</span>
+        <span class="plat-name">Threads</span>
+      </button>
+      <button class="platform-pill" data-platform="bsky" id="pill-plat-bsky" title="Filter to Bluesky">
+        <span class="plat-icon">🦋</span>
+        <span class="plat-name">Bluesky</span>
+      </button>
     </div>
 
     <!-- Nav Tabs -->
@@ -299,6 +319,93 @@
               <span class="setting-val-badge" id="weight-like-val">2 pts</span>
             </div>
             <input type="range" id="weight-like" min="1" max="10" value="2" step="1">
+          </div>
+        </div>
+
+        <!-- Supported Platforms & Network Controls -->
+        <div class="settings-group platforms-settings-group">
+          <h3>🌐 Supported Platforms & Network Tracking</h3>
+          <p class="settings-hint">Configure each platform independently. All analysis runs 100% on your device with zero data leaving your machine.</p>
+
+          <!-- 𝕏 X (Twitter) Platform Control Card -->
+          <div class="platform-config-card">
+            <div class="platform-card-header">
+              <div class="platform-card-title">
+                <span class="platform-card-icon">𝕏</span>
+                <div>
+                  <strong>X (Twitter)</strong>
+                  <div class="range-sub">Core network tracking</div>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setting-plat-x-enabled" checked>
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-card-suboptions" id="platform-options-x">
+              <label class="suboption-item">
+                <input type="checkbox" id="setting-plat-x-timeline" checked>
+                <span>Timeline interactions & public bond scoring</span>
+              </label>
+              <label class="suboption-item">
+                <input type="checkbox" id="setting-plat-x-dms" checked>
+                <span>Direct messages & conversations tracking</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 🧵 Threads Platform Control Card -->
+          <div class="platform-config-card">
+            <div class="platform-card-header">
+              <div class="platform-card-title">
+                <span class="platform-card-icon">🧵</span>
+                <div>
+                  <strong>Threads</strong>
+                  <div class="range-sub">threads.net feed & connections (off by default)</div>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setting-plat-threads-enabled">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-card-suboptions" id="platform-options-threads">
+              <label class="suboption-item">
+                <input type="checkbox" id="setting-plat-threads-timeline">
+                <span>Timeline interactions & public bond scoring</span>
+              </label>
+              <label class="suboption-item">
+                <input type="checkbox" id="setting-plat-threads-dms">
+                <span>Direct messages & conversations tracking</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- 🦋 Bluesky Platform Control Card -->
+          <div class="platform-config-card">
+            <div class="platform-card-header">
+              <div class="platform-card-title">
+                <span class="platform-card-icon">🦋</span>
+                <div>
+                  <strong>Bluesky</strong>
+                  <div class="range-sub">bsky.app feed & AT Protocol chat (off by default)</div>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setting-plat-bsky-enabled">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-card-suboptions" id="platform-options-bsky">
+              <label class="suboption-item">
+                <input type="checkbox" id="setting-plat-bsky-timeline">
+                <span>Timeline interactions & public bond scoring</span>
+              </label>
+              <label class="suboption-item">
+                <input type="checkbox" id="setting-plat-bsky-dms">
+                <span>Direct messages & conversations tracking</span>
+              </label>
+            </div>
           </div>
         </div>
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "BondScore for X - Relationship & Mutuals Tracker",
-  "version": "1.3.1",
-  "description": "Live relationship score for X (Twitter). Mutual interaction tracking, time-decay scoring, and deep conversation analysis.",
+  "version": "1.4.0",
+  "description": "Live relationship score for X, Threads, and Bluesky. Mutual interaction tracking, time-decay scoring, DM analytics, and deep conversation analysis.",
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -10,7 +10,11 @@
   ],
   "host_permissions": [
     "https://x.com/*",
-    "https://twitter.com/*"
+    "https://twitter.com/*",
+    "https://threads.net/*",
+    "https://*.threads.net/*",
+    "https://bsky.app/*",
+    "https://*.bsky.app/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -24,7 +28,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "BondScore for X"
+    "default_title": "BondScore"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -36,12 +40,19 @@
     {
       "matches": [
         "https://x.com/*",
-        "https://twitter.com/*"
+        "https://twitter.com/*",
+        "https://threads.net/*",
+        "https://*.threads.net/*",
+        "https://bsky.app/*",
+        "https://*.bsky.app/*"
       ],
       "js": [
         "core/storage.js",
         "core/scoring.js",
         "core/deep-analyzer.js",
+        "content/adapters/x-adapter.js",
+        "content/adapters/threads-adapter.js",
+        "content/adapters/bsky-adapter.js",
         "content/detector.js",
         "content/ui.js",
         "content/content.js"
@@ -60,7 +71,11 @@
       ],
       "matches": [
         "https://x.com/*",
-        "https://twitter.com/*"
+        "https://twitter.com/*",
+        "https://threads.net/*",
+        "https://*.threads.net/*",
+        "https://bsky.app/*",
+        "https://*.bsky.app/*"
       ]
     }
   ]

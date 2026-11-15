@@ -11,7 +11,24 @@ const DEFAULT_SETTINGS = {
   trackDirectMessages: true, // 100% private, on-device DM analytics toggle
   fadingThresholdDays: 3,    // Soft fading alert threshold (days inactive)
   dmScoreWeightPercent: 50,  // Weight % for DM score in combined bond
-  showBadgesInDMs: true,     // Render badges and header pills inside X DM conversations
+  showBadgesInDMs: true,     // Render badges and header pills inside DM conversations
+  platforms: {
+    x: {
+      enabled: true,
+      timeline: true,
+      dms: true
+    },
+    threads: {
+      enabled: false,
+      timeline: false,
+      dms: false
+    },
+    bsky: {
+      enabled: false,
+      timeline: false,
+      dms: false
+    }
+  },
   weights: {
     mutualReply: 15,
     dmMutual: 20,
@@ -150,7 +167,9 @@ class BondStorage {
         this.knownAccounts.push(this.currentUser);
       }
       this.accountsMetadata = data.accountsMetadata || {};
-      this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
+      const rawSettings = data.settings || {};
+      const mergedPlatforms = Object.assign({}, DEFAULT_SETTINGS.platforms, rawSettings.platforms || {});
+      this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, rawSettings, { platforms: mergedPlatforms });
       if (this.settingsCache.gracePeriodDays === 2) {
         this.settingsCache.gracePeriodDays = 5;
         await this._setRaw({ settings: this.settingsCache });
@@ -407,7 +426,9 @@ class BondStorage {
   async getSettings() {
     if (!this.settingsCache) {
       const res = await this._getRaw(['settings']);
-      this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, res.settings || {});
+      const rawSettings = res.settings || {};
+      const mergedPlatforms = Object.assign({}, DEFAULT_SETTINGS.platforms, rawSettings.platforms || {});
+      this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, rawSettings, { platforms: mergedPlatforms });
       if (this.settingsCache.gracePeriodDays === 2) {
         this.settingsCache.gracePeriodDays = 5;
         await this._setRaw({ settings: this.settingsCache });
@@ -417,9 +438,45 @@ class BondStorage {
   }
 
   async updateSettings(newSettings) {
-    this.settingsCache = Object.assign({}, this.settingsCache || DEFAULT_SETTINGS, newSettings);
+    const current = this.settingsCache || DEFAULT_SETTINGS;
+    const mergedPlatforms = Object.assign({}, current.platforms || DEFAULT_SETTINGS.platforms, newSettings.platforms || {});
+    this.settingsCache = Object.assign({}, current, newSettings, { platforms: mergedPlatforms });
     await this._setRaw({ settings: this.settingsCache });
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new CustomEvent('bondscore:settings_updated', { detail: { settings: this.settingsCache } }));
+    }
     return this.settingsCache;
+  }
+
+  isPlatformEnabled(platform = 'x') {
+    if (!this.settingsCache || !this.settingsCache.platforms) return platform === 'x';
+    const p = this.settingsCache.platforms[platform];
+    return p ? !!p.enabled : false;
+  }
+
+  isTimelineEnabled(platform = 'x') {
+    if (!this.settingsCache || !this.settingsCache.platforms) return platform === 'x';
+    const p = this.settingsCache.platforms[platform];
+    return p ? (!!p.enabled && !!p.timeline) : false;
+  }
+
+  isDmsEnabled(platform = 'x') {
+    if (!this.settingsCache || this.settingsCache.trackDirectMessages === false) return false;
+    if (!this.settingsCache.platforms) return platform === 'x';
+    const p = this.settingsCache.platforms[platform];
+    return p ? (!!p.enabled && !!p.dms) : false;
+  }
+
+  async updatePlatformSetting(platform, key, value) {
+    const settings = await this.getSettings();
+    if (!settings.platforms) {
+      settings.platforms = JSON.parse(JSON.stringify(DEFAULT_SETTINGS.platforms));
+    }
+    if (!settings.platforms[platform]) {
+      settings.platforms[platform] = { enabled: false, timeline: false, dms: false };
+    }
+    settings.platforms[platform][key] = value;
+    return await this.updateSettings(settings);
   }
 
   _userKey(handle, account = null) {
@@ -500,6 +557,7 @@ class BondStorage {
 
     const existing = (await this.getUser(cleanHandle, false, activeAccount)) || {
       handle: cleanHandle,
+      platform: (userData && userData.platform) || 'x',
       displayName: cleanHandle,
       avatarUrl: '',
       currentScore: 0,
@@ -682,6 +740,7 @@ class BondStorage {
 
     const newEvent = {
       id: eventId,
+      platform: eventData.platform || 'x',
       timestamp: eventData.timestamp || Date.now(),
       type: eventData.type || 'reply_sent',
       tweetId: eventData.tweetId || null,
@@ -731,6 +790,7 @@ class BondStorage {
 
     if (eventData.displayName) user.displayName = eventData.displayName;
     if (eventData.avatarUrl) user.avatarUrl = eventData.avatarUrl;
+    user.platform = eventData.platform || user.platform || 'x';
     if (!user.stats) user.stats = {};
 
     // Rebuild counters from the ledger, including for existing installations.
@@ -929,7 +989,7 @@ class BondStorage {
    * Retrieves all tracked users for the given account (or active account),
    * sorted by score descending (pinned first).
    */
-  async getAllUsers(account = this.currentUser) {
+  async getAllUsers(account = this.currentUser, platform = null) {
     return new Promise((resolve) => {
       let targetAccount = (account || this.currentUser || '').toLowerCase().trim();
 
@@ -985,7 +1045,8 @@ class BondStorage {
             if (!a.isPinned && b.isPinned) return 1;
             return (b.currentScore || 0) - (a.currentScore || 0);
           });
-          resolve(users);
+          const resUsers = (platform && platform !== 'all') ? users.filter(u => (u.platform || 'x') === platform) : users;
+          resolve(resUsers);
         });
       } else {
         if (!targetAccount) {
@@ -1037,7 +1098,8 @@ class BondStorage {
           if (!a.isPinned && b.isPinned) return 1;
           return (b.currentScore || 0) - (a.currentScore || 0);
         });
-        resolve(users);
+        const resUsers = (platform && platform !== 'all') ? users.filter(u => (u.platform || 'x') === platform) : users;
+        resolve(resUsers);
       }
     });
   }
@@ -1317,7 +1379,7 @@ class BondStorage {
   /**
    * Retrieves all DM conversations for the specified account (or active account).
    */
-  async getAllDmConversations(account = this.currentUser) {
+  async getAllDmConversations(account = this.currentUser, platform = null) {
     return new Promise((resolve) => {
       let targetAccount = this._resolveActiveAccount(account);
 
@@ -1398,7 +1460,8 @@ class BondStorage {
           }
 
           convs.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0));
-          resolve(convs);
+          const resConvs = (platform && platform !== 'all') ? convs.filter(c => (c.platform || 'x') === platform) : convs;
+          resolve(resConvs);
         });
       } else {
         const convs = [];
@@ -1422,7 +1485,8 @@ class BondStorage {
           }
         }
         convs.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0));
-        resolve(convs);
+        const resConvs = (platform && platform !== 'all') ? convs.filter(c => (c.platform || 'x') === platform) : convs;
+        resolve(resConvs);
       }
     });
   }
@@ -1431,7 +1495,7 @@ class BondStorage {
    * Ingests a batch of parsed message entries from an active DM conversation thread.
    * Deduplicates messages against recordedMessageIds, updates lifetime counts, streaks, and memories.
    */
-  async ingestMessageEntries(convId, entries = [], account = null) {
+  async ingestMessageEntries(convId, entries = [], account = null, platform = null) {
     if (!convId || !Array.isArray(entries) || entries.length === 0) return null;
     const cleanConvId = convId.toLowerCase().trim();
     let activeAccount = this._resolveActiveAccount(account);
@@ -1443,6 +1507,7 @@ class BondStorage {
     const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
     const conv = existing || {
       convId: cleanConvId,
+      platform: platform || 'x',
       isGroup: /^\d+$/.test(cleanConvId),
       title: cleanConvId,
       participants: [cleanConvId],
@@ -1472,6 +1537,8 @@ class BondStorage {
 
     if (!Array.isArray(conv.recordedMessageIds)) conv.recordedMessageIds = [];
     if (!Array.isArray(conv.memories)) conv.memories = [];
+    if (platform) conv.platform = platform;
+    else if (!conv.platform) conv.platform = 'x';
 
     const recordedSet = new Set(conv.recordedMessageIds);
     let newInboundCount = 0;
@@ -1611,6 +1678,7 @@ class BondStorage {
     const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
     const conv = existing || {
       convId: cleanConvId,
+      platform: msgData.platform || 'x',
       isGroup: !!msgData.isGroup,
       title: msgData.groupTitle || (msgData.recipientHandle ? `@${msgData.recipientHandle}` : cleanConvId),
       participants: msgData.participants || (msgData.recipientHandle ? [msgData.recipientHandle.toLowerCase()] : []),

@@ -1,0 +1,655 @@
+{
+  "bond_harness_data": {
+    "acc:main_user:events:subaru": [
+      {
+        "id": "evt_1794392307652_xlnacd",
+        "timestamp": 1793528307651,
+        "type": "signal_mutual_follow",
+        "tweetId": null,
+        "textSnippet": "🤝 Mutual follow active with @subaru",
+        "isMutual": true,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392307774_6gjbfq",
+        "timestamp": 1793528307774,
+        "type": "reply_thread",
+        "tweetId": null,
+        "textSnippet": "In-depth reply in conversational thread",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392307838_cbk0co",
+        "timestamp": 1793528307838,
+        "type": "reply_thread",
+        "tweetId": null,
+        "textSnippet": "In-depth reply in conversational thread",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392307889_p0cpq0",
+        "timestamp": 1793528307889,
+        "type": "reply_thread",
+        "tweetId": null,
+        "textSnippet": "In-depth reply in conversational thread",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392307938_bi39ry",
+        "timestamp": 1793528307938,
+        "type": "reply_thread",
+        "tweetId": null,
+        "textSnippet": "In-depth reply in conversational thread",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392307990_icqlod",
+        "timestamp": 1793528307990,
+        "type": "reply_received",
+        "tweetId": null,
+        "textSnippet": "They replied back to your tweet!",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "inbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308057_morc19",
+        "timestamp": 1793528308057,
+        "type": "reply_received",
+        "tweetId": null,
+        "textSnippet": "They replied back to your tweet!",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "inbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308124_wgmfo5",
+        "timestamp": 1793528308124,
+        "type": "reply_received",
+        "tweetId": null,
+        "textSnippet": "They replied back to your tweet!",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "inbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308221_zufhak",
+        "timestamp": 1793528308221,
+        "type": "dm_sent",
+        "tweetId": null,
+        "textSnippet": "Sent direct message via X chat",
+        "isMutual": true,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392316488_sz44rh",
+        "timestamp": 1793528316488,
+        "type": "signal_unfollowed",
+        "tweetId": null,
+        "textSnippet": "⚠️ @subaru is no longer following you",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392317290_3c8qn8",
+        "timestamp": 1793528317290,
+        "type": "signal_follow_back",
+        "tweetId": null,
+        "textSnippet": "🎉 @subaru followed you back!",
+        "isMutual": true,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392317973_z72i9z",
+        "timestamp": 1793528317973,
+        "type": "signal_blocked",
+        "tweetId": null,
+        "textSnippet": "🚫 Possible block detected from @subaru",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392318614_hgblg1",
+        "timestamp": 1793528318614,
+        "type": "signal_mutual_follow",
+        "tweetId": null,
+        "textSnippet": "🤝 Mutual follow active with @subaru",
+        "isMutual": true,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      }
+    ],
+    "acc:main_user:user:subaru": {
+      "handle": "subaru",
+      "displayName": "subaru",
+      "avatarUrl": "",
+      "currentScore": 100,
+      "tier": "soulmates",
+      "crmStatus": "Besties",
+      "crmStatusId": "besties",
+      "streakDays": 1,
+      "isPinned": false,
+      "note": "",
+      "lastInteraction": 1794392318614,
+      "lastCalculated": 1794392318616,
+      "trend": "steady",
+      "stats": {
+        "repliesSent": 4,
+        "repliesReceived": 3,
+        "dmsSent": 1,
+        "dmsReceived": 0,
+        "mutualExchanges": 10,
+        "likes": 0,
+        "quotes": 0,
+        "deepScans": 0
+      },
+      "crmStatusData": {
+        "id": "besties",
+        "label": "Besties",
+        "emoji": "💖",
+        "desc": "Deep two-way bond with active exchanges",
+        "color": "#F91880",
+        "badgeBg": "rgba(249, 24, 128, 0.18)"
+      },
+      "reciprocity": {
+        "ratio": 57,
+        "label": "50/50 Balanced Dialogue",
+        "balance": "balanced",
+        "sent": 8,
+        "received": 6
+      },
+      "recencyBoost": 1.5,
+      "twoWayMultiplier": 1.53,
+      "qualityMetrics": {
+        "threadReplies": 4,
+        "regularReplies": 3,
+        "likes": 0,
+        "sentCount": 8,
+        "receivedCount": 6
+      },
+      "lastUpdated": 1794392318691,
+      "signals": {
+        "theyFollowYou": true,
+        "youFollowThem": true,
+        "isMutual": true,
+        "isBlocked": false,
+        "lastCheckedAt": 1794392318617
+      }
+    },
+    "acc:main_user:events:emilia": [
+      {
+        "id": "evt_1794392308372_sep5o5",
+        "timestamp": 1793528308372,
+        "type": "signal_mutual_follow",
+        "tweetId": null,
+        "textSnippet": "🤝 Mutual follow active with @emilia",
+        "isMutual": true,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308460_wcgwj7",
+        "timestamp": 1793528308460,
+        "type": "reply_thread",
+        "tweetId": null,
+        "textSnippet": "In-depth reply in conversational thread",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308521_645rrj",
+        "timestamp": 1793528308521,
+        "type": "reply_thread",
+        "tweetId": null,
+        "textSnippet": "In-depth reply in conversational thread",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308572_8g9tqg",
+        "timestamp": 1793528308572,
+        "type": "reply_received",
+        "tweetId": null,
+        "textSnippet": "They replied back to your tweet!",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "inbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308622_t6orig",
+        "timestamp": 1793528308622,
+        "type": "reply_sent",
+        "tweetId": null,
+        "textSnippet": "Sent reply on post",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      }
+    ],
+    "acc:main_user:user:emilia": {
+      "handle": "emilia",
+      "displayName": "emilia",
+      "avatarUrl": "",
+      "currentScore": 100,
+      "tier": "soulmates",
+      "crmStatus": "Besties",
+      "crmStatusId": "besties",
+      "streakDays": 1,
+      "isPinned": false,
+      "note": "",
+      "lastInteraction": 1794392308622,
+      "lastCalculated": 1794392308624,
+      "trend": "steady",
+      "stats": {
+        "repliesSent": 3,
+        "repliesReceived": 1,
+        "dmsSent": 0,
+        "dmsReceived": 0,
+        "mutualExchanges": 3,
+        "likes": 0,
+        "quotes": 0,
+        "deepScans": 0
+      },
+      "crmStatusData": {
+        "id": "besties",
+        "label": "Besties",
+        "emoji": "💖",
+        "desc": "Deep two-way bond with active exchanges",
+        "color": "#F91880",
+        "badgeBg": "rgba(249, 24, 128, 0.18)"
+      },
+      "reciprocity": {
+        "ratio": 67,
+        "label": "50/50 Balanced Dialogue",
+        "balance": "balanced",
+        "sent": 4,
+        "received": 2
+      },
+      "recencyBoost": 1.5,
+      "twoWayMultiplier": 1.45,
+      "qualityMetrics": {
+        "threadReplies": 2,
+        "regularReplies": 2,
+        "likes": 0,
+        "sentCount": 4,
+        "receivedCount": 2
+      },
+      "lastUpdated": 1794392318694,
+      "signals": {
+        "theyFollowYou": true,
+        "youFollowThem": true,
+        "isMutual": true,
+        "isBlocked": false,
+        "lastCheckedAt": 1794392308375
+      }
+    },
+    "acc:main_user:events:khyleri": [
+      {
+        "id": "evt_1794392308722_8558ev",
+        "timestamp": 1793528308722,
+        "type": "signal_mutual_follow",
+        "tweetId": null,
+        "textSnippet": "🤝 Mutual follow active with @khyleri",
+        "isMutual": true,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308788_viy0jl",
+        "timestamp": 1793528308788,
+        "type": "reply_sent",
+        "tweetId": null,
+        "textSnippet": "Sent reply on post",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392308838_tvo47k",
+        "timestamp": 1793528308838,
+        "type": "reply_received",
+        "tweetId": null,
+        "textSnippet": "They replied back to your tweet!",
+        "isMutual": true,
+        "isThread": true,
+        "direction": "inbound",
+        "weight": null
+      }
+    ],
+    "acc:main_user:user:khyleri": {
+      "handle": "khyleri",
+      "displayName": "khyleri",
+      "avatarUrl": "",
+      "currentScore": 91.6,
+      "tier": "soulmates",
+      "crmStatus": "Besties",
+      "crmStatusId": "besties",
+      "streakDays": 1,
+      "isPinned": false,
+      "note": "",
+      "lastInteraction": 1794392308838,
+      "lastCalculated": 1794392308839,
+      "trend": "steady",
+      "stats": {
+        "repliesSent": 1,
+        "repliesReceived": 1,
+        "dmsSent": 0,
+        "dmsReceived": 0,
+        "mutualExchanges": 1,
+        "likes": 0,
+        "quotes": 0,
+        "deepScans": 0
+      },
+      "crmStatusData": {
+        "id": "besties",
+        "label": "Besties",
+        "emoji": "💖",
+        "desc": "Deep two-way bond with active exchanges",
+        "color": "#F91880",
+        "badgeBg": "rgba(249, 24, 128, 0.18)"
+      },
+      "reciprocity": {
+        "ratio": 50,
+        "label": "50/50 Balanced Dialogue",
+        "balance": "balanced",
+        "sent": 2,
+        "received": 2
+      },
+      "recencyBoost": 1.5,
+      "twoWayMultiplier": 1.6,
+      "qualityMetrics": {
+        "threadReplies": 0,
+        "regularReplies": 2,
+        "likes": 0,
+        "sentCount": 2,
+        "receivedCount": 2
+      },
+      "lastUpdated": 1794392318701,
+      "signals": {
+        "theyFollowYou": true,
+        "youFollowThem": true,
+        "isMutual": true,
+        "isBlocked": false,
+        "lastCheckedAt": 1794392308723
+      }
+    },
+    "acc:main_user:user:rem": {
+      "handle": "rem",
+      "displayName": "rem",
+      "avatarUrl": "",
+      "currentScore": 55.1,
+      "tier": "close_friends",
+      "crmStatus": "One-sided",
+      "crmStatusId": "one_sided",
+      "streakDays": 1,
+      "isPinned": false,
+      "note": "",
+      "lastInteraction": 1794392309139,
+      "lastCalculated": 1794392309139,
+      "trend": "steady",
+      "stats": {
+        "repliesSent": 3,
+        "repliesReceived": 0,
+        "dmsSent": 0,
+        "dmsReceived": 0,
+        "mutualExchanges": 0,
+        "likes": 0,
+        "quotes": 0,
+        "deepScans": 0
+      },
+      "signals": {
+        "theyFollowYou": false,
+        "youFollowThem": true,
+        "isMutual": false,
+        "isBlocked": false,
+        "lastCheckedAt": 1794392308938
+      },
+      "lastUpdated": 1794392318704,
+      "crmStatusData": {
+        "id": "one_sided",
+        "label": "One-sided",
+        "subLabel": "You lead",
+        "emoji": "➡️",
+        "desc": "You send likes/replies, low engagement back",
+        "color": "#FF7A00",
+        "badgeBg": "rgba(255, 122, 0, 0.18)"
+      },
+      "reciprocity": {
+        "ratio": 100,
+        "label": "You Lead (Low Reciprocity)",
+        "balance": "you_lead",
+        "sent": 3,
+        "received": 0
+      },
+      "recencyBoost": 1.5,
+      "twoWayMultiplier": 1,
+      "qualityMetrics": {
+        "threadReplies": 0,
+        "regularReplies": 3,
+        "likes": 0,
+        "sentCount": 3,
+        "receivedCount": 0
+      }
+    },
+    "acc:main_user:events:rem": [
+      {
+        "id": "evt_1794392309005_w8b79g",
+        "timestamp": 1793528309005,
+        "type": "reply_sent",
+        "tweetId": null,
+        "textSnippet": "Sent reply on post",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392309072_fcfqnc",
+        "timestamp": 1793528309072,
+        "type": "reply_sent",
+        "tweetId": null,
+        "textSnippet": "Sent reply on post",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392309139_hf5237",
+        "timestamp": 1793528309139,
+        "type": "reply_sent",
+        "tweetId": null,
+        "textSnippet": "Sent reply on post",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      }
+    ],
+    "acc:main_user:events:alex": [
+      {
+        "id": "evt_1794392309239_civtgi",
+        "timestamp": 1793528309239,
+        "type": "like",
+        "tweetId": null,
+        "textSnippet": "Liked post #1",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392309240_y9di2m",
+        "timestamp": 1793528309240,
+        "type": "like",
+        "tweetId": null,
+        "textSnippet": "Liked post #2",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392309241_j6pkbh",
+        "timestamp": 1793528309241,
+        "type": "like",
+        "tweetId": null,
+        "textSnippet": "Liked post #3",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392309243_ibk0y1",
+        "timestamp": 1793528309243,
+        "type": "like",
+        "tweetId": null,
+        "textSnippet": "Liked post #4",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      },
+      {
+        "id": "evt_1794392309248_jpv45a",
+        "timestamp": 1793528309248,
+        "type": "like",
+        "tweetId": null,
+        "textSnippet": "Liked post #5",
+        "isMutual": false,
+        "isThread": false,
+        "direction": "outbound",
+        "weight": null
+      }
+    ],
+    "acc:main_user:user:alex": {
+      "handle": "alex",
+      "displayName": "alex",
+      "avatarUrl": "",
+      "currentScore": 24.9,
+      "tier": "conversant",
+      "crmStatus": "One-sided",
+      "crmStatusId": "one_sided",
+      "streakDays": 1,
+      "isPinned": false,
+      "note": "",
+      "lastInteraction": 1794392309248,
+      "lastCalculated": 1794392309250,
+      "trend": "steady",
+      "stats": {
+        "repliesSent": 0,
+        "repliesReceived": 0,
+        "dmsSent": 0,
+        "dmsReceived": 0,
+        "mutualExchanges": 0,
+        "likes": 5,
+        "quotes": 0,
+        "deepScans": 0
+      },
+      "crmStatusData": {
+        "id": "one_sided",
+        "label": "One-sided",
+        "subLabel": "You lead",
+        "emoji": "➡️",
+        "desc": "You send likes/replies, low engagement back",
+        "color": "#FF7A00",
+        "badgeBg": "rgba(255, 122, 0, 0.18)"
+      },
+      "reciprocity": {
+        "ratio": 100,
+        "label": "You Lead (Low Reciprocity)",
+        "balance": "you_lead",
+        "sent": 5,
+        "received": 0
+      },
+      "recencyBoost": 1.5,
+      "twoWayMultiplier": 1,
+      "qualityMetrics": {
+        "threadReplies": 0,
+        "regularReplies": 0,
+        "likes": 5,
+        "sentCount": 5,
+        "receivedCount": 0
+      },
+      "lastUpdated": 1794392318706
+    },
+    "acc:main_user:user:noctis": {
+      "handle": "noctis",
+      "displayName": "noctis",
+      "avatarUrl": "",
+      "currentScore": 0,
+      "tier": "dormant",
+      "crmStatus": "Stranger",
+      "crmStatusId": "stranger",
+      "streakDays": 0,
+      "isPinned": false,
+      "note": "",
+      "lastInteraction": 1794392309355,
+      "lastCalculated": 1794392309355,
+      "trend": "steady",
+      "stats": {
+        "repliesSent": 0,
+        "repliesReceived": 0,
+        "dmsSent": 0,
+        "dmsReceived": 0,
+        "mutualExchanges": 0,
+        "likes": 0,
+        "quotes": 0,
+        "deepScans": 0
+      },
+      "signals": {
+        "theyFollowYou": true,
+        "youFollowThem": false,
+        "isMutual": false,
+        "isBlocked": false,
+        "lastCheckedAt": 1794392309355
+      },
+      "lastUpdated": 1794392318708,
+      "crmStatusData": {
+        "id": "stranger",
+        "label": "Stranger",
+        "emoji": "👤",
+        "desc": "No meaningful interaction history yet",
+        "color": "#71767B",
+        "badgeBg": "rgba(113, 118, 123, 0.15)"
+      }
+    },
+    "acc:main_user:events:noctis": []
+  }
+}
