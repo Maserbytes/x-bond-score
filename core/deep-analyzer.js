@@ -221,7 +221,9 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
 class DeepAnalyzerManager {
   constructor() {
     this.provider = new XSearchQueryAnalyzer();
-    this.activeScans = new Set();
+    // Maps a handle to the in-flight analysis promise so duplicate requests
+    // reuse the same result instead of warning and returning null.
+    this.activeScans = new Map();
   }
 
   /**
@@ -249,12 +251,24 @@ class DeepAnalyzerManager {
    */
   async runAnalysis(currentUser, targetUser, onProgress = () => {}, options = {}) {
     const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
+    if (!cleanTarget) return null;
+
+    // A second click (or an automatic profile scan) while an analysis is
+    // running should wait for that same analysis, not fail with a warning.
     if (this.activeScans.has(cleanTarget)) {
-      console.warn(`[BondScore] Deep analysis already in progress for @${cleanTarget}`);
-      return null;
+      return await this.activeScans.get(cleanTarget);
     }
 
-    this.activeScans.add(cleanTarget);
+    const task = this._runAnalysisInternal(currentUser, cleanTarget, onProgress, options);
+    this.activeScans.set(cleanTarget, task);
+    try {
+      return await task;
+    } finally {
+      this.activeScans.delete(cleanTarget);
+    }
+  }
+
+  async _runAnalysisInternal(currentUser, cleanTarget, onProgress, options) {
     try {
       const events = await this.provider.analyze(currentUser, cleanTarget, onProgress, options);
 
@@ -280,14 +294,15 @@ class DeepAnalyzerManager {
         await window.bondStorage.saveUser(cleanTarget, user);
       }
 
-      onProgress({ percent: 100, stage: 'Ready!', itemsFound: events.length });
+      onProgress({ percent: 100, stage: 'Ready!', itemsFound: Array.isArray(events) ? events.length : 0 });
 
       // Notify content script UI to update badges immediately
       window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: cleanTarget } }));
 
       return await window.bondStorage.getUser(cleanTarget);
-    } finally {
-      this.activeScans.delete(cleanTarget);
+    } catch (err) {
+      console.error(`[BondScore] Deep analysis failed for @${cleanTarget}:`, err);
+      return null;
     }
   }
 
