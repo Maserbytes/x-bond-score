@@ -336,6 +336,12 @@
           }, currentUser).catch(() => {});
 
           await window.bondStorage.ingestMessageEntries(convId, entries, currentUser).catch(() => {});
+
+          // The inbox may have been scanned before this record existed, and a
+          // quiet thread produces no further mutations. Force one more pass so
+          // its row gets a badge without requiring a reload.
+          this.lastInboxScan = 0;
+          setTimeout(() => this._scheduleScan(), 1600);
         } else if (existing && existing.surface !== 'xchat') {
           await window.bondStorage.saveDmConversation(convId, { surface: 'xchat' }, currentUser).catch(() => {});
         }
