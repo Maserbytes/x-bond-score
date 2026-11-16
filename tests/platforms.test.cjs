@@ -191,22 +191,19 @@ test('DM conversations are platform-scoped and isolated', async () => {
   assert.equal(threadDms[0].sentCount, 1);
 });
 
-test('Group energy taxonomy matches v1.4.0 thresholds', () => {
+test('Group energy taxonomy uses strict activity tiers', () => {
+  assert.equal(GroupEnergyLevels.HYPERACTIVE.minScore, 95);
   assert.equal(GroupEnergyLevels.ENERGETIC.minScore, 80);
   assert.equal(GroupEnergyLevels.ACTIVE.minScore, 60);
-  assert.equal(GroupEnergyLevels.STEADY.minScore, 40);
-  assert.equal(GroupEnergyLevels.CHILL.minScore, 20);
   assert.equal(GroupEnergyLevels.DYING.minScore, 0);
 
-  assert.equal(BondScoring.getGroupEnergyLevel(95).id, 'energetic');
+  assert.equal(BondScoring.getGroupEnergyLevel(100).id, 'hyperactive');
+  assert.equal(BondScoring.getGroupEnergyLevel(95).id, 'hyperactive');
+  assert.equal(BondScoring.getGroupEnergyLevel(94).id, 'energetic');
   assert.equal(BondScoring.getGroupEnergyLevel(80).id, 'energetic');
   assert.equal(BondScoring.getGroupEnergyLevel(79).id, 'active');
   assert.equal(BondScoring.getGroupEnergyLevel(60).id, 'active');
-  assert.equal(BondScoring.getGroupEnergyLevel(59).id, 'steady');
-  assert.equal(BondScoring.getGroupEnergyLevel(40).id, 'steady');
-  assert.equal(BondScoring.getGroupEnergyLevel(39).id, 'chill');
-  assert.equal(BondScoring.getGroupEnergyLevel(20).id, 'chill');
-  assert.equal(BondScoring.getGroupEnergyLevel(19).id, 'dying');
+  assert.equal(BondScoring.getGroupEnergyLevel(59).id, 'dying');
   assert.equal(BondScoring.getGroupEnergyLevel(0).id, 'dying');
 });
 

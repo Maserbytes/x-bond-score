@@ -244,8 +244,11 @@
 
       const header = this.shadow.querySelector('[data-testid="dm-conversation-header"]');
 
-      // 1:1 header links to the other participant's public profile.
+      // 1:1 header links to the other participant's public profile. The avatar
+      // inside that link is public profile metadata, never a message body.
       let targetHandle = null;
+      let targetAvatar = '';
+      let targetName = '';
       if (!isGroup && header) {
         for (const link of header.querySelectorAll('a[href]')) {
           const m = (link.getAttribute('href') || '').match(/(?:x|twitter)\.com\/([A-Za-z0-9_]+)/i);
@@ -253,6 +256,10 @@
             const handle = m[1].toLowerCase();
             if (!currentUser || handle !== currentUser) {
               targetHandle = handle;
+              const img = link.querySelector('img');
+              if (img && /^https?:/i.test(img.src || '')) targetAvatar = img.src;
+              const text = String(link.innerText || '').trim();
+              if (text && text.length <= 80) targetName = text;
               break;
             }
           }
@@ -327,11 +334,21 @@
           const title = (existing && existing.title)
             || (targetHandle ? `@${targetHandle}` : (isGroup ? this._groupTitle(convId) : convId));
 
+          const details = Object.assign({}, (existing && existing.participantDetails) || {});
+          if (targetHandle) {
+            details[targetHandle] = {
+              handle: targetHandle,
+              displayName: targetName || targetHandle,
+              avatarUrl: targetAvatar || (details[targetHandle] && details[targetHandle].avatarUrl) || ''
+            };
+          }
+
           await window.bondStorage.saveDmConversation(convId, {
             convId,
             isGroup,
             title,
             participants,
+            participantDetails: details,
             surface: 'xchat'
           }, currentUser).catch(() => {});
 
@@ -344,6 +361,23 @@
           setTimeout(() => this._scheduleScan(), 1600);
         } else if (existing && existing.surface !== 'xchat') {
           await window.bondStorage.saveDmConversation(convId, { surface: 'xchat' }, currentUser).catch(() => {});
+        }
+
+        // The header image can mount after the first ingestion pass. Persist it
+        // as soon as it appears so the Score Card can show the real avatar.
+        if (existing && targetHandle && targetAvatar) {
+          const prev = (existing.participantDetails && existing.participantDetails[targetHandle]) || {};
+          if (prev.avatarUrl !== targetAvatar) {
+            await window.bondStorage.saveDmConversation(convId, {
+              participantDetails: Object.assign({}, existing.participantDetails || {}, {
+                [targetHandle]: {
+                  handle: targetHandle,
+                  displayName: targetName || prev.displayName || targetHandle,
+                  avatarUrl: targetAvatar
+                }
+              })
+            }, currentUser).catch(() => {});
+          }
         }
       }
 

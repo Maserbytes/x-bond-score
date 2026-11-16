@@ -86,6 +86,8 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
     totalMessages: 150,
     recentMessages3d: 45,
     recentMessages7d: 80,
+    recentMessages20h: 55,
+    recentMessages1h: 4,
     lastMessageTimestamp: now - 1000 * 60 * 15, // 15 mins ago
     memberMessageCounts: {
       userA: 40,
@@ -98,8 +100,7 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
 
   const energy = BondScoring.calculateGroupEnergy(activeGroup);
 
-  assert.ok(energy.energyScore >= 75, `Expected high energy score for energetic group, got ${energy.energyScore}`);
-  assert.ok(['energetic', 'active'].includes(energy.energyLevel.id));
+  assert.equal(energy.energyLevel.id, 'energetic');
   assert.equal(energy.isDying, false);
   assert.equal(energy.activeMembers.length, 5);
   assert.equal(energy.activeMembers[0].handle, 'userA');
@@ -118,6 +119,20 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
   assert.ok(deadEnergy.energyScore <= 20);
   assert.equal(deadEnergy.isDying, true);
   assert.equal(deadEnergy.energyLevel.id, 'dying');
+
+  // Strict activity gates: 21+ in 20h = active, 50+ = energetic, 99+ in 1h = hyperactive.
+  const base = { totalMessages: 150, lastMessageTimestamp: now, memberMessageCounts: { a: 5 } };
+  assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 20, recentMessages1h: 2 })).energyLevel.id, 'dying');
+  assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 21, recentMessages1h: 2 })).energyLevel.id, 'active');
+  assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 50, recentMessages1h: 5 })).energyLevel.id, 'energetic');
+  assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 60, recentMessages1h: 99 })).energyLevel.id, 'hyperactive');
+
+  // Thresholds are configurable through settings.
+  const custom = BondScoring.calculateGroupEnergy(
+    Object.assign({}, base, { recentMessages20h: 12, recentMessages1h: 1 }),
+    { groupActivity: { activeMin: 10, energeticMin: 20, hyperactiveMin: 50 } }
+  );
+  assert.equal(custom.energyLevel.id, 'active');
 });
 
 test('calculateCombinedRelationship combines public and DM bond scores with synergy', () => {

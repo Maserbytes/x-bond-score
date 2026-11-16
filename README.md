@@ -52,13 +52,14 @@ BondScore now works on **X**, **Threads** and **Bluesky** with independent, priv
 - **XChat DMs are supported.** X now serves direct messages at `x.com/i/chat` inside an open shadow root; a dedicated adapter observes that surface so DM and group-chat scores work again. Legacy `/messages` pages keep their existing path.
 
 ### Group Chat Energy
-| Level | Score | Badge | Meaning |
-| :--- | :---: | :---: | :--- |
-| **Energetic** | 80–100 | ⚡ | Messages flying, high participation |
-| **Active** | 60–79 | 🔥 | Regular energetic discussion |
-| **Steady** | 40–59 | ☕ | Comfortable day-to-day rhythm |
-| **Chill** | 20–39 | 🛋️ | Quiet, low-key check-ins |
-| **Dying / Inactive** | < 20 | 🪦 | Dormant, at risk of disappearing |
+| Level | Badge | Rule (editable in Settings) |
+| :--- | :---: | :--- |
+| **Hyperactive** | 💥 | 99+ messages in the last 1 hour |
+| **Energetic** | ⚡ | 50+ messages in the last 20 hours |
+| **Active** | 🔥 | More than 20 messages in the last 20 hours |
+| **Dying / Inactive** | 🪦 | Below the Active threshold |
+
+All four thresholds and both time windows can be tuned from **Settings → Group Chat Badges**.
 
 ### Relationship Classes
 | Class | Badge | Signal |

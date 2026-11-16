@@ -17,6 +17,13 @@ const DEFAULT_SETTINGS = {
   fadingThresholdDays: 3,    // Soft fading alert threshold (days inactive)
   dmScoreWeightPercent: 50,  // Weight % for DM score in combined bond
   showBadgesInDMs: true,     // Render badges and header pills inside X DM conversations
+  groupActivity: {           // Group chat badge thresholds (all local, editable)
+    windowHours: 20,
+    activeMin: 21,
+    energeticMin: 50,
+    hyperactiveWindowHours: 1,
+    hyperactiveMin: 99
+  },
   weights: {
     mutualReply: 15,
     dmMutual: 20,
@@ -433,6 +440,7 @@ class BondStorage {
   _normalizeSettings(raw = {}) {
     const merged = Object.assign({}, DEFAULT_SETTINGS, raw);
     merged.weights = Object.assign({}, DEFAULT_SETTINGS.weights, raw.weights || {});
+    merged.groupActivity = Object.assign({}, DEFAULT_SETTINGS.groupActivity, raw.groupActivity || {});
     merged.platforms = {};
     for (const id of Object.keys(DEFAULT_SETTINGS.platforms)) {
       const base = DEFAULT_SETTINGS.platforms[id];
@@ -1370,13 +1378,18 @@ class BondStorage {
     updated.totalMessages = Math.max(updated.lifetimeTotal || 0, updated.totalCount || 0, timeline.length);
     updated.recentMessages3d = timeline.filter((t) => nowTs - t <= 3 * 86400000).length;
     updated.recentMessages7d = timeline.filter((t) => nowTs - t <= 7 * 86400000).length;
+    const settings = await this.getSettings();
+    const groupCfg = settings.groupActivity || {};
+    const windowMs = (groupCfg.windowHours || 20) * 3600000;
+    const hyperMs = (groupCfg.hyperactiveWindowHours || 1) * 3600000;
+    updated.recentMessages20h = timeline.filter((t) => nowTs - t <= windowMs).length;
+    updated.recentMessages1h = timeline.filter((t) => nowTs - t <= hyperMs).length;
 
     // Calculate metrics using scoring engine
     const scoringEngine = this._getScoringEngine();
     if (scoringEngine) {
-      const settings = await this.getSettings();
       if (updated.isGroup) {
-        const energy = scoringEngine.calculateGroupEnergy(updated);
+        const energy = scoringEngine.calculateGroupEnergy(updated, settings);
         updated.groupEnergyScore = energy.energyScore;
         updated.groupEnergyLevel = energy.energyLevel;
         updated.isDying = energy.isDying;
@@ -1492,7 +1505,7 @@ class BondStorage {
           for (const value of convs) {
             if (scoringEngine) {
               if (value.isGroup) {
-                const energy = scoringEngine.calculateGroupEnergy(value);
+                const energy = scoringEngine.calculateGroupEnergy(value, settings);
                 value.groupEnergyScore = energy.energyScore;
                 value.groupEnergyLevel = energy.energyLevel;
                 value.isDying = energy.isDying;
@@ -1584,6 +1597,8 @@ class BondStorage {
       totalMessages: 0,
       recentMessages3d: 0,
       recentMessages7d: 0,
+      recentMessages20h: 0,
+      recentMessages1h: 0,
       firstSeenTimestamp: Date.now(),
       lastSentTimestamp: 0,
       lastReceivedTimestamp: 0,

@@ -1013,7 +1013,7 @@ class BondUI {
               ${conv.isDying ? `
                 <div class="bond-warning-banner" style="margin-top: 8px;">
                   <span class="bond-warning-icon">⚠️</span>
-                  <div><strong>Chat is going quiet!</strong> Low activity in the past 14 days.</div>
+                  <div><strong>Chat is going quiet!</strong> Not enough recent messages to stay Active.</div>
                 </div>
               ` : ''}
             </div>

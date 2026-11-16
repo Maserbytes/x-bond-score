@@ -138,6 +138,16 @@ const DmRanks = {
  * Measures vitality, activity rate, and member participation health
  */
 const GroupEnergyLevels = {
+  HYPERACTIVE: {
+    id: 'hyperactive',
+    name: 'Hyperactive',
+    emoji: '💥',
+    minScore: 95,
+    color: '#EF4444', // Hot red
+    bg: 'rgba(239, 68, 68, 0.16)',
+    border: 'rgba(239, 68, 68, 0.40)',
+    description: '99+ messages in the last hour. Non-stop chat.'
+  },
   ENERGETIC: {
     id: 'energetic',
     name: 'Energetic',
@@ -146,7 +156,7 @@ const GroupEnergyLevels = {
     color: '#10B981', // Vibrant emerald
     bg: 'rgba(16, 185, 129, 0.16)',
     border: 'rgba(16, 185, 129, 0.40)',
-    description: 'Chat is on fire! Messages flying and high participation.'
+    description: '50+ messages in the last 20 hours.'
   },
   ACTIVE: {
     id: 'active',
@@ -156,7 +166,7 @@ const GroupEnergyLevels = {
     color: '#3B82F6', // Electric blue
     bg: 'rgba(59, 130, 246, 0.16)',
     border: 'rgba(59, 130, 246, 0.35)',
-    description: 'Regular energetic discussions and steady flow.'
+    description: 'More than 20 messages in the last 20 hours.'
   },
   STEADY: {
     id: 'steady',
@@ -186,7 +196,7 @@ const GroupEnergyLevels = {
     color: '#64748B', // Faded slate
     bg: 'rgba(100, 116, 139, 0.14)',
     border: 'rgba(100, 116, 139, 0.25)',
-    description: 'Dormant group chat. Danger of disappearing for good.'
+    description: 'Fewer than 21 messages in the last 20 hours.'
   }
 };
 
@@ -220,10 +230,9 @@ class BondScoring {
    */
   static getGroupEnergyLevel(score) {
     const s = Math.max(0, Math.min(100, Math.round(score || 0)));
+    if (s >= GroupEnergyLevels.HYPERACTIVE.minScore) return GroupEnergyLevels.HYPERACTIVE;
     if (s >= GroupEnergyLevels.ENERGETIC.minScore) return GroupEnergyLevels.ENERGETIC;
     if (s >= GroupEnergyLevels.ACTIVE.minScore) return GroupEnergyLevels.ACTIVE;
-    if (s >= GroupEnergyLevels.STEADY.minScore) return GroupEnergyLevels.STEADY;
-    if (s >= GroupEnergyLevels.CHILL.minScore) return GroupEnergyLevels.CHILL;
     return GroupEnergyLevels.DYING;
   }
 
@@ -412,63 +421,70 @@ class BondScoring {
   /**
    * Computes energy score, activity status, and active member roster for a Group Chat.
    */
-  static calculateGroupEnergy(groupData = {}) {
-    const totalMessages = groupData.totalMessages || 0;
-    const recent3d = groupData.recentMessages3d || 0;
-    const recent7d = groupData.recentMessages7d || (recent3d * 2);
-    const lastMessage = groupData.lastMessageTimestamp || Date.now();
-    const now = Date.now();
-    const msInDay = 86400000;
-    const daysSince = Math.max(0, (now - lastMessage) / msInDay);
+  static calculateGroupEnergy(groupData = {}, settings = {}) {
+    const cfg = Object.assign({
+      windowHours: 20,
+      activeMin: 21,
+      energeticMin: 50,
+      hyperactiveWindowHours: 1,
+      hyperactiveMin: 99
+    }, (settings && settings.groupActivity) || {});
 
-    // 1. Member Participation Roster
+    const now = Date.now();
+    const timeline = Array.isArray(groupData.messageTimeline) ? groupData.messageTimeline : [];
+    const recent20h = groupData.recentMessages20h !== undefined
+      ? groupData.recentMessages20h
+      : timeline.filter((t) => now - t <= cfg.windowHours * 3600000).length;
+    const recent1h = groupData.recentMessages1h !== undefined
+      ? groupData.recentMessages1h
+      : timeline.filter((t) => now - t <= cfg.hyperactiveWindowHours * 3600000).length;
+    const totalMessages = groupData.totalMessages || 0;
+
+    const lastMessage = groupData.lastMessageTimestamp || now;
+    const daysSince = Math.max(0, (now - lastMessage) / 86400000);
+
+    // Member participation roster (metadata only, used by the Score Card).
     const memberCounts = groupData.memberMessageCounts || {};
     const memberEntries = Object.entries(memberCounts);
     let memberSum = 0;
     memberEntries.forEach(([, count]) => { memberSum += count; });
     const effectiveTotal = Math.max(totalMessages, memberSum);
+    const activeMembers = memberEntries.map(([handle, count]) => ({
+      handle,
+      count,
+      share: effectiveTotal > 0 ? Math.round((count / effectiveTotal) * 100) : 0
+    })).sort((a, b) => b.count - a.count);
 
-    const activeMembers = memberEntries.map(([handle, count]) => {
-      const share = effectiveTotal > 0 ? Math.round((count / effectiveTotal) * 100) : 0;
-      return { handle, count, share };
-    }).sort((a, b) => b.count - a.count);
-
-    // 2. Diversity Score (0 to 20 pts)
-    const distinctMembers = activeMembers.length;
-    let diversityScore = 5;
-    if (distinctMembers >= 5) diversityScore = 20;
-    else if (distinctMembers >= 3) diversityScore = 15;
-    else if (distinctMembers >= 2) diversityScore = 10;
-
-    // 3. Message Volume Score (0 to 50 pts)
-    const activeVol = recent7d + Math.min(20, totalMessages * 0.2);
-    const volumeScore = Math.min(50, Math.round(50 * (1 - Math.exp(-activeVol / 25))));
-
-    // 4. Recency Score (0 to 30 pts)
-    let recencyScore = 30;
-    if (daysSince <= 1) recencyScore = 30;
-    else if (daysSince <= 3) recencyScore = 22;
-    else if (daysSince <= 7) recencyScore = 14;
-    else if (daysSince <= 14) recencyScore = 6;
-    else recencyScore = 0;
-
-    // 5. Final Group Energy Score
-    let energyScore = volumeScore + recencyScore + diversityScore;
-    if (totalMessages === 0) energyScore = 0;
-    energyScore = Math.min(100, Math.max(0, energyScore));
-
-    const energyLevel = BondScoring.getGroupEnergyLevel(energyScore);
-    const isDying = energyScore < 20 || daysSince >= 14;
+    // Strict activity gates: a group is only "Active" with more than 20
+    // messages in the last 20 hours; "Energetic" needs 50+, and "Hyperactive"
+    // needs 99+ within the last hour. Everything else is Inactive.
+    let energyLevel;
+    let energyScore;
+    if (recent1h >= cfg.hyperactiveMin) {
+      energyLevel = GroupEnergyLevels.HYPERACTIVE;
+      energyScore = 100;
+    } else if (recent20h >= cfg.energeticMin) {
+      energyLevel = GroupEnergyLevels.ENERGETIC;
+      energyScore = 90;
+    } else if (recent20h >= cfg.activeMin) {
+      energyLevel = GroupEnergyLevels.ACTIVE;
+      energyScore = 70;
+    } else {
+      energyLevel = GroupEnergyLevels.DYING;
+      energyScore = Math.min(19, Math.round((recent20h / Math.max(1, cfg.activeMin)) * 19));
+    }
 
     return {
       energyScore,
       energyLevel,
-      isDying,
+      isDying: energyLevel.id === 'dying',
       daysSinceLast: Math.floor(daysSince),
       totalMessages,
-      recent7d,
+      recent20h,
+      recent1h,
       activeMembers,
-      distinctMembers
+      distinctMembers: activeMembers.length,
+      thresholds: cfg
     };
   }
 

@@ -1169,6 +1169,13 @@
   border-style: solid;
 }
 
+.bond-energy-hyperactive {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.40);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.30);
+}
+
 .bond-energy-energetic,
 .bond-energy-buzzing {
   color: #34d399;

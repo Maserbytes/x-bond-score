@@ -433,6 +433,52 @@
           </div>
         </div>
 
+        <!-- Group Chat Badge Thresholds -->
+        <div class="settings-group">
+          <h3>🔥 Group Chat Badges</h3>
+          <p class="settings-hint">A group is only Active above the message threshold in the chosen window. Below it, the badge shows Inactive.</p>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-window-hours">Activity window</label>
+              <span class="setting-val-badge" id="group-window-hours-val">20 hours</span>
+            </div>
+            <input type="range" id="group-window-hours" min="2" max="72" value="20" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-active-min">🔥 Active — messages</label>
+              <span class="setting-val-badge" id="group-active-min-val">21</span>
+            </div>
+            <input type="range" id="group-active-min" min="5" max="100" value="21" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-energetic-min">⚡ Energetic — messages</label>
+              <span class="setting-val-badge" id="group-energetic-min-val">50</span>
+            </div>
+            <input type="range" id="group-energetic-min" min="10" max="200" value="50" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-hyper-window">💥 Hyperactive window</label>
+              <span class="setting-val-badge" id="group-hyper-window-val">1 hour</span>
+            </div>
+            <input type="range" id="group-hyper-window" min="1" max="6" value="1" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-hyper-min">💥 Hyperactive — messages</label>
+              <span class="setting-val-badge" id="group-hyper-min-val">99</span>
+            </div>
+            <input type="range" id="group-hyper-min" min="25" max="300" value="99" step="1">
+          </div>
+        </div>
+
         <!-- Direct Messages & Privacy Settings -->
         <div class="settings-group">
           <h3>💬 Direct Messages & Privacy</h3>

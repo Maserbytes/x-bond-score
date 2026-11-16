@@ -1015,6 +1015,20 @@ async function loadSettingsForm() {
   const weightReplyVal = document.getElementById('weight-reply-val');
   const weightLikeInput = document.getElementById('weight-like');
   const weightLikeVal = document.getElementById('weight-like-val');
+  const groupInputs = {
+    windowHours: document.getElementById('group-window-hours'),
+    activeMin: document.getElementById('group-active-min'),
+    energeticMin: document.getElementById('group-energetic-min'),
+    hyperactiveWindowHours: document.getElementById('group-hyper-window'),
+    hyperactiveMin: document.getElementById('group-hyper-min')
+  };
+  const groupVals = {
+    windowHours: document.getElementById('group-window-hours-val'),
+    activeMin: document.getElementById('group-active-min-val'),
+    energeticMin: document.getElementById('group-energetic-min-val'),
+    hyperactiveWindowHours: document.getElementById('group-hyper-window-val'),
+    hyperactiveMin: document.getElementById('group-hyper-min-val')
+  };
 
   halfLifeInput.value = settings.decayHalfLifeDays || 14;
   halfLifeVal.innerText = `${halfLifeInput.value} days`;
@@ -1031,6 +1045,23 @@ async function loadSettingsForm() {
 
   weightLikeInput.value = weights.like || 2;
   weightLikeVal.innerText = `${weightLikeInput.value} pts`;
+
+  const groupCfg = settings.groupActivity || {};
+  const groupDefaults = { windowHours: 20, activeMin: 21, energeticMin: 50, hyperactiveWindowHours: 1, hyperactiveMin: 99 };
+  Object.keys(groupInputs).forEach((key) => {
+    const input = groupInputs[key];
+    const val = groupVals[key];
+    if (!input || !val) return;
+    input.value = groupCfg[key] !== undefined ? groupCfg[key] : groupDefaults[key];
+    val.innerText = key.includes('Window') || key === 'windowHours'
+      ? `${input.value} hour${input.value === '1' ? '' : 's'}`
+      : String(input.value);
+    input.addEventListener('input', () => {
+      val.innerText = key.includes('Window') || key === 'windowHours'
+        ? `${input.value} hour${input.value === '1' ? '' : 's'}`
+        : String(input.value);
+    });
+  });
 
   halfLifeInput.addEventListener('input', () => halfLifeVal.innerText = `${halfLifeInput.value} days`);
   graceInput.addEventListener('input', () => graceVal.innerText = `${graceInput.value} days`);
@@ -1084,6 +1115,13 @@ async function loadSettingsForm() {
         replySent: parseInt(weightReplyInput.value, 10),
         replyReceived: parseInt(weightReplyInput.value, 10),
         like: parseInt(weightLikeInput.value, 10)
+      },
+      groupActivity: {
+        windowHours: groupInputs.windowHours ? parseInt(groupInputs.windowHours.value, 10) : 20,
+        activeMin: groupInputs.activeMin ? parseInt(groupInputs.activeMin.value, 10) : 21,
+        energeticMin: groupInputs.energeticMin ? parseInt(groupInputs.energeticMin.value, 10) : 50,
+        hyperactiveWindowHours: groupInputs.hyperactiveWindowHours ? parseInt(groupInputs.hyperactiveWindowHours.value, 10) : 1,
+        hyperactiveMin: groupInputs.hyperactiveMin ? parseInt(groupInputs.hyperactiveMin.value, 10) : 99
       }
     });
     saveBtn.innerText = '✓ Preferences Saved';
