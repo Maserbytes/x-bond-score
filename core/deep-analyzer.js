@@ -4,6 +4,15 @@
  * Designed to easily plug in custom search/scraping methods (e.g. from Rezero Sanctuary).
  */
 
+/** Handles can arrive from DOM input, events or storage; always coerce safely. */
+function normalizeHandle(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .trim()
+    .replace(/^@/, '')
+    .toLowerCase()
+    .trim();
+}
+
 class BaseDeepProvider {
   constructor(name = 'BaseProvider') {
     this.name = name;
@@ -33,8 +42,8 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
   }
 
   async analyze(currentUser, targetUser, onProgress, options = {}) {
-    const cleanCurrent = (currentUser || '').replace(/^@/, '').toLowerCase().trim();
-    const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
+    const cleanCurrent = normalizeHandle(currentUser);
+    const cleanTarget = normalizeHandle(targetUser);
 
     if (!cleanCurrent || !cleanTarget) {
       throw new Error('Both currentUser and targetUser are required for Deep Analysis');
@@ -250,8 +259,13 @@ class DeepAnalyzerManager {
    * Performs deep analysis on a specific target user.
    */
   async runAnalysis(currentUser, targetUser, onProgress = () => {}, options = {}) {
-    const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
+    const cleanTarget = normalizeHandle(targetUser);
     if (!cleanTarget) return null;
+
+    // Defensive: an older instance may still hold a Set from a previous build.
+    if (!this.activeScans || typeof this.activeScans.has !== 'function') {
+      this.activeScans = new Map();
+    }
 
     // A second click (or an automatic profile scan) while an analysis is
     // running should wait for that same analysis, not fail with a warning.
@@ -311,8 +325,8 @@ class DeepAnalyzerManager {
    * and reports whether they have ever interacted via tweets, direction, and snippet history.
    */
   async lookupInteraction(handleA, handleB, onProgress = () => {}) {
-    const cleanA = (handleA || '').replace(/^@/, '').toLowerCase().trim();
-    const cleanB = (handleB || '').replace(/^@/, '').toLowerCase().trim();
+    const cleanA = normalizeHandle(handleA);
+    const cleanB = normalizeHandle(handleB);
 
     if (!cleanA || !cleanB) {
       throw new Error('Please enter two handles to check interactions.');
