@@ -123,7 +123,10 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
   // Strict activity gates: 21+ in 20h = active, 50+ = energetic, 99+ in 1h = hyperactive.
   const base = { totalMessages: 150, lastMessageTimestamp: now, memberMessageCounts: { a: 5 } };
   assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 20, recentMessages1h: 2 })).energyLevel.id, 'dying');
-  assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 21, recentMessages1h: 2 })).energyLevel.id, 'active');
+  const lowActive = BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 21, recentMessages1h: 2 }));
+  const highActive = BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 49, recentMessages1h: 2 }));
+  assert.equal(lowActive.energyLevel.id, 'active');
+  assert.ok(highActive.energyScore > lowActive.energyScore, 'more messages in the same tier should raise the score');
   assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 50, recentMessages1h: 5 })).energyLevel.id, 'energetic');
   assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 60, recentMessages1h: 99 })).energyLevel.id, 'hyperactive');
 

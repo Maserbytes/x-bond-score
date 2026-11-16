@@ -458,20 +458,25 @@ class BondScoring {
     // Strict activity gates: a group is only "Active" with more than 20
     // messages in the last 20 hours; "Energetic" needs 50+, and "Hyperactive"
     // needs 99+ within the last hour. Everything else is Inactive.
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const activeSpan = Math.max(1, cfg.energeticMin - cfg.activeMin);
     let energyLevel;
     let energyScore;
     if (recent1h >= cfg.hyperactiveMin) {
       energyLevel = GroupEnergyLevels.HYPERACTIVE;
-      energyScore = 100;
+      // 95-100, scaling with volume beyond the hyperactive threshold.
+      energyScore = clamp(95 + Math.round(((recent1h - cfg.hyperactiveMin) / cfg.hyperactiveMin) * 5), 95, 100);
     } else if (recent20h >= cfg.energeticMin) {
       energyLevel = GroupEnergyLevels.ENERGETIC;
-      energyScore = 90;
+      // 80-94, scaling from the Energetic threshold up to Hyperactive.
+      energyScore = clamp(80 + Math.round(((recent20h - cfg.energeticMin) / activeSpan) * 14), 80, 94);
     } else if (recent20h >= cfg.activeMin) {
       energyLevel = GroupEnergyLevels.ACTIVE;
-      energyScore = 70;
+      // 60-79, scaling from the Active threshold up to Energetic.
+      energyScore = clamp(60 + Math.round(((recent20h - cfg.activeMin) / activeSpan) * 19), 60, 79);
     } else {
       energyLevel = GroupEnergyLevels.DYING;
-      energyScore = Math.min(19, Math.round((recent20h / Math.max(1, cfg.activeMin)) * 19));
+      energyScore = clamp(Math.round((recent20h / Math.max(1, cfg.activeMin)) * 19), 0, 19);
     }
 
     return {
