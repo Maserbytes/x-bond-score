@@ -1450,8 +1450,6 @@ async function renderDmsTab() {
   const scopedDms = allDms.filter(matchesPlatform);
 
   const total = scopedDms.length;
-  const waitingList = scopedDms.filter(d => d.waitingForUserReply === true);
-  const waitingCount = waitingList.length;
 
   const allReplyTimes = [];
   let streakSum = 0;
@@ -1467,19 +1465,12 @@ async function renderDmsTab() {
   }
 
   const statTotal = document.getElementById('dm-stat-total');
-  const statWaiting = document.getElementById('dm-stat-waiting');
   const statSpeed = document.getElementById('dm-stat-speed');
   const statStreaks = document.getElementById('dm-stat-streaks');
-  const statBoxWaiting = document.getElementById('dm-stat-box-waiting');
 
   if (statTotal) statTotal.innerText = total;
-  if (statWaiting) statWaiting.innerText = waitingCount;
   if (statSpeed) statSpeed.innerText = avgSpeedText;
   if (statStreaks) statStreaks.innerText = streakSum;
-
-  if (statBoxWaiting) {
-    statBoxWaiting.classList.toggle('has-waiting', waitingCount > 0);
-  }
 
   renderDmSubSections(scopedDms, currentDmFilter);
 }
@@ -1498,51 +1489,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     });
   }
 
-  // 1. Waiting for your reply
-  const sectionWaiting = document.getElementById('dm-section-waiting');
-  const listWaiting = document.getElementById('dm-waiting-list');
-  const countWaiting = document.getElementById('dm-waiting-count');
-  const waitingItems = filtered.filter(d => d.waitingForUserReply === true);
-
-  if (countWaiting) countWaiting.innerText = waitingItems.length;
-  if (sectionWaiting && listWaiting) {
-    const showWaiting = filter === 'waiting' || (filter === 'all' && waitingItems.length > 0);
-    sectionWaiting.style.display = showWaiting ? 'block' : 'none';
-
-    if (waitingItems.length === 0) {
-      listWaiting.innerHTML = '<div class="dm-empty-state">🎉 All caught up! Zero conversations waiting on your reply.</div>';
-    } else {
-      listWaiting.innerHTML = waitingItems.map(d => {
-        const title = d.title || (d.participants && d.participants[0]) || d.convId;
-        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
-        const avatar = details ? details.avatarUrl : '';
-        const waitTime = d.formattedWaitingDuration || (BondScoring.formatDuration ? BondScoring.formatDuration(d.waitingDurationMs || 0) : 'recently');
-        const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
-
-        return `
-          <div class="dm-action-row" data-conv="${escapeHtml(d.convId)}">
-            <div class="dm-action-avatar">
-              ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
-            </div>
-            <div class="dm-action-meta">
-              <div class="dm-action-title-row">
-                <span class="dm-action-title">${escapeHtml(title)}</span>
-                ${platformChip(d)}
-                <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.shortLabel}</span>
-              </div>
-              <div class="dm-action-sub">
-                <span class="dm-wait-tag">⏳ Waiting ${waitTime}</span>
-                <span>• ${d.replyRate ?? 100}% reply rate</span>
-              </div>
-            </div>
-            <button class="dm-reply-btn" data-url="${messageUrl(d)}">Reply ↗</button>
-          </div>
-        `;
-      }).join('');
-    }
-  }
-
-  // 2. Who Should I Message? (Anti-Fading Smart List)
+  // Who Should I Message? (Anti-Fading Smart List)
   const sectionCold = document.getElementById('dm-section-cold');
   const listCold = document.getElementById('dm-cold-list');
   const countCold = document.getElementById('dm-cold-count');
@@ -1596,7 +1543,7 @@ function renderDmSubSections(allDms, filter = 'all') {
 
   if (countClosest) countClosest.innerText = closestItems.length;
   if (sectionClosest && listClosest) {
-    const showClosest = filter !== 'groups' && filter !== 'cold' && filter !== 'waiting';
+    const showClosest = filter !== 'groups' && filter !== 'cold';
     sectionClosest.style.display = showClosest ? 'block' : 'none';
 
     if (closestItems.length === 0) {

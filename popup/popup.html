@@ -131,10 +131,6 @@
             <div class="stat-number" id="dm-stat-total">0</div>
             <div class="stat-label">Conversations</div>
           </div>
-          <div class="stat-box" id="dm-stat-box-waiting">
-            <div class="stat-number" id="dm-stat-waiting">0</div>
-            <div class="stat-label">Waiting on You</div>
-          </div>
           <div class="stat-box">
             <div class="stat-number" id="dm-stat-speed">-</div>
             <div class="stat-label">Avg Reply Speed</div>
@@ -160,23 +156,12 @@
           </div>
           <div class="filter-pills" id="dm-filter-pills">
             <button class="filter-pill active" data-dm-filter="all">All</button>
-            <button class="filter-pill" data-dm-filter="waiting">⏳ Waiting on You</button>
             <button class="filter-pill" data-dm-filter="streaks">🔥 Streaks</button>
             <button class="filter-pill" data-dm-filter="cold">🧊 Going Cold</button>
             <button class="filter-pill" data-dm-filter="closest">👑 Closest Friends</button>
             <button class="filter-pill" data-dm-filter="groups">👥 Groups</button>
             <button class="filter-pill" data-dm-filter="memories">💭 Memories</button>
           </div>
-        </div>
-
-        <!-- Section 1: ⏳ Waiting for Your Reply (Actionable) -->
-        <div class="radar-card dm-section-card" id="dm-section-waiting" style="display:none;">
-          <div class="radar-card-title dm-section-title">
-            <span>⏳ Waiting For Your Reply</span>
-            <span class="dm-count-badge" id="dm-waiting-count">0</span>
-          </div>
-          <p class="settings-hint">Inbound messages waiting on your response. Keep your reply streaks alive!</p>
-          <div class="dm-mini-list" id="dm-waiting-list"></div>
         </div>
 
         <!-- Section 2: 🧊 Who Should I Message? (Anti-Fading Smart List) -->

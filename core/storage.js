@@ -1317,7 +1317,9 @@ class BondStorage {
         groupEnergyScore: energy.energyScore,
         groupEnergyLevel: energy.energyLevel,
         isDying: energy.isDying,
-        energyMetrics: energy
+        energyMetrics: energy,
+        waitingForUserReply: false,
+        waitingSinceTimestamp: null
       });
     } catch (e) {
       return conv;
@@ -1390,6 +1392,13 @@ class BondStorage {
       lastUpdated: Date.now()
     };
     updated.lifetimeTotal = updated.lifetimeSent + updated.lifetimeReceived;
+
+    // Group chats never get a "waiting on you" state - that signal only makes
+    // sense for a 1:1 conversation.
+    if (updated.isGroup) {
+      updated.waitingForUserReply = false;
+      updated.waitingSinceTimestamp = null;
+    }
 
     // Group energy reads totalMessages + recent windows. Keep both derived from
     // metadata-only timestamps so group chats produce a real score.

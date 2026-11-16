@@ -816,7 +816,6 @@ class BondUI {
           <span class="bond-dm-score">${score}</span>
         </span>
         ${conv.dailyStreak > 1 ? `<span class="bond-status-pill bond-streak-pill" title="Daily Streak">🔥${conv.dailyStreak}d</span>` : ''}
-        ${conv.waitingForUserReply ? `<span class="bond-status-pill bond-waiting-pill" title="Waiting for your reply">⏳ Reply</span>` : ''}
         ${conv.isFading ? `<span class="bond-status-pill bond-cooling-pill" title="High-bond chat cooling off">🧊 Cold</span>` : ''}
       `;
     }
@@ -890,7 +889,6 @@ class BondUI {
           <span class="bond-header-pill-dot">•</span>
           <span class="bond-header-pill-meta">${replyRate}% Reply</span>
           ${conv.dailyStreak > 1 ? `<span class="bond-header-pill-dot">•</span><span class="bond-header-pill-streak">🔥 ${conv.dailyStreak}d</span>` : ''}
-          ${conv.waitingForUserReply ? `<span class="bond-header-pill-waiting" title="Awaiting your reply">⏳</span>` : ''}
         </div>
       `;
     }
@@ -1136,13 +1134,6 @@ class BondUI {
               <span class="bond-dm-metric-label">🔥 Daily Streak</span>
               <strong class="bond-dm-metric-val">${conv.dailyStreak || 0}d</strong>
               <span class="bond-dm-metric-sub">Consecutive days</span>
-            </div>
-            <div class="bond-dm-metric-box">
-              <span class="bond-dm-metric-label">⏳ Reply State</span>
-              <strong class="bond-dm-metric-val ${conv.waitingForUserReply ? 'state-waiting' : 'state-caughtup'}">
-                ${conv.waitingForUserReply ? 'Waiting on You' : 'Caught Up ✅'}
-              </strong>
-              <span class="bond-dm-metric-sub">${conv.waitingForUserReply ? `Waiting ${conv.formattedWaitingDuration || ''}` : 'No pending replies'}</span>
             </div>
           </div>
 
