@@ -1,11 +1,16 @@
 /**
- * BondScore for X - Local Storage Layer (v1.1.3)
+ * BondScore - Multi-Platform Local Storage Layer (v1.4.0)
  * Manages interactions, user records, cached scores, notes, streaks, and settings using chrome.storage.local.
  * Completely private, zero-backend, and offline-first.
  */
 
 const DEFAULT_SETTINGS = {
   theme: 'system', // 'system' | 'dark' | 'light'
+  platforms: {
+    x: { enabled: true, timeline: true, dms: true },
+    threads: { enabled: false, timeline: true, dms: true },
+    bluesky: { enabled: false, timeline: true, dms: true }
+  },
   decayHalfLifeDays: 14,
   gracePeriodDays: 5,
   trackDirectMessages: true, // 100% private, on-device DM analytics toggle
@@ -39,10 +44,46 @@ class BondStorage {
     this.dmCache = new Map();
     this.settingsCache = null;
     this.currentUser = null;
+    this.activePlatform = 'x';
     this.knownAccounts = [];
     this.accountsMetadata = {};
     this.isInitialized = false;
     this._setupStorageSync();
+  }
+
+  /**
+   * The platform that owns this execution context. X is the default so every
+   * pre-v1.4.0 code path keeps its legacy key layout and cache behaviour.
+   */
+  get activePlatformId() {
+    if (this.activePlatform && this.activePlatform !== 'auto') return this.activePlatform;
+    if (typeof window !== 'undefined' && window.BondPlatforms) {
+      return window.BondPlatforms.current().id;
+    }
+    return 'x';
+  }
+
+  setActivePlatform(id) {
+    const next = id || 'x';
+    if (next === this.activePlatform) return;
+    this.activePlatform = next;
+    this.memoryCache.clear();
+    this.eventsCache.clear();
+    this.dmCache.clear();
+  }
+
+  _platformFor(platform = null) {
+    return (platform || this.activePlatformId || 'x').toLowerCase();
+  }
+
+  /** Non-X platforms get an explicit `p:<platform>:` segment after the account. */
+  _platformSegment(platform = null) {
+    const id = this._platformFor(platform);
+    return id === 'x' ? '' : `p:${id}:`;
+  }
+
+  _cacheKey(key, platform = null) {
+    return `${this._platformFor(platform)}:${key}`;
   }
 
   _setupStorageSync() {
@@ -70,68 +111,50 @@ class BondStorage {
           } else if (key === 'accountsMetadata') {
             this.accountsMetadata = change.newValue || {};
           } else if (key === 'settings') {
-            this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, change.newValue || {});
+            this.settingsCache = this._normalizeSettings(change.newValue || {});
           } else {
             // Handle updates isolated to current active account
             const accPrefix = this.currentUser ? `acc:${this.currentUser}:` : '';
-            if (accPrefix && key.startsWith(accPrefix)) {
-              const subKey = key.slice(accPrefix.length);
-              if (subKey.startsWith('user:')) {
-                const handle = subKey.replace('user:', '');
+            const belongsToActive = (accPrefix && key.startsWith(accPrefix)) ||
+              (!this.currentUser && !key.startsWith('acc:') && !key.startsWith('bond_'));
+
+            if (belongsToActive) {
+              const keyPlatform = this._platformFromKey(key);
+              const userMatch = key.match(/:user:([^:]+)$/);
+              const eventsMatch = key.match(/:events:([^:]+)$/);
+              const dmMatch = key.match(/:dm:([^:]+)$/);
+
+              if (userMatch) {
+                const handle = userMatch[1];
                 if (change.newValue) {
-                  this.memoryCache.set(handle, change.newValue);
+                  this.memoryCache.set(this._cacheKey(handle, keyPlatform), change.newValue);
                 } else {
-                  this.memoryCache.delete(handle);
+                  this.memoryCache.delete(this._cacheKey(handle, keyPlatform));
                 }
                 if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('bondscore:updated', {
-                    detail: { handle, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
+                    detail: { handle, platform: keyPlatform, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
                   }));
                 }
-              } else if (subKey.startsWith('events:')) {
-                const handle = subKey.replace('events:', '');
+              } else if (eventsMatch) {
+                const handle = eventsMatch[1];
                 if (change.newValue) {
-                  this.eventsCache.set(handle, change.newValue);
+                  this.eventsCache.set(this._cacheKey(handle, keyPlatform), change.newValue);
                 } else {
-                  this.eventsCache.delete(handle);
+                  this.eventsCache.delete(this._cacheKey(handle, keyPlatform));
                 }
-              } else if (subKey.startsWith('dm:')) {
-                const convId = subKey.replace('dm:', '');
+              } else if (dmMatch) {
+                const convId = dmMatch[1];
                 if (change.newValue) {
-                  this.dmCache.set(convId, change.newValue);
+                  this.dmCache.set(this._cacheKey(convId, keyPlatform), change.newValue);
                 } else {
-                  this.dmCache.delete(convId);
+                  this.dmCache.delete(this._cacheKey(convId, keyPlatform));
                 }
                 if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
                   window.dispatchEvent(new CustomEvent('bondscore:dm_updated', {
-                    detail: { convId, conversation: change.newValue }
+                    detail: { convId, platform: keyPlatform, conversation: change.newValue }
                   }));
                 }
-              }
-            } else if (!this.currentUser && key.startsWith('user:')) {
-              // Legacy non-prefixed fallback
-              const handle = key.replace('user:', '');
-              if (change.newValue) {
-                this.memoryCache.set(handle, change.newValue);
-              } else {
-                this.memoryCache.delete(handle);
-              }
-              if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('bondscore:updated', {
-                  detail: { handle, user: change.newValue, score: change.newValue ? change.newValue.currentScore : 0 }
-                }));
-              }
-            } else if (!this.currentUser && key.startsWith('dm:')) {
-              const convId = key.replace('dm:', '');
-              if (change.newValue) {
-                this.dmCache.set(convId, change.newValue);
-              } else {
-                this.dmCache.delete(convId);
-              }
-              if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
-                window.dispatchEvent(new CustomEvent('bondscore:dm_updated', {
-                  detail: { convId, conversation: change.newValue }
-                }));
               }
             }
           }
@@ -143,6 +166,9 @@ class BondStorage {
   async init() {
     if (this.isInitialized) return;
     try {
+      if (typeof window !== 'undefined' && window.BondPlatforms) {
+        this.activePlatform = window.BondPlatforms.current().id;
+      }
       const data = await this._getRaw(['currentUser', 'knownAccounts', 'accountsMetadata', 'settings']);
       this.currentUser = (data.currentUser || '').toLowerCase().trim() || null;
       this.knownAccounts = Array.isArray(data.knownAccounts) ? data.knownAccounts : [];
@@ -150,9 +176,8 @@ class BondStorage {
         this.knownAccounts.push(this.currentUser);
       }
       this.accountsMetadata = data.accountsMetadata || {};
-      this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, data.settings || {});
-      if (this.settingsCache.gracePeriodDays === 2) {
-        this.settingsCache.gracePeriodDays = 5;
+      this.settingsCache = this._normalizeSettings(data.settings || {});
+      if (data.settings && (!data.settings.platforms || data.settings.gracePeriodDays === 2)) {
         await this._setRaw({ settings: this.settingsCache });
       }
       this.isInitialized = true;
@@ -352,6 +377,7 @@ class BondStorage {
     // Flush in-memory caches to prevent any cross-account data leakage
     this.memoryCache.clear();
     this.eventsCache.clear();
+    this.dmCache.clear();
 
     await this._setRaw({
       currentUser: cleanHandle,
@@ -404,62 +430,81 @@ class BondStorage {
     };
   }
 
+  _normalizeSettings(raw = {}) {
+    const merged = Object.assign({}, DEFAULT_SETTINGS, raw);
+    merged.weights = Object.assign({}, DEFAULT_SETTINGS.weights, raw.weights || {});
+    merged.platforms = {};
+    for (const id of Object.keys(DEFAULT_SETTINGS.platforms)) {
+      const base = DEFAULT_SETTINGS.platforms[id];
+      const value = (raw.platforms && raw.platforms[id]) || {};
+      merged.platforms[id] = {
+        enabled: value.enabled !== undefined ? !!value.enabled : base.enabled,
+        timeline: value.timeline !== undefined ? !!value.timeline : base.timeline,
+        dms: value.dms !== undefined ? !!value.dms : base.dms
+      };
+    }
+    if (merged.gracePeriodDays === 2) merged.gracePeriodDays = 5;
+    return merged;
+  }
+
   async getSettings() {
     if (!this.settingsCache) {
       const res = await this._getRaw(['settings']);
-      this.settingsCache = Object.assign({}, DEFAULT_SETTINGS, res.settings || {});
-      if (this.settingsCache.gracePeriodDays === 2) {
-        this.settingsCache.gracePeriodDays = 5;
-        await this._setRaw({ settings: this.settingsCache });
-      }
+      this.settingsCache = this._normalizeSettings(res.settings || {});
     }
     return this.settingsCache;
   }
 
   async updateSettings(newSettings) {
-    this.settingsCache = Object.assign({}, this.settingsCache || DEFAULT_SETTINGS, newSettings);
+    const next = Object.assign({}, this.settingsCache || DEFAULT_SETTINGS, newSettings || {});
+    this.settingsCache = this._normalizeSettings(next);
     await this._setRaw({ settings: this.settingsCache });
     return this.settingsCache;
   }
 
-  _userKey(handle, account = null) {
+  _userKey(handle, account = null, platform = null) {
     const h = (handle || '').replace(/^@/, '').toLowerCase().trim();
     const acc = this._resolveActiveAccount(account);
-    return acc ? `acc:${acc}:user:${h}` : `user:${h}`;
+    const seg = this._platformSegment(platform);
+    return acc ? `acc:${acc}:${seg}user:${h}` : `${seg}user:${h}`;
   }
 
-  _eventsKey(handle, account = null) {
+  _eventsKey(handle, account = null, platform = null) {
     const h = (handle || '').replace(/^@/, '').toLowerCase().trim();
     const acc = this._resolveActiveAccount(account);
-    return acc ? `acc:${acc}:events:${h}` : `events:${h}`;
+    const seg = this._platformSegment(platform);
+    return acc ? `acc:${acc}:${seg}events:${h}` : `${seg}events:${h}`;
   }
 
-  _dmKey(convId, account = null) {
+  _dmKey(convId, account = null, platform = null) {
     const id = (convId || '').toLowerCase().trim();
     const acc = this._resolveActiveAccount(account);
-    return acc ? `acc:${acc}:dm:${id}` : `dm:${id}`;
+    const seg = this._platformSegment(platform);
+    return acc ? `acc:${acc}:${seg}dm:${id}` : `${seg}dm:${id}`;
   }
 
-  async getUser(handle, forceRefresh = false, account = null) {
+  async getUser(handle, forceRefresh = false, account = null, platform = null) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
     const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
+    const cacheKey = this._cacheKey(cleanHandle, platformId);
 
-    if (!forceRefresh && isCurrentAcc && this.memoryCache.has(cleanHandle)) {
-      return this.memoryCache.get(cleanHandle);
+    if (!forceRefresh && isCurrentAcc && this.memoryCache.has(cacheKey)) {
+      return this.memoryCache.get(cacheKey);
     }
 
-    // 1. Primary lookup under active account
-    const key = this._userKey(cleanHandle, activeAccount);
+    // 1. Primary lookup under active account + platform
+    const key = this._userKey(cleanHandle, activeAccount, platformId);
     const res = await this._getRaw([key]);
     let user = res[key] || null;
 
-    // 2. Fallback to legacy un-scoped key
-    if (!user) {
+    // 2. Fallback to legacy un-scoped key (X only, for pre-1.4.0 installs)
+    if (!user && platformId === 'x') {
       const legacyKey = `user:${cleanHandle}`;
       const legacyRes = await this._getRaw([legacyKey]);
       if (legacyRes[legacyKey]) {
@@ -477,28 +522,39 @@ class BondStorage {
       });
       for (const [k, v] of Object.entries(allData)) {
         if (k.endsWith(`:user:${cleanHandle}`) && v && v.handle) {
-          user = v;
-          break;
+          const keyPlatform = this._platformFromKey(k);
+          if (keyPlatform === platformId) {
+            user = v;
+            break;
+          }
         }
       }
     }
 
-    if (user && isCurrentAcc) {
-      this.memoryCache.set(cleanHandle, user);
+    if (user) {
+      user.platform = user.platform || platformId;
+      if (isCurrentAcc) this.memoryCache.set(cacheKey, user);
     }
     return user;
   }
 
-  async saveUser(handle, userData, account = null) {
+  _platformFromKey(key = '') {
+    const m = String(key).match(/^(?:acc:[^:]+:|bond_acc:[^:]+:)?p:([^:]+):/);
+    return m && m[1] ? m[1].toLowerCase() : 'x';
+  }
+
+  async saveUser(handle, userData, account = null, platform = null) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
-    const key = this._userKey(cleanHandle, activeAccount);
+    const key = this._userKey(cleanHandle, activeAccount, platformId);
+    const cacheKey = this._cacheKey(cleanHandle, platformId);
 
-    const existing = (await this.getUser(cleanHandle, false, activeAccount)) || {
+    const existing = (await this.getUser(cleanHandle, false, activeAccount, platformId)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
       avatarUrl: '',
@@ -528,42 +584,45 @@ class BondStorage {
       ...existing,
       ...userData,
       handle: cleanHandle,
+      platform: platformId,
       lastUpdated: Date.now()
     };
 
     if (!activeAccount || activeAccount === (this.currentUser || '')) {
-      this.memoryCache.set(cleanHandle, updated);
+      this.memoryCache.set(cacheKey, updated);
     }
     await this._setRaw({ [key]: updated });
 
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
       window.dispatchEvent(new CustomEvent('bondscore:updated', {
-        detail: { handle: cleanHandle, user: updated, score: updated.currentScore, account: activeAccount }
+        detail: { handle: cleanHandle, platform: platformId, user: updated, score: updated.currentScore, account: activeAccount }
       }));
     }
     return updated;
   }
 
-  async getEvents(handle, account = null) {
+  async getEvents(handle, account = null, platform = null) {
     if (!handle) return [];
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
     const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
+    const cacheKey = this._cacheKey(cleanHandle, platformId);
 
-    if (isCurrentAcc && this.eventsCache.has(cleanHandle)) {
-      return this.eventsCache.get(cleanHandle);
+    if (isCurrentAcc && this.eventsCache.has(cacheKey)) {
+      return this.eventsCache.get(cacheKey);
     }
 
     // 1. Primary lookup
-    const key = this._eventsKey(cleanHandle, activeAccount);
+    const key = this._eventsKey(cleanHandle, activeAccount, platformId);
     const res = await this._getRaw([key]);
     let events = res[key] || [];
 
-    // 2. Fallback to legacy un-scoped key
-    if ((!events || events.length === 0)) {
+    // 2. Fallback to legacy un-scoped key (X only)
+    if ((!events || events.length === 0) && platformId === 'x') {
       const legacyKey = `events:${cleanHandle}`;
       const legacyRes = await this._getRaw([legacyKey]);
       if (legacyRes[legacyKey] && legacyRes[legacyKey].length > 0) {
@@ -581,6 +640,7 @@ class BondStorage {
       });
       for (const [k, v] of Object.entries(allData)) {
         if (k.endsWith(`:events:${cleanHandle}`) && Array.isArray(v) && v.length > 0) {
+          if (this._platformFromKey(k) !== platformId) continue;
           events = v;
           break;
         }
@@ -588,22 +648,23 @@ class BondStorage {
     }
 
     if (isCurrentAcc) {
-      this.eventsCache.set(cleanHandle, events);
+      this.eventsCache.set(cacheKey, events);
     }
     return events;
   }
 
-  async saveEvents(handle, events, account = null) {
+  async saveEvents(handle, events, account = null, platform = null) {
     if (!handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
-    const key = this._eventsKey(cleanHandle, activeAccount);
+    const key = this._eventsKey(cleanHandle, activeAccount, platformId);
 
     if (!activeAccount || activeAccount === (this.currentUser || '')) {
-      this.eventsCache.set(cleanHandle, events);
+      this.eventsCache.set(this._cacheKey(cleanHandle, platformId), events);
     }
     await this._setRaw({ [key]: events });
   }
@@ -653,9 +714,10 @@ class BondStorage {
    * Records a new interaction event, deduplicating by event ID or tweet ID.
    * Isolated to the active account.
    */
-  async recordInteraction(handle, eventData, account = null) {
+  async recordInteraction(handle, eventData, account = null, platform = null) {
     if (!handle) return null;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
@@ -669,28 +731,33 @@ class BondStorage {
       // Don't track system handles unless user is testing with them
     }
 
-    const events = await this.getEvents(cleanHandle, activeAccount);
+    const type = eventData.type || 'reply_sent';
+    // Privacy guarantee: DM and group-chat bodies are never parsed or stored.
+    const isDmEvent = type.startsWith('dm_');
+    const events = await this.getEvents(cleanHandle, activeAccount, platformId);
     const eventId = eventData.id || `evt_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     
     // Check duplicate by tweetId if provided
     if (eventData.tweetId) {
       const exists = events.some(e => e.tweetId === eventData.tweetId);
       if (exists) {
-        return await this.getUser(cleanHandle, false, activeAccount);
+        return await this.getUser(cleanHandle, false, activeAccount, platformId);
       }
     }
 
     const newEvent = {
       id: eventId,
       timestamp: eventData.timestamp || Date.now(),
-      type: eventData.type || 'reply_sent',
+      type,
       tweetId: eventData.tweetId || null,
-      textSnippet: eventData.textSnippet ? eventData.textSnippet.slice(0, 140) : null,
+      // Metadata only: never persist the contents of a private conversation.
+      textSnippet: isDmEvent ? null : (eventData.textSnippet ? eventData.textSnippet.slice(0, 140) : null),
       isMutual: !!eventData.isMutual,
       isThread: !!eventData.isThread,
+      channel: isDmEvent ? 'dm' : 'public',
       direction: eventData.direction || (
-        ['reply_received', 'dm_received', 'mention'].includes(eventData.type) ||
-        eventData.type === 'signal_follow_back'
+        ['reply_received', 'dm_received', 'mention'].includes(type) ||
+        type === 'signal_follow_back'
           ? 'inbound'
           : 'outbound'
       ),
@@ -703,11 +770,12 @@ class BondStorage {
       events.sort((a, b) => b.timestamp - a.timestamp);
       events.length = 500;
     }
-    await this.saveEvents(cleanHandle, events, activeAccount);
+    await this.saveEvents(cleanHandle, events, activeAccount, platformId);
 
     // Update user summary stats
-    const user = (await this.getUser(cleanHandle, false, activeAccount)) || {
+    const user = (await this.getUser(cleanHandle, false, activeAccount, platformId)) || {
       handle: cleanHandle,
+      platform: platformId,
       displayName: eventData.displayName || cleanHandle,
       avatarUrl: eventData.avatarUrl || '',
       currentScore: 0,
@@ -756,9 +824,15 @@ class BondStorage {
       user.twoWayMultiplier = twoWayMultiplier;
       user.qualityMetrics = qualityMetrics;
       user.lastCalculated = Date.now();
+
+      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent || 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+      if (typeof scoringEngine.classifyRelationship === 'function') {
+        user.relationshipClass = scoringEngine.classifyRelationship(score, sSent, sRecv, user.lastInteraction);
+      }
     }
 
-    await this.saveUser(cleanHandle, user, activeAccount);
+    await this.saveUser(cleanHandle, user, activeAccount, platformId);
     return user;
   }
 
@@ -929,7 +1003,8 @@ class BondStorage {
    * Retrieves all tracked users for the given account (or active account),
    * sorted by score descending (pinned first).
    */
-  async getAllUsers(account = this.currentUser) {
+  async getAllUsers(account = this.currentUser, platform = null) {
+    const wantPlatform = platform ? this._platformFor(platform) : null;
     return new Promise((resolve) => {
       let targetAccount = (account || this.currentUser || '').toLowerCase().trim();
 
@@ -949,7 +1024,7 @@ class BondStorage {
           }
           if (!targetAccount) {
             for (const k of Object.keys(allData)) {
-              const m = k.match(/^acc:([^:]+):user:/);
+              const m = k.match(/^acc:([^:]+):/);
               if (m && m[1]) {
                 targetAccount = m[1].toLowerCase().trim();
                 break;
@@ -958,23 +1033,37 @@ class BondStorage {
           }
 
           const users = [];
+          const seen = new Set();
           for (const [key, value] of Object.entries(allData)) {
             let isMatch = false;
             if (targetAccount) {
-              isMatch = key.startsWith(`acc:${targetAccount}:user:`);
+              isMatch = key.startsWith(`acc:${targetAccount}:user:`) ||
+                        key.startsWith(`acc:${targetAccount}:p:`);
             } else {
-              isMatch = key.startsWith('user:') && !key.startsWith('acc:');
+              isMatch = (key.startsWith('user:') || key.startsWith('p:')) && !key.startsWith('acc:');
             }
+            if (!isMatch || !key.includes(':user:')) continue;
 
-            if (isMatch && value && value.handle) {
+            const keyPlatform = this._platformFromKey(key);
+            if (wantPlatform && keyPlatform !== wantPlatform) continue;
+
+            if (value && value.handle) {
               const h = value.handle.toLowerCase().trim();
-              if (h && (!targetAccount || h !== targetAccount)) {
+              const identity = `${keyPlatform}:${h}`;
+              if (h && (!targetAccount || h !== targetAccount) && !seen.has(identity)) {
+                seen.add(identity);
+                value.platform = value.platform || keyPlatform;
                 if (!value.crmStatusData && typeof BondScoring !== 'undefined') {
                   const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent ?? value.stats.likes ?? 0) + (value.stats.quotesSent || 0) + (value.stats.mentionsSent || 0))) || 0;
                   const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
                   value.crmStatusData = BondScoring.calculateCRMStatus(value.currentScore || 0, sSent, sRecv, value.streakDays || 0);
                   value.crmStatus = value.crmStatusData.label;
                   value.crmStatusId = value.crmStatusData.id;
+                }
+                if (!value.relationshipClass && typeof BondScoring !== 'undefined' && BondScoring.classifyRelationship) {
+                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent || 0) + (value.stats.quotesSent || 0) + (value.stats.mentionsSent || 0))) || 0;
+                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
+                  value.relationshipClass = BondScoring.classifyRelationship(value.currentScore || 0, sSent, sRecv, value.lastInteraction);
                 }
                 users.push(value);
               }
@@ -996,7 +1085,7 @@ class BondStorage {
         }
         if (!targetAccount) {
           for (let i = 0; i < localStorage.length; i++) {
-            const m = localStorage.key(i).match(/^bond_acc:([^:]+):user:/);
+            const m = localStorage.key(i).match(/^bond_acc:([^:]+):/);
             if (m && m[1]) {
               targetAccount = m[1].toLowerCase().trim();
               break;
@@ -1005,32 +1094,40 @@ class BondStorage {
         }
 
         const users = [];
+        const seen = new Set();
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           let isMatch = false;
           if (targetAccount) {
-            isMatch = k.startsWith(`bond_acc:${targetAccount}:user:`);
+            isMatch = k.startsWith(`bond_acc:${targetAccount}:user:`) ||
+                      k.startsWith(`bond_acc:${targetAccount}:p:`);
           } else {
-            isMatch = k.startsWith('bond_user:') && !k.startsWith('bond_acc:');
+            isMatch = (k.startsWith('bond_user:') || k.startsWith('bond_p:')) && !k.startsWith('bond_acc:');
           }
-          if (isMatch) {
-            try {
-              const u = JSON.parse(localStorage.getItem(k));
-              if (u && u.handle) {
-                const h = u.handle.toLowerCase().trim();
-                if (h && (!targetAccount || h !== targetAccount)) {
-                  if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
-                    const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.mentionsSent || 0))) || 0;
-                    const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
-                    u.crmStatusData = BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
-                    u.crmStatus = u.crmStatusData.label;
-                    u.crmStatusId = u.crmStatusData.id;
-                  }
-                  users.push(u);
+          if (!isMatch || !k.includes(':user:')) continue;
+
+          const keyPlatform = this._platformFromKey(k);
+          if (wantPlatform && keyPlatform !== wantPlatform) continue;
+
+          try {
+            const u = JSON.parse(localStorage.getItem(k));
+            if (u && u.handle) {
+              const h = u.handle.toLowerCase().trim();
+              const identity = `${keyPlatform}:${h}`;
+              if (h && (!targetAccount || h !== targetAccount) && !seen.has(identity)) {
+                seen.add(identity);
+                u.platform = u.platform || keyPlatform;
+                if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
+                  const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.mentionsSent || 0))) || 0;
+                  const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
+                  u.crmStatusData = BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
+                  u.crmStatus = u.crmStatusData.label;
+                  u.crmStatusId = u.crmStatusData.id;
                 }
+                users.push(u);
               }
-            } catch (e) {}
-          }
+            }
+          } catch (e) {}
         }
         users.sort((a, b) => {
           if (a.isPinned && !b.isPinned) return -1;
@@ -1135,25 +1232,27 @@ class BondStorage {
   /**
    * Retrieves a DM conversation record by conversation ID or recipient handle.
    */
-  async getDmConversation(convId, forceRefresh = false, account = null) {
+  async getDmConversation(convId, forceRefresh = false, account = null, platform = null) {
     if (!convId) return null;
     const cleanId = convId.toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
     const isCurrentAcc = !activeAccount || activeAccount === (this.currentUser || '');
+    const cacheKey = this._cacheKey(cleanId, platformId);
 
-    if (!forceRefresh && isCurrentAcc && this.dmCache.has(cleanId)) {
-      return this.dmCache.get(cleanId);
+    if (!forceRefresh && isCurrentAcc && this.dmCache.has(cacheKey)) {
+      return this.dmCache.get(cacheKey);
     }
 
-    const key = this._dmKey(cleanId, activeAccount);
+    const key = this._dmKey(cleanId, activeAccount, platformId);
     const res = await this._getRaw([key]);
     let conv = res[key] || null;
 
-    // Fallback 1: check legacy un-scoped key
-    if (!conv) {
+    // Fallback 1: check legacy un-scoped key (X only)
+    if (!conv && platformId === 'x') {
       const legacyKey = `dm:${cleanId}`;
       const legacyRes = await this._getRaw([legacyKey]);
       if (legacyRes[legacyKey]) {
@@ -1164,11 +1263,13 @@ class BondStorage {
       }
     }
 
-    // Fallback 2: search across any account if not found
-    if (!conv && this._hasChromeStorage()) {
+    // Fallback 2: search across accounts ONLY when no active account is resolved.
+    // This prevents metadata from another account leaking into this account.
+    if (!conv && !activeAccount && this._hasChromeStorage()) {
       const allData = await this._getAllRaw();
       for (const [k, v] of Object.entries(allData)) {
         if (k.endsWith(`:dm:${cleanId}`) && v && v.convId) {
+          if (this._platformFromKey(k) !== platformId) continue;
           conv = v;
           if (activeAccount) {
             await this._setRaw({ [key]: conv });
@@ -1180,7 +1281,7 @@ class BondStorage {
 
     // Fallback 3: search by participant handle if convId is handle
     if (!conv) {
-      const allDms = await this.getAllDmConversations(activeAccount);
+      const allDms = await this.getAllDmConversations(activeAccount, platformId);
       conv = allDms.find(d => {
         if (!d.isGroup && d.participants && d.participants.includes(cleanId.replace(/^@/, ''))) return true;
         if (d.convId && d.convId.toLowerCase().includes(cleanId)) return true;
@@ -1188,8 +1289,9 @@ class BondStorage {
       }) || null;
     }
 
-    if (conv && isCurrentAcc) {
-      this.dmCache.set(cleanId, conv);
+    if (conv) {
+      conv.platform = conv.platform || platformId;
+      if (isCurrentAcc) this.dmCache.set(cacheKey, conv);
     }
     return conv;
   }
@@ -1197,16 +1299,18 @@ class BondStorage {
   /**
    * Saves or updates a DM conversation record.
    */
-  async saveDmConversation(convId, convData, account = null) {
+  async saveDmConversation(convId, convData, account = null, platform = null) {
     if (!convId) return null;
     const cleanId = convId.toLowerCase().trim();
+    const platformId = this._platformFor(platform);
     let activeAccount = this._resolveActiveAccount(account);
     if (!activeAccount) {
       activeAccount = (await this.getCurrentUser()) || '';
     }
-    const key = this._dmKey(cleanId, activeAccount);
+    const key = this._dmKey(cleanId, activeAccount, platformId);
+    const cacheKey = this._cacheKey(cleanId, platformId);
 
-    const existing = (await this.getDmConversation(cleanId, false, activeAccount)) || {
+    const existing = (await this.getDmConversation(cleanId, false, activeAccount, platformId)) || {
       convId: cleanId,
       isGroup: false,
       title: cleanId,
@@ -1248,6 +1352,7 @@ class BondStorage {
       ...existing,
       ...convData,
       convId: cleanId,
+      platform: platformId,
       firstSeenTimestamp: existing.firstSeenTimestamp || convData.firstSeenTimestamp || Date.now(),
       lifetimeSent: Math.max(existing.lifetimeSent || 0, convData.sentCount || existing.sentCount || 0, convData.lifetimeSent || 0),
       lifetimeReceived: Math.max(existing.lifetimeReceived || 0, convData.receivedCount || existing.receivedCount || 0, convData.lifetimeReceived || 0),
@@ -1257,6 +1362,14 @@ class BondStorage {
       lastUpdated: Date.now()
     };
     updated.lifetimeTotal = updated.lifetimeSent + updated.lifetimeReceived;
+
+    // Group energy reads totalMessages + recent windows. Keep both derived from
+    // metadata-only timestamps so group chats produce a real score.
+    const timeline = Array.isArray(updated.messageTimeline) ? updated.messageTimeline : [];
+    const nowTs = Date.now();
+    updated.totalMessages = Math.max(updated.lifetimeTotal || 0, updated.totalCount || 0, timeline.length);
+    updated.recentMessages3d = timeline.filter((t) => nowTs - t <= 3 * 86400000).length;
+    updated.recentMessages7d = timeline.filter((t) => nowTs - t <= 7 * 86400000).length;
 
     // Calculate metrics using scoring engine
     const scoringEngine = this._getScoringEngine();
@@ -1302,13 +1415,13 @@ class BondStorage {
     this._evaluateChatMilestones(updated, prevRankName);
 
     if (!activeAccount || activeAccount === (this.currentUser || '')) {
-      this.dmCache.set(cleanId, updated);
+      this.dmCache.set(cacheKey, updated);
     }
     await this._setRaw({ [key]: updated });
 
     if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
       window.dispatchEvent(new CustomEvent('bondscore:dm_updated', {
-        detail: { convId: cleanId, conversation: updated, account: activeAccount }
+        detail: { convId: cleanId, platform: platformId, conversation: updated, account: activeAccount }
       }));
     }
     return updated;
@@ -1317,7 +1430,8 @@ class BondStorage {
   /**
    * Retrieves all DM conversations for the specified account (or active account).
    */
-  async getAllDmConversations(account = this.currentUser) {
+  async getAllDmConversations(account = this.currentUser, platform = null) {
+    const wantPlatform = platform ? this._platformFor(platform) : null;
     return new Promise((resolve) => {
       let targetAccount = this._resolveActiveAccount(account);
 
@@ -1341,26 +1455,36 @@ class BondStorage {
           for (const [key, value] of Object.entries(allData)) {
             let isMatch = false;
             if (targetAccount) {
-              isMatch = key.startsWith(`acc:${targetAccount}:dm:`);
+              isMatch = key.startsWith(`acc:${targetAccount}:dm:`) ||
+                        key.startsWith(`acc:${targetAccount}:p:`);
             } else {
-              isMatch = key.startsWith('dm:') && !key.startsWith('acc:');
+              isMatch = (key.startsWith('dm:') || key.startsWith('p:')) && !key.startsWith('acc:');
             }
+            if (!isMatch || !key.includes(':dm:') || !value || !value.convId) continue;
 
-            if (isMatch && value && value.convId) {
-              const cleanConvId = value.convId.toLowerCase().trim();
-              seenConvIds.add(cleanConvId);
-              convs.push(value);
-            }
+            const keyPlatform = this._platformFromKey(key);
+            if (wantPlatform && keyPlatform !== wantPlatform) continue;
+
+            const cleanConvId = value.convId.toLowerCase().trim();
+            const identity = `${keyPlatform}:${cleanConvId}`;
+            if (seenConvIds.has(identity)) continue;
+            seenConvIds.add(identity);
+            value.platform = value.platform || keyPlatform;
+            convs.push(value);
           }
 
-          // Pass 2: Fallback check for un-scoped dm: keys or other accounts if empty
-          for (const [key, value] of Object.entries(allData)) {
-            if (value && value.convId) {
+          // Pass 2: Fallback check for un-scoped dm: keys if nothing matched
+          if (convs.length === 0) {
+            for (const [key, value] of Object.entries(allData)) {
+              if (!value || !value.convId || !key.endsWith(`:dm:${value.convId}`)) continue;
+              const keyPlatform = this._platformFromKey(key);
+              if (wantPlatform && keyPlatform !== wantPlatform) continue;
               const cleanConvId = value.convId.toLowerCase().trim();
-              if (!seenConvIds.has(cleanConvId) && (key.startsWith('dm:') || convs.length === 0 && key.includes(':dm:'))) {
-                seenConvIds.add(cleanConvId);
-                convs.push(value);
-              }
+              const identity = `${keyPlatform}:${cleanConvId}`;
+              if (seenConvIds.has(identity)) continue;
+              seenConvIds.add(identity);
+              value.platform = value.platform || keyPlatform;
+              convs.push(value);
             }
           }
 
@@ -1407,19 +1531,23 @@ class BondStorage {
           const k = localStorage.key(i);
           let isMatch = false;
           if (targetAccount) {
-            isMatch = k.startsWith(`bond_acc:${targetAccount}:dm:`);
+            isMatch = k.startsWith(`bond_acc:${targetAccount}:dm:`) ||
+                      k.startsWith(`bond_acc:${targetAccount}:p:`);
           } else {
-            isMatch = k.startsWith('bond_dm:') && !k.startsWith('bond_acc:');
+            isMatch = (k.startsWith('bond_dm:') || k.startsWith('bond_p:')) && !k.startsWith('bond_acc:');
           }
-          if (isMatch) {
-            try {
-              const val = JSON.parse(localStorage.getItem(k));
-              if (val && val.convId && !seen.has(val.convId)) {
-                seen.add(val.convId);
-                convs.push(val);
-              }
-            } catch (e) {}
-          }
+          if (!isMatch || !k.includes(':dm:')) continue;
+          const keyPlatform = this._platformFromKey(k);
+          if (wantPlatform && keyPlatform !== wantPlatform) continue;
+          try {
+            const val = JSON.parse(localStorage.getItem(k));
+            const identity = `${keyPlatform}:${val && val.convId}`;
+            if (val && val.convId && !seen.has(identity)) {
+              seen.add(identity);
+              val.platform = val.platform || keyPlatform;
+              convs.push(val);
+            }
+          } catch (e) {}
         }
         convs.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0));
         resolve(convs);
@@ -1443,7 +1571,7 @@ class BondStorage {
     const existing = await this.getDmConversation(cleanConvId, false, activeAccount);
     const conv = existing || {
       convId: cleanConvId,
-      isGroup: /^\d+$/.test(cleanConvId),
+      isGroup: cleanConvId.startsWith('g') || /^\d+$/.test(cleanConvId),
       title: cleanConvId,
       participants: [cleanConvId],
       participantDetails: {},
@@ -1453,6 +1581,9 @@ class BondStorage {
       lifetimeSent: 0,
       lifetimeReceived: 0,
       lifetimeTotal: 0,
+      totalMessages: 0,
+      recentMessages3d: 0,
+      recentMessages7d: 0,
       firstSeenTimestamp: Date.now(),
       lastSentTimestamp: 0,
       lastReceivedTimestamp: 0,
@@ -1466,12 +1597,16 @@ class BondStorage {
       dailyStreak: 0,
       allTimeLongestStreak: 0,
       highestRankAchieved: null,
+      memberMessageCounts: {},
+      messageTimeline: [],
       memories: [],
       recordedMessageIds: []
     };
 
     if (!Array.isArray(conv.recordedMessageIds)) conv.recordedMessageIds = [];
     if (!Array.isArray(conv.memories)) conv.memories = [];
+    if (!Array.isArray(conv.messageTimeline)) conv.messageTimeline = [];
+    if (!conv.memberMessageCounts || typeof conv.memberMessageCounts !== 'object') conv.memberMessageCounts = {};
 
     const recordedSet = new Set(conv.recordedMessageIds);
     let newInboundCount = 0;
@@ -1480,7 +1615,10 @@ class BondStorage {
     let latestDirection = null;
 
     for (const entry of entries) {
-      const fp = entry.fingerprint || `${entry.direction}_${(entry.text || '').slice(0, 32)}_${entry.timestamp || ''}`;
+      // Fingerprints are intentionally metadata-only: no message text, no hash of
+      // message text. Direction + time + position is enough to dedupe a DOM re-render.
+      const fp = entry.fingerprint ||
+        `${entry.direction || 'inbound'}_${entry.timestamp || ''}_${entry.index !== undefined ? entry.index : ''}`;
       if (recordedSet.has(fp)) continue; // Already ingested
 
       recordedSet.add(fp);
@@ -1497,6 +1635,14 @@ class BondStorage {
         conv.lastReceivedTimestamp = Math.max(conv.lastReceivedTimestamp || 0, msgTime);
       }
 
+      // Metadata-only activity log for recency / group energy. Never text.
+      conv.messageTimeline.push(msgTime);
+
+      if (conv.isGroup && entry.senderHandle && entry.senderHandle !== activeAccount) {
+        const sender = entry.senderHandle.toLowerCase();
+        conv.memberMessageCounts[sender] = (conv.memberMessageCounts[sender] || 0) + 1;
+      }
+
       if (msgTime >= latestTimestamp) {
         latestTimestamp = msgTime;
         latestDirection = entry.direction;
@@ -1506,6 +1652,9 @@ class BondStorage {
     // Keep recordedMessageIds capped to 600
     if (conv.recordedMessageIds.length > 600) {
       conv.recordedMessageIds = conv.recordedMessageIds.slice(-500);
+    }
+    if (conv.messageTimeline.length > 1000) {
+      conv.messageTimeline = conv.messageTimeline.slice(-800);
     }
 
     if (newInboundCount === 0 && newOutboundCount === 0) {
@@ -1635,11 +1784,17 @@ class BondStorage {
       allTimeLongestStreak: 0,
       highestRankAchieved: null,
       memberMessageCounts: {},
+      messageTimeline: [],
       memories: [],
       recordedMessageIds: []
     };
 
     const now = msgData.timestamp || Date.now();
+    if (!Array.isArray(conv.messageTimeline)) conv.messageTimeline = [];
+    conv.messageTimeline.push(now);
+    if (conv.messageTimeline.length > 1000) {
+      conv.messageTimeline = conv.messageTimeline.slice(-800);
+    }
     const isOutbound = msgData.direction === 'outbound' || (msgData.senderHandle && activeAccount && msgData.senderHandle.toLowerCase() === activeAccount);
     const sender = (msgData.senderHandle || (isOutbound ? activeAccount : cleanConvId)).toLowerCase();
 
@@ -1717,7 +1872,8 @@ class BondStorage {
           type: isOutbound ? 'dm_sent' : 'dm_received',
           timestamp: now,
           tweetId: `dm_${now}`,
-          textSnippet: msgData.textSnippet ? msgData.textSnippet.slice(0, 100) : 'Direct Message',
+          // Metadata only: private message contents are never persisted.
+          textSnippet: null,
           displayName: details ? details.displayName : otherHandle,
           avatarUrl: details ? details.avatarUrl : '',
           isMutual: true
@@ -1836,8 +1992,8 @@ class BondStorage {
       if (this._hasChromeStorage()) {
         chrome.storage.local.get(null, (items) => {
           resolve({
-            app: 'BondScore for X',
-            version: '1.1.3',
+            app: 'BondScore',
+            version: '1.4.0',
             exportedAt: new Date().toISOString(),
             data: items || {}
           });
@@ -1853,8 +2009,8 @@ class BondStorage {
           }
         }
         resolve({
-          app: 'BondScore for X',
-          version: '1.1.3',
+          app: 'BondScore',
+          version: '1.4.0',
           exportedAt: new Date().toISOString(),
           data: items
         });

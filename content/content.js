@@ -12,7 +12,44 @@
 
   // Initialize storage
   await window.bondStorage.init();
+  window.bondStorage.setActivePlatform('x');
+
+  // v1.4.0 granular platform controls: X has a master switch plus independent
+  // Timeline and DM sub-switches. Nothing is observed when a switch is off.
+  const bootSettings = await window.bondStorage.getSettings();
+  const platformApi = window.BondPlatforms;
+  let platformOn = !platformApi || platformApi.isEnabled(bootSettings, 'x');
+  if (!platformOn) {
+    console.log('[BondScore] X tracking is disabled in settings.');
+    return;
+  }
+  let timelineOn = !platformApi || platformApi.isFeatureEnabled(bootSettings, 'x', 'timeline');
+  let dmsOn = !platformApi || platformApi.isFeatureEnabled(bootSettings, 'x', 'dms');
+
+  // React to popup toggle changes without requiring a page reload.
+  const refreshGates = (settings = {}) => {
+    if (!platformApi) return;
+    platformOn = platformApi.isEnabled(settings, 'x');
+    timelineOn = platformApi.isFeatureEnabled(settings, 'x', 'timeline');
+    dmsOn = platformApi.isFeatureEnabled(settings, 'x', 'dms');
+    if (window.bondXChat) window.bondXChat.setEnabled(platformOn && dmsOn);
+  };
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes.settings) {
+        refreshGates(changes.settings.newValue || {});
+      }
+    });
+  }
+
   await window.interactionDetector.init();
+
+  // XChat (the current X DM surface at /i/chat) renders inside an open shadow
+  // root, which the light-DOM detectors above cannot see. Start the dedicated
+  // adapter whenever X + the DM sub-switch are on.
+  if (window.bondXChat) {
+    window.bondXChat.setEnabled(platformOn && dmsOn);
+  }
 
   let scanScheduled = false;
   let isScanning = false;
@@ -45,6 +82,7 @@
   async function scanDom() {
     scanScheduled = false;
     if (isScanning) return;
+    if (!platformOn) return;
     isScanning = true;
 
     try {
@@ -54,11 +92,12 @@
       const currentUser = window.interactionDetector.currentUser;
 
       // 1. Process Timeline Tweets (Badge Injection & Incoming Engagement Detection)
-      const tweets = document.querySelectorAll('article[data-testid="tweet"]');
-      for (const tweet of tweets) {
-        try {
-          // Detect incoming reply to currentUser or mention
-          await window.interactionDetector.detectIncomingTweet(tweet);
+      if (timelineOn) {
+        const tweets = document.querySelectorAll('article[data-testid="tweet"]');
+        for (const tweet of tweets) {
+          try {
+            // Detect incoming reply to currentUser or mention
+            await window.interactionDetector.detectIncomingTweet(tweet);
 
           const userNameContainer = tweet.querySelector('[data-testid="User-Name"]');
           if (!userNameContainer) continue;
@@ -125,8 +164,10 @@
         }
       }
 
+      }
+
       // 4. Process Direct Messages (Conversation row badges & open thread header pill)
-      if (location.pathname.startsWith('/messages') || document.querySelector('[data-testid="DMDrawer"]')) {
+      if (dmsOn && (location.pathname.startsWith('/messages') || location.pathname.startsWith('/i/chat') || document.querySelector('[data-testid="DMDrawer"]'))) {
         await window.interactionDetector.scanDmInbox();
         await window.interactionDetector.scanActiveDmThread();
       }

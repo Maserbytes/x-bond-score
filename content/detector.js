@@ -704,7 +704,7 @@ class InteractionDetector {
 
       // 1. Look for DM header profile link or conversation header
       const conversationContainer = el.closest('[data-testid="DMDrawer"], [data-testid="DMConversation"], [role="main"]') || document.body;
-      const dmHeaderLinks = conversationContainer.querySelectorAll('[data-testid="conversation-header"] a[href^="/"], [data-testid="DmRecipientName"] a[href^="/"], a[href^="/"]');
+      const dmHeaderLinks = conversationContainer.querySelectorAll('[data-testid="conversation-header"] a[href^="/"], [data-testid="DmRecipientName"] a[href^="/"], header a[href^="/"]');
       
       for (const link of dmHeaderLinks) {
         const href = link.getAttribute('href') || '';
@@ -727,10 +727,12 @@ class InteractionDetector {
         }
       }
 
-      // 3. Fallback: Check any handle text inside the active DM drawer/window
+      // 3. Fallback: read the participant from the DM header only. Never read the
+      // conversation body; message contents are out of scope by design.
       if (!targetHandle) {
-        const text = conversationContainer.innerText || '';
-        const handleMatch = text.match(/@([A-Za-z0-9_]{1,15})/);
+        const headerEl = conversationContainer.querySelector('[data-testid="conversation-header"], [data-testid="DmRecipientName"], header');
+        const headerText = headerEl ? (headerEl.innerText || '') : '';
+        const handleMatch = headerText.match(/@([A-Za-z0-9_]{1,15})/);
         if (handleMatch && handleMatch[1]) {
           const h = handleMatch[1].toLowerCase();
           if (!this.currentUser || h !== this.currentUser) {
@@ -747,14 +749,13 @@ class InteractionDetector {
           window.bondUI.optimisticBoost(targetHandle, 10);
         }
 
-        const composer = el.closest('[role="textbox"]') || conversationContainer.querySelector('[data-testid="dmComposerTextInput"]') || el;
-        const textSnippet = composer && composer.innerText ? composer.innerText.slice(0, 140) : 'Direct Message sent';
-
+        // Strict privacy: message contents are never read, parsed, or stored.
+        // Only direction, participant, and timestamp metadata is recorded.
         await window.bondStorage.recordInteraction(targetHandle, {
           type: 'dm_sent',
           timestamp: Date.now(),
           tweetId: `dm_${Date.now()}`,
-          textSnippet,
+          textSnippet: null,
           displayName,
           avatarUrl,
           isMutual: true
@@ -771,7 +772,6 @@ class InteractionDetector {
             direction: 'outbound',
             senderHandle: this.currentUser,
             recipientHandle: targetHandle,
-            textSnippet,
             timestamp: Date.now(),
             displayName,
             avatarUrl,
@@ -939,15 +939,11 @@ class InteractionDetector {
           // Check if group (numeric ID or multiple members)
           const isGroup = /^\d+$/.test(convId);
 
-          const text = el.innerText || '';
+          // Privacy: the inbox row preview can contain message text, so it is
+          // never read. The conversation id already encodes the participant.
           let participantHandle = null;
-          if (!isGroup) {
-            const handleMatch = text.match(/@([A-Za-z0-9_]{1,15})/);
-            if (handleMatch) {
-              participantHandle = handleMatch[1].toLowerCase();
-            } else if (convId.includes('-')) {
-              participantHandle = convId.split('-')[1].toLowerCase();
-            }
+          if (!isGroup && convId.includes('-')) {
+            participantHandle = convId.split('-')[1].toLowerCase();
           }
 
           const img = el.querySelector('img[src*="profile_images"], img');
@@ -1069,23 +1065,21 @@ class InteractionDetector {
             entry.closest('div[style*="align-items: flex-end"]') !== null
           );
 
-          const textEl = entry.querySelector('[data-testid="tweetText"], span, dir[dir="auto"]') || entry;
-          const text = (textEl.innerText || '').trim();
-
+          // Privacy: message text is never read. Only timestamp and direction
+          // are needed for conversation analytics.
           const timeEl = entry.querySelector('time');
-          const timeStr = timeEl ? (timeEl.getAttribute('datetime') || timeEl.innerText || '') : '';
+          const timeStr = timeEl ? (timeEl.getAttribute('datetime') || '') : '';
           let timestamp = timeStr ? Date.parse(timeStr) : 0;
           if (isNaN(timestamp) || timestamp <= 0) {
             timestamp = Date.now() - ((messageEntries.length - idx) * 30000);
           }
 
-          const snippetHash = text.slice(0, 32).replace(/\s+/g, '_');
-          const fp = `${convId}_${isOutbound ? 'out' : 'in'}_${snippetHash}_${timeStr || idx}`;
+          // Metadata-only fingerprint (no message body, not even a hash of it).
+          const fp = `${convId}_${isOutbound ? 'out' : 'in'}_${timestamp}_${idx}`;
 
           parsedEntries.push({
             fingerprint: fp,
             direction: isOutbound ? 'outbound' : 'inbound',
-            text: text.slice(0, 100),
             timestamp,
             index: idx
           });

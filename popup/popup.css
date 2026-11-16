@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Popup Stylesheet (v1.2 - Pro Design System)
+ * BondScore - Popup Stylesheet (v1.4.0)
  * Designed with modern craft: dynamic light/dark/system themes,
  * tactile micro-interactions, smooth cubic-bezier transitions, and refined typography.
  */
@@ -1980,7 +1980,7 @@ input[type="range"] {
 }
 
 input:checked + .slider {
-  background-color: var(--accent-blue);
+  background-color: #34C759;
 }
 
 input:checked + .slider:before {
@@ -2097,3 +2097,165 @@ input:checked + .slider:before {
   line-height: 1.3;
 }
 
+
+/* ==========================================================================
+   v1.4.0 - Multi-Platform Controls & Apple iOS Glass Craft
+   ========================================================================== */
+
+:root {
+  --apple-green: #34C759;
+  --apple-green-soft: rgba(52, 199, 89, 0.16);
+  --glass-blur: blur(24px) saturate(190%);
+  --glass-border-specular: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --glass-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* Segmented capsule platform bar */
+.platform-capsule-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  margin: 10px 0 12px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--glass-border-specular);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.platform-capsule-bar::-webkit-scrollbar { display: none; }
+
+.platform-capsule {
+  flex: 1 0 auto;
+  min-width: max-content;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1px;
+  cursor: pointer;
+  transition: background 0.24s var(--spring), color 0.2s ease, transform 0.18s var(--spring), box-shadow 0.24s ease;
+}
+.platform-capsule:hover { color: var(--text-primary); background: rgba(127, 127, 127, 0.12); }
+.platform-capsule:active { transform: scale(0.96); }
+.platform-capsule.active {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16), var(--glass-border-specular);
+}
+
+/* Platform chips inside contact rows */
+.platform-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.15px;
+  color: var(--text-secondary);
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+.platform-chip-x { color: #8ecdf8; background: rgba(29, 155, 240, 0.12); border-color: rgba(29, 155, 240, 0.28); }
+.platform-chip-threads { color: #c4b5fd; background: rgba(139, 92, 246, 0.12); border-color: rgba(139, 92, 246, 0.28); }
+.platform-chip-bluesky { color: #93c5fd; background: rgba(17, 133, 254, 0.12); border-color: rgba(17, 133, 254, 0.28); }
+
+/* Platform chips in DM cards */
+.dm-action-title-row,
+.dm-closest-name-row { flex-wrap: wrap; }
+.dm-group-platform { margin-left: 4px; vertical-align: middle; }
+
+/* Platform settings cards */
+.platform-settings-group { padding-bottom: 10px; }
+
+.platform-card {
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--glass-border-specular);
+  transition: opacity 0.24s ease, border-color 0.24s ease, background 0.24s ease;
+}
+.platform-card.is-off { opacity: 0.62; }
+
+.platform-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.platform-card-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  font-size: 16px;
+  flex-shrink: 0;
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--glass-border-specular);
+}
+.platform-icon-x { background: rgba(29, 155, 240, 0.14); }
+.platform-icon-threads { background: rgba(139, 92, 246, 0.14); }
+.platform-icon-bluesky { background: rgba(17, 133, 254, 0.14); }
+
+.platform-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.platform-card-title strong { font-size: 12.5px; color: var(--text-primary); }
+.platform-card-sub { font-size: 10.5px; color: var(--text-secondary); line-height: 1.3; }
+
+.platform-sub-toggles {
+  margin-top: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+.platform-sub-toggles .setting-item-toggle { margin-bottom: 0; padding: 7px 0; }
+.platform-sub-toggles .setting-item-toggle:last-child { border-bottom: 0; }
+.setting-item-toggle.compact { gap: 10px; }
+
+.privacy-footnote {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  color: var(--text-secondary);
+}
+
+/* Native iOS capsule toggle physics */
+.switch .slider {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08), inset 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: background-color 0.26s var(--spring);
+}
+.switch .slider:before {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28), 0 1px 1px rgba(0, 0, 0, 0.16);
+  transition: transform 0.3s var(--spring);
+}
+.switch input:focus-visible + .slider {
+  outline: 2px solid var(--apple-green);
+  outline-offset: 2px;
+}
+.switch input:disabled + .slider { opacity: 0.45; cursor: not-allowed; }
+
+/* Frosted depth for the main surfaces */
+.popup-container {
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}

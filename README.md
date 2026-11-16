@@ -1,14 +1,14 @@
-# ⚡ BondScore for X (Twitter)
+# ⚡ BondScore — Multi-Platform Relationship Tracker
 
 > **Created by [@MaserSuspended](https://x.com/MaserSuspended)**  
-> **Live relationship & mutual interaction score tracker for X (Twitter).**  
+> **Live relationship & mutual interaction score tracker for X, Threads & Bluesky.**  
 > Chromium Extension for Chrome and Edge (Manifest V3) • 100% Local Storage • Zero Backend.
 
 ---
 
 ## 🌟 Overview
 
-**BondScore** tracks the strength of your relationships with accounts you interact with on X. It calculates a dynamic **Bond Score (0–100)** that:
+**BondScore** tracks the strength of your relationships with accounts you interact with across X, Threads and Bluesky. It calculates a dynamic **Bond Score (0–100)** that:
 - **Pro Design System & Adaptive Theme Switcher**:
   - **Device / OS Default (Auto)**: Detects whether your device is in Dark Mode or Light Mode and matches automatically.
   - **Quick Theme Toggle**: Instantly switch between **🌓 System**, **🌙 Dark**, and **☀️ White / Light** via the header pill or Settings.
@@ -39,6 +39,37 @@
 
 ---
 
+## 🌐 Multi-Platform Controls (v1.4.0)
+
+BondScore now works on **X**, **Threads** and **Bluesky** with independent, private records per platform.
+
+- **X is enabled by default.** Threads and Bluesky start **off**, so nothing is observed until you opt in.
+- Each platform has a **master toggle** plus independent **Timeline** and **DMs** sub-toggles in `Settings → Platforms`.
+- **Nothing is observed on a disabled platform or feature**: content scripts boot but stay idle, no badges, no event writes and no DM metadata.
+- The popup adds a segmented capsule filter — **🌐 All · 𝕏 X · 🧵 Threads · 🦋 Bluesky** — for both the CRM leaderboard and the DM dashboard.
+- Records are keyed per platform (`acc:<account>:p:<platform>:…`), so the same handle on two networks never shares a score. Legacy X keys stay unchanged for a zero-migration upgrade.
+- Threads/Bluesky DOM selectors are defensive and may evolve with each network's redesign; the adapters fail closed and never affect the X experience.
+- **XChat DMs are supported.** X now serves direct messages at `x.com/i/chat` inside an open shadow root; a dedicated adapter observes that surface so DM and group-chat scores work again. Legacy `/messages` pages keep their existing path.
+
+### Group Chat Energy
+| Level | Score | Badge | Meaning |
+| :--- | :---: | :---: | :--- |
+| **Energetic** | 80–100 | ⚡ | Messages flying, high participation |
+| **Active** | 60–79 | 🔥 | Regular energetic discussion |
+| **Steady** | 40–59 | ☕ | Comfortable day-to-day rhythm |
+| **Chill** | 20–39 | 🛋️ | Quiet, low-key check-ins |
+| **Dying / Inactive** | < 20 | 🪦 | Dormant, at risk of disappearing |
+
+### Relationship Classes
+| Class | Badge | Signal |
+| :--- | :---: | :--- |
+| **Top Supporter** | 🌟 | Inbound-heavy: they show up for you most |
+| **Outbound Focus** | 🎯 | You invest most of the energy |
+| **Balanced Mutual** | ⚖️ | Healthy two-way dialogue |
+| **Dormant** | ❄️ | A real bond that has been quiet for 14+ days |
+
+---
+
 ## 🚀 Quick Start / How to Install
 
 1. Open Google Chrome or Microsoft Edge.
@@ -51,6 +82,7 @@
    ```
 6. Open [x.com](https://x.com) or refresh any active X tab.
 7. BondScore will immediately detect your logged-in user handle and begin displaying live badges!
+8. To use Threads or Bluesky, open the popup → **Settings → Platforms** and enable that network (plus Timeline/DMs as desired).
 
 ---
 
@@ -180,6 +212,7 @@ $$Score = 100 \times \left(1 - e^{-\frac{\text{RawScore}}{45}}\right)$$
 
 - All relationship scores, handles, and interaction history are saved in `chrome.storage.local`.
 - No servers, no tracking, zero analytics, zero external network requests.
+- **DM and group-chat message bodies are never read, parsed, hashed or stored.** Only metadata is kept: participant handles, direction, timestamps, frequency and reply latency. Inbox preview text is skipped entirely. This also holds inside XChat's shadow-root UI, where only message ids, alignment (inbound/outbound), public sender links and the conversation title are read.
 - Full backup & export to JSON available anytime in the extension popup.
 
 ---
@@ -199,13 +232,17 @@ d:/x-bond-score/
 │   └── icon128.png
 ├── core/
 │   ├── storage.js           # chrome.storage.local manager & backup exporter
+│   ├── platforms.js         # Platform registry, defaults & granular toggles
 │   ├── scoring.js           # Mathematical scoring & decay algorithm
 │   └── deep-analyzer.js     # Pluggable Deep Mode provider interface
 ├── content/
-│   ├── detector.js          # Current user identification & interaction listener
+│   ├── detector.js          # X identity, interaction & metadata listener
 │   ├── ui.js                # Inline badge injection & modal Score Card
-│   ├── content.js           # Content script orchestrator & DOM observer
+│   ├── content.js           # X content script orchestrator & DOM observer
+│   ├── xchat-adapter.js     # XChat (/i/chat) shadow-root DM observer
+│   ├── platform-adapters.js # Threads & Bluesky passive observers
 │   └── styles.css           # Twitter/X design system styling
+├── tests/                   # Node test runner suites (scoring, storage, platforms)
 └── popup/
     ├── popup.html           # Extension dashboard & leaderboard
     ├── popup.css            # Dark mode styling for popup

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>BondScore for X</title>
+  <title>BondScore</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
           </svg>
         </div>
         <div>
-          <h1 class="brand-title">BondScore <span class="badge-v11">v1.3.1</span></h1>
+          <h1 class="brand-title">BondScore <span class="badge-v11">v1.4.0</span></h1>
           <div class="creator-tag">Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></div>
         </div>
       </div>
@@ -27,7 +27,7 @@
           <span class="theme-icon theme-icon-light" id="theme-icon-light" style="display:none;">☀️</span>
           <span class="theme-toggle-label" id="theme-toggle-label">Auto</span>
         </button>
-        <div class="header-status-dot" title="Active on X"></div>
+        <div class="header-status-dot" title="Local tracking active"></div>
       </div>
     </header>
 
@@ -87,6 +87,14 @@
           </div>
         </div>
 
+        <!-- Platform segmented capsule filter -->
+        <div class="platform-capsule-bar" data-platform-scope="leaderboard" role="tablist" aria-label="Filter contacts by platform">
+          <button class="platform-capsule active" data-platform-filter="all" role="tab" aria-selected="true">🌐 All Platforms</button>
+          <button class="platform-capsule" data-platform-filter="x" role="tab" aria-selected="false">𝕏 X</button>
+          <button class="platform-capsule" data-platform-filter="threads" role="tab" aria-selected="false">🧵 Threads</button>
+          <button class="platform-capsule" data-platform-filter="bluesky" role="tab" aria-selected="false">🦋 Bluesky</button>
+        </div>
+
         <!-- Filter Pills & Search -->
         <div class="search-filter-section">
           <div class="search-bar-wrapper">
@@ -137,6 +145,14 @@
           </div>
         </div>
 
+        <!-- Platform segmented capsule filter -->
+        <div class="platform-capsule-bar" data-platform-scope="dms" role="tablist" aria-label="Filter conversations by platform">
+          <button class="platform-capsule active" data-platform-filter="all" role="tab" aria-selected="true">🌐 All Platforms</button>
+          <button class="platform-capsule" data-platform-filter="x" role="tab" aria-selected="false">𝕏 X</button>
+          <button class="platform-capsule" data-platform-filter="threads" role="tab" aria-selected="false">🧵 Threads</button>
+          <button class="platform-capsule" data-platform-filter="bluesky" role="tab" aria-selected="false">🦋 Bluesky</button>
+        </div>
+
         <!-- Filter Pills & Search for DMs -->
         <div class="search-filter-section">
           <div class="search-bar-wrapper">
@@ -181,7 +197,7 @@
           </div>
           <p class="settings-hint">Private ranked leaderboard of your strongest 1:1 direct message relationships.</p>
           <div class="dm-mini-list" id="dm-closest-list">
-            <div class="dm-empty-state">No direct messages tracked yet. Chat on X to build your private bond scores!</div>
+            <div class="dm-empty-state">No direct messages tracked yet. Chat on a connected platform to build your private bond scores!</div>
           </div>
         </div>
 
@@ -205,7 +221,7 @@
           </div>
           <p class="settings-hint">Permanent memory ledger of your all-time chat exchanges and milestones ever since BondScore has been active.</p>
           <div class="dm-mini-list" id="dm-memories-list">
-            <div class="dm-empty-state">No chat milestones recorded yet. Chat on X to build your permanent memory ledger!</div>
+            <div class="dm-empty-state">No chat milestones recorded yet. Chat on a connected platform to build your permanent memory ledger!</div>
           </div>
         </div>
       </section>
@@ -217,7 +233,7 @@
             <h3>🪐 Solar System Orbit</h3>
             <p class="settings-hint">Concentric orbit rings showing your closest bonds around your gravity center.</p>
           </div>
-          <button class="orbit-download-btn" id="orbit-download-btn" title="Export high-resolution orbit card image to share on X">📸 Share Image</button>
+          <button class="orbit-download-btn" id="orbit-download-btn" title="Export high-resolution orbit card image to share">📸 Share Image</button>
         </div>
 
         <div class="orbit-canvas-container">
@@ -232,6 +248,121 @@
 
       <!-- Tab 4: Settings -->
       <section id="tab-settings" class="tab-pane">
+        <!-- Platform Controls -->
+        <div class="settings-group platform-settings-group">
+          <h3>🌐 Platforms & Observation Scope</h3>
+          <p class="settings-hint">BondScore only runs on the networks you enable here. Each platform keeps its own isolated CRM records, and every switch is stored locally on this device.</p>
+
+          <div class="platform-card" data-platform-card="x">
+            <div class="platform-card-head">
+              <span class="platform-card-icon platform-icon-x">𝕏</span>
+              <div class="platform-card-title">
+                <strong>X (Twitter)</strong>
+                <span class="platform-card-sub">Timeline, profiles, DMs & group chats</span>
+              </div>
+              <label class="switch" title="Enable or disable all X tracking">
+                <input type="checkbox" id="platform-x-enabled" data-platform-master="x" checked>
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-sub-toggles" data-platform-subs="x">
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>Timeline Tracking</strong>
+                  <div class="range-sub">Badges, likes, replies & follow signals</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-x-timeline" data-platform-sub="x" data-feature="timeline" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>DMs & Conversations</strong>
+                  <div class="range-sub">Private metadata only — message bodies are never read</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-x-dms" data-platform-sub="x" data-feature="dms" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="platform-card" data-platform-card="threads">
+            <div class="platform-card-head">
+              <span class="platform-card-icon platform-icon-threads">🧵</span>
+              <div class="platform-card-title">
+                <strong>Threads</strong>
+                <span class="platform-card-sub">Feed engagement, profile badges & DM metadata</span>
+              </div>
+              <label class="switch" title="Enable or disable all Threads tracking">
+                <input type="checkbox" id="platform-threads-enabled" data-platform-master="threads">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-sub-toggles" data-platform-subs="threads">
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>Timeline Tracking</strong>
+                  <div class="range-sub">Badges, likes, reposts & follow signals</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-threads-timeline" data-platform-sub="threads" data-feature="timeline" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>DMs & Conversations</strong>
+                  <div class="range-sub">Private metadata only — message bodies are never read</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-threads-dms" data-platform-sub="threads" data-feature="dms" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="platform-card" data-platform-card="bluesky">
+            <div class="platform-card-head">
+              <span class="platform-card-icon platform-icon-bluesky">🦋</span>
+              <div class="platform-card-title">
+                <strong>Bluesky</strong>
+                <span class="platform-card-sub">AT Protocol feeds, follows-you detection & chat metadata</span>
+              </div>
+              <label class="switch" title="Enable or disable all Bluesky tracking">
+                <input type="checkbox" id="platform-bluesky-enabled" data-platform-master="bluesky">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-sub-toggles" data-platform-subs="bluesky">
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>Timeline Tracking</strong>
+                  <div class="range-sub">Badges, likes, reposts & follow signals</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-bluesky-timeline" data-platform-sub="bluesky" data-feature="timeline" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>DMs & Conversations</strong>
+                  <div class="range-sub">Private metadata only — message bodies are never read</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-bluesky-dms" data-platform-sub="bluesky" data-feature="dms" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="privacy-footnote">🔒 Zero backend · zero telemetry · nothing leaves this device</div>
+        </div>
+
         <!-- Appearance & Theme Selector -->
         <div class="settings-group">
           <h3>🎨 Appearance & Theme</h3>
@@ -377,7 +508,7 @@
           <div class="radar-card-title">🌟 Top Supporters (Engage With You Most)</div>
           <p class="settings-hint">Accounts that reply to your posts and message you most often.</p>
           <div id="supporters-list" class="radar-mini-list">
-            <div class="radar-empty">No supporter data yet. Interact on X to build memory!</div>
+            <div class="radar-empty">No supporter data yet. Interact on a connected platform to build memory!</div>
           </div>
         </div>
 
@@ -453,6 +584,7 @@
     </footer>
   </div>
 
+  <script src="../core/platforms.js"></script>
   <script src="../core/storage.js"></script>
   <script src="../core/scoring.js"></script>
   <script src="../core/deep-analyzer.js"></script>

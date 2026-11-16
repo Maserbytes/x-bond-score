@@ -82,6 +82,8 @@ test('dashboard ignores unrelated and other-account storage writes', () => {
   assert.equal(shouldRefresh({ settings: { newValue: {} } }, 'myaccount'), false);
   assert.equal(shouldRefresh({ 'acc:other:user:mutual': { newValue: {} } }, 'myaccount'), false);
   assert.equal(shouldRefresh({ 'acc:myaccount:events:mutual': { newValue: [] } }, 'myaccount'), true);
+  assert.equal(shouldRefresh({ 'acc:myaccount:p:threads:user:mutual': { newValue: {} } }, 'myaccount'), true);
+  assert.equal(shouldRefresh({ 'acc:other:p:threads:user:mutual': { newValue: {} } }, 'myaccount'), false);
   assert.equal(shouldRefresh({ currentUser: { newValue: 'other' } }, 'myaccount'), true);
 });
 

@@ -1,5 +1,5 @@
 /**
- * BondScore for X - UI Injection & Score Card Component (v1.1.3)
+ * BondScore - UI Injection & Score Card Component (v1.4.0)
  * Renders badges inline with streaks, reciprocity radar, 30-day sparklines, VIP pins, and private notes.
  */
 
@@ -340,6 +340,8 @@ class BondUI {
 
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
     const currentUser = await window.bondStorage.getCurrentUser();
+    // Deep Mode uses X's own in-tab archive search; keep it off other networks.
+    const isXHost = !window.BondPlatforms || window.BondPlatforms.current().id === 'x';
     const user = (await window.bondStorage.getUser(cleanHandle)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
@@ -549,6 +551,7 @@ class BondUI {
         </div>
 
         <!-- Deep Mode Section -->
+        ${isXHost ? `
         <div class="bond-deep-section">
           <div class="bond-deep-header">
             <div>
@@ -566,6 +569,7 @@ class BondUI {
             <span>🔍 Run Deep Analysis</span>
           </button>
         </div>
+        ` : ''}
 
         <!-- Personal Relationship History Ledger -->
         <div class="bond-timeline-preview">
@@ -649,34 +653,36 @@ class BondUI {
     const progressFill = modal.querySelector('.bond-deep-progress-fill');
     const statusText = modal.querySelector('.bond-deep-status-text');
 
-    deepBtn.addEventListener('click', async () => {
-      try {
-        deepBtn.disabled = true;
-        deepBtn.classList.add('loading');
-        progressBar.style.display = 'block';
-        statusText.style.display = 'block';
+    if (deepBtn && progressBar && progressFill && statusText) {
+      deepBtn.addEventListener('click', async () => {
+        try {
+          deepBtn.disabled = true;
+          deepBtn.classList.add('loading');
+          progressBar.style.display = 'block';
+          statusText.style.display = 'block';
 
-        const currentUser = await window.bondStorage.getCurrentUser();
-        await window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, ({ percent, stage, itemsFound }) => {
-          progressFill.style.width = `${percent}%`;
-          statusText.innerText = `${stage} (${itemsFound || 0} found)`;
-        });
+          const currentUser = await window.bondStorage.getCurrentUser();
+          await window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, ({ percent, stage, itemsFound }) => {
+            progressFill.style.width = `${percent}%`;
+            statusText.innerText = `${stage} (${itemsFound || 0} found)`;
+          });
 
-        deepBtn.disabled = false;
-        deepBtn.classList.remove('loading');
-        deepBtn.innerHTML = `<span>✓ Deep Analysis Complete</span>`;
-        setTimeout(() => {
-          if (this.activeModal) {
-            this.updateModalContent(cleanHandle);
-          }
-        }, 700);
-      } catch (err) {
-        console.error('[BondScore] Deep analysis error:', err);
-        deepBtn.disabled = false;
-        deepBtn.classList.remove('loading');
-        statusText.innerText = 'Analysis incomplete. Click to retry.';
-      }
-    });
+          deepBtn.disabled = false;
+          deepBtn.classList.remove('loading');
+          deepBtn.innerHTML = `<span>✓ Deep Analysis Complete</span>`;
+          setTimeout(() => {
+            if (this.activeModal) {
+              this.updateModalContent(cleanHandle);
+            }
+          }, 700);
+        } catch (err) {
+          console.error('[BondScore] Deep analysis error:', err);
+          deepBtn.disabled = false;
+          deepBtn.classList.remove('loading');
+          statusText.innerText = 'Analysis incomplete. Click to retry.';
+        }
+      });
+    }
   }
 
   renderTimelineItems(items) {
@@ -825,7 +831,7 @@ class BondUI {
         this.openDmScoreCard(cleanConvId, badge);
       });
 
-      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"]') || convElement;
+      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"], [class*="min-w-0"][class*="flex-col"]') || convElement;
       targetContainer.appendChild(badge);
     }
 
@@ -894,8 +900,12 @@ class BondUI {
         this.openDmScoreCard(cleanConvId, pill);
       });
 
-      const actionsContainer = headerElement.querySelector('div[style*="flex-direction: row"], [role="group"]') || headerElement;
-      actionsContainer.parentNode ? actionsContainer.parentNode.insertBefore(pill, actionsContainer) : headerElement.appendChild(pill);
+      const actionsContainer = headerElement.querySelector('div[style*="flex-direction: row"], [role="group"]');
+      if (actionsContainer && actionsContainer.parentNode) {
+        actionsContainer.parentNode.insertBefore(pill, actionsContainer);
+      } else {
+        headerElement.appendChild(pill);
+      }
     }
 
     pill.innerHTML = pillHtml;

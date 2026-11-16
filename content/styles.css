@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Styling (v1.1.3)
+ * BondScore - Styling (v1.4.0)
  * Refined Twitter/X design system: dark, dim, and light modes.
  */
 
@@ -1169,6 +1169,7 @@
   border-style: solid;
 }
 
+.bond-energy-energetic,
 .bond-energy-buzzing {
   color: #34d399;
   background: rgba(16, 185, 129, 0.16);
@@ -1182,18 +1183,20 @@
   border-color: rgba(59, 130, 246, 0.35);
 }
 
-.bond-energy-chill {
+.bond-energy-steady {
   color: #fbbf24;
   background: rgba(245, 158, 11, 0.16);
   border-color: rgba(245, 158, 11, 0.35);
 }
 
-.bond-energy-cooling {
+.bond-energy-chill {
   color: #fb923c;
   background: rgba(249, 115, 22, 0.16);
   border-color: rgba(249, 115, 22, 0.35);
 }
 
+.bond-energy-dying,
+.bond-energy-cooling,
 .bond-energy-inactive {
   color: #94a3b8;
   background: rgba(100, 116, 139, 0.14);

@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Scoring, Streak & Time-Decay Engine (v1.1.3)
+ * BondScore - Scoring, Streak & Time-Decay Engine (v1.4.0)
  * Computes relationship scores, streaks, reciprocity balance, and 30-day historical trends.
  */
 
@@ -138,9 +138,9 @@ const DmRanks = {
  * Measures vitality, activity rate, and member participation health
  */
 const GroupEnergyLevels = {
-  BUZZING: {
-    id: 'buzzing',
-    name: 'Buzzing',
+  ENERGETIC: {
+    id: 'energetic',
+    name: 'Energetic',
     emoji: '⚡',
     minScore: 80,
     color: '#10B981', // Vibrant emerald
@@ -152,41 +152,41 @@ const GroupEnergyLevels = {
     id: 'active',
     name: 'Active',
     emoji: '🔥',
-    minScore: 55,
+    minScore: 60,
     color: '#3B82F6', // Electric blue
     bg: 'rgba(59, 130, 246, 0.16)',
     border: 'rgba(59, 130, 246, 0.35)',
     description: 'Regular energetic discussions and steady flow.'
   },
-  CHILL: {
-    id: 'chill',
-    name: 'Chill',
+  STEADY: {
+    id: 'steady',
+    name: 'Steady',
     emoji: '☕',
-    minScore: 30,
+    minScore: 40,
     color: '#F59E0B', // Warm amber
     bg: 'rgba(245, 158, 11, 0.16)',
     border: 'rgba(245, 158, 11, 0.35)',
-    description: 'Casual banter at a relaxed and comfortable pace.'
+    description: 'Comfortable rhythm with reliable day-to-day chatter.'
   },
-  COOLING: {
-    id: 'cooling',
-    name: 'Cooling',
-    emoji: '🍂',
-    minScore: 15,
+  CHILL: {
+    id: 'chill',
+    name: 'Chill',
+    emoji: '🛋️',
+    minScore: 20,
     color: '#F97316', // Rust orange
     bg: 'rgba(249, 115, 22, 0.16)',
     border: 'rgba(249, 115, 22, 0.35)',
-    description: 'Activity is slowing down. Has not had much chatter lately.'
+    description: 'Quiet, low-key group that checks in from time to time.'
   },
-  INACTIVE: {
-    id: 'inactive',
+  DYING: {
+    id: 'dying',
     name: 'Dying / Inactive',
-    emoji: '❄️',
+    emoji: '🪦',
     minScore: 0,
     color: '#64748B', // Faded slate
     bg: 'rgba(100, 116, 139, 0.14)',
     border: 'rgba(100, 116, 139, 0.25)',
-    description: 'Quiet group chat. Danger of becoming dormant.'
+    description: 'Dormant group chat. Danger of disappearing for good.'
   }
 };
 
@@ -220,11 +220,11 @@ class BondScoring {
    */
   static getGroupEnergyLevel(score) {
     const s = Math.max(0, Math.min(100, Math.round(score || 0)));
-    if (s >= GroupEnergyLevels.BUZZING.minScore) return GroupEnergyLevels.BUZZING;
+    if (s >= GroupEnergyLevels.ENERGETIC.minScore) return GroupEnergyLevels.ENERGETIC;
     if (s >= GroupEnergyLevels.ACTIVE.minScore) return GroupEnergyLevels.ACTIVE;
+    if (s >= GroupEnergyLevels.STEADY.minScore) return GroupEnergyLevels.STEADY;
     if (s >= GroupEnergyLevels.CHILL.minScore) return GroupEnergyLevels.CHILL;
-    if (s >= GroupEnergyLevels.COOLING.minScore) return GroupEnergyLevels.COOLING;
-    return GroupEnergyLevels.INACTIVE;
+    return GroupEnergyLevels.DYING;
   }
 
   /**
@@ -458,7 +458,7 @@ class BondScoring {
     energyScore = Math.min(100, Math.max(0, energyScore));
 
     const energyLevel = BondScoring.getGroupEnergyLevel(energyScore);
-    const isDying = energyScore < 18 || daysSince >= 14;
+    const isDying = energyScore < 20 || daysSince >= 14;
 
     return {
       energyScore,
@@ -874,6 +874,85 @@ class BondScoring {
 
     return {
       id: 'casual',
+      label: 'Acquaintance',
+      emoji: '👋',
+      desc: 'Occasional light interactions',
+      color: '#FFD400',
+      badgeBg: 'rgba(255, 212, 0, 0.18)'
+    };
+  }
+
+  /**
+   * v1.4.0 CRM relationship classification used by the in-page badges, the
+   * platform-filtered leaderboard, and the "Mutual backs" tab.
+   * - 🌟 Top Supporters  : inbound-heavy, they show up for you
+   * - 🎯 Outbound Focus  : you invest most of the energy
+   * - ⚖️ Balanced Mutuals: healthy two-way dialogue
+   * - ❄️ Dormant / At Risk: a real bond that has gone quiet for 14+ days
+   */
+  static classifyRelationship(score = 0, sentCount = 0, receivedCount = 0, lastInteraction = 0) {
+    const total = sentCount + receivedCount;
+    const finalScore = Math.round(score || 0);
+    const daysSince = lastInteraction
+      ? Math.max(0, Math.floor((Date.now() - lastInteraction) / 86400000))
+      : 0;
+
+    if (finalScore >= 8 && lastInteraction && daysSince >= 14) {
+      return {
+        id: 'dormant',
+        label: 'Dormant',
+        subLabel: `${daysSince}d quiet`,
+        emoji: '❄️',
+        desc: `A ${finalScore}-point bond has been quiet for ${daysSince} days`,
+        color: '#60A5FA',
+        badgeBg: 'rgba(96, 165, 250, 0.16)'
+      };
+    }
+
+    if (total === 0 || finalScore < 3) {
+      return {
+        id: 'new',
+        label: 'New',
+        emoji: '🌱',
+        desc: 'No meaningful interaction history yet',
+        color: '#71767B',
+        badgeBg: 'rgba(113, 118, 123, 0.15)'
+      };
+    }
+
+    const sentRatio = total > 0 ? (sentCount / total) * 100 : 50;
+    if (receivedCount > 0 && (sentRatio <= 38 || receivedCount >= sentCount * 1.6)) {
+      return {
+        id: 'top_supporter',
+        label: 'Top Supporter',
+        emoji: '🌟',
+        desc: 'They reply, mention, and show up for you most',
+        color: '#F59E0B',
+        badgeBg: 'rgba(245, 158, 11, 0.18)'
+      };
+    }
+    if (sentCount > 0 && (sentRatio >= 62 || sentCount >= receivedCount * 1.6)) {
+      return {
+        id: 'outbound_focus',
+        label: 'Outbound Focus',
+        emoji: '🎯',
+        desc: 'You initiate most of the interactions here',
+        color: '#F97316',
+        badgeBg: 'rgba(249, 115, 22, 0.18)'
+      };
+    }
+    if (sentCount > 0 && receivedCount > 0) {
+      return {
+        id: 'balanced',
+        label: 'Balanced Mutual',
+        emoji: '⚖️',
+        desc: 'Healthy back-and-forth dialogue',
+        color: '#00BA7C',
+        badgeBg: 'rgba(0, 186, 124, 0.18)'
+      };
+    }
+    return {
+      id: 'new',
       label: 'Acquaintance',
       emoji: '👋',
       desc: 'Occasional light interactions',

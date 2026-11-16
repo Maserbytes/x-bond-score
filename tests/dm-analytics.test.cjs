@@ -98,8 +98,8 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
 
   const energy = BondScoring.calculateGroupEnergy(activeGroup);
 
-  assert.ok(energy.energyScore >= 75, `Expected high energy score for buzzing group, got ${energy.energyScore}`);
-  assert.ok(['buzzing', 'active'].includes(energy.energyLevel.id));
+  assert.ok(energy.energyScore >= 75, `Expected high energy score for energetic group, got ${energy.energyScore}`);
+  assert.ok(['energetic', 'active'].includes(energy.energyLevel.id));
   assert.equal(energy.isDying, false);
   assert.equal(energy.activeMembers.length, 5);
   assert.equal(energy.activeMembers[0].handle, 'userA');
@@ -117,7 +117,7 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
   const deadEnergy = BondScoring.calculateGroupEnergy(deadGroup);
   assert.ok(deadEnergy.energyScore <= 20);
   assert.equal(deadEnergy.isDying, true);
-  assert.equal(deadEnergy.energyLevel.id, 'inactive');
+  assert.equal(deadEnergy.energyLevel.id, 'dying');
 });
 
 test('calculateCombinedRelationship combines public and DM bond scores with synergy', () => {

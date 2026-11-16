@@ -1,11 +1,12 @@
 /**
- * BondScore for X - Extension Popup Logic (v1.2 - Pro Design System)
+ * BondScore - Extension Popup Logic (v1.4.0)
  * Controls leaderboard, filter pills, solar system orbit view, graphic exporter,
  * dynamic theme switcher (system auto, dark, light), settings, and CRM analytics.
  */
 
 let cachedUsers = [];
 let currentFilter = 'all';
+let currentPlatformFilter = 'all'; // 'all' | 'x' | 'threads' | 'bluesky'
 let currentUsername = 'you';
 let currentTheme = 'system'; // 'system' | 'dark' | 'light'
 let leaderboardRefreshTimer = null;
@@ -18,9 +19,11 @@ function shouldRefreshDashboardForStorageChanges(changes, activeAccount) {
 
   const account = (activeAccount || '').replace(/^@/, '').toLowerCase().trim();
   const prefix = account ? `acc:${account}:` : '';
-  return Object.keys(changes).some((key) => account
-    ? key.startsWith(`${prefix}user:`) || key.startsWith(`${prefix}events:`) || key.startsWith(`${prefix}dm:`)
-    : key.startsWith('user:') || key.startsWith('events:') || key.startsWith('dm:'));
+  const isRecordKey = (key) => {
+    const sub = account ? (key.startsWith(prefix) ? key.slice(prefix.length) : '') : key;
+    return /^(?:p:[a-z0-9]+:)?(?:user|events|dm):/.test(sub);
+  };
+  return Object.keys(changes).some(isRecordKey);
 }
 
 function queueDashboardRefresh() {
@@ -167,6 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderRadarTab();
   setupFilterPills();
   setupSearchHandler();
+  setupPlatformFilters();
   setupDmFilterPills();
   setupDmSearchHandler();
   setupOrbitExporter();
@@ -305,8 +309,9 @@ async function setupAccountSwitcher() {
 }
 
 /**
- * Checks if active browser tab is on X and auto-detects account on initial run.
- * Preserves user account selection once established to avoid asynchronous race overrides.
+ * Checks if the active browser tab is on a supported network and auto-detects
+ * the signed-in account on initial run. Preserves user account selection once
+ * established to avoid asynchronous race overrides.
  */
 async function syncActiveTabAccountIfAvailable() {
   const currentStored = await window.bondStorage.getCurrentUser();
@@ -315,7 +320,9 @@ async function syncActiveTabAccountIfAvailable() {
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
     try {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs && tabs[0] && tabs[0].url && (tabs[0].url.includes('x.com') || tabs[0].url.includes('twitter.com'))) {
+        const url = (tabs && tabs[0] && tabs[0].url) || '';
+        const supported = ['x.com', 'twitter.com', 'threads.net', 'bsky.app'].some((host) => url.includes(host));
+        if (supported) {
           chrome.tabs.sendMessage(tabs[0].id, { type: 'bondscore:get_active_account' }, async (response) => {
             if (response && response.handle) {
               const freshStored = await window.bondStorage.getCurrentUser();
@@ -342,7 +349,7 @@ async function loadCurrentUserTag() {
     currentUsername = currentUser;
     if (userTag) userTag.innerText = `@${currentUser}`;
   } else {
-    if (userTag) userTag.innerText = 'Browse X to auto-detect';
+    if (userTag) userTag.innerText = 'Browse a supported network to auto-detect';
   }
 }
 
@@ -371,6 +378,54 @@ async function loadLeaderboard() {
   applyFilterAndRender();
 }
 
+function setupPlatformFilters() {
+  const bars = document.querySelectorAll('.platform-capsule-bar');
+  bars.forEach((bar) => {
+    const capsules = bar.querySelectorAll('.platform-capsule');
+    capsules.forEach((capsule) => {
+      capsule.addEventListener('click', () => {
+        currentPlatformFilter = capsule.dataset.platformFilter || 'all';
+        // Keep every platform bar in sync (leaderboard + DMs share the scope).
+        document.querySelectorAll('.platform-capsule').forEach((c) => {
+          const active = (c.dataset.platformFilter || 'all') === currentPlatformFilter;
+          c.classList.toggle('active', active);
+          c.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        applyFilterAndRender();
+        renderDmSubSections(cachedDms.filter(matchesPlatform), currentDmFilter);
+      });
+    });
+  });
+}
+
+function matchesPlatform(item) {
+  if (currentPlatformFilter === 'all') return true;
+  return (item.platform || 'x') === currentPlatformFilter;
+}
+
+/** Small platform badge used on user and DM cards. */
+function platformChip(item, extraClass = '') {
+  const p = BondPlatforms.get((item && item.platform) || 'x');
+  return `<span class="platform-chip platform-chip-${p.id}${extraClass ? ` ${extraClass}` : ''}" title="${escapeHtml(p.fullName)}">${p.emoji} ${p.shortLabel}</span>`;
+}
+
+/** Platform-aware deep link for a conversation. */
+function messageUrl(item) {
+  const p = (item && item.platform) || 'x';
+  const convId = String((item && item.convId) || '');
+  if (p === 'threads') return `https://www.threads.net/messages/${encodeURIComponent(convId)}`;
+  if (p === 'bluesky') return `https://bsky.app/messages/${encodeURIComponent(convId)}`;
+
+  // XChat opens a thread only when it arrives through the legacy redirect:
+  // /messages/<a>-<b> 302s to /i/chat/<a>-<b> and mounts the conversation.
+  // Loading /i/chat/<id> directly mounts the shell but leaves the thread closed,
+  // and /messages/g<id> drops the id and lands in the inbox, so groups point at
+  // the inbox where the user can pick the chat.
+  if (/^g/i.test(convId)) return 'https://x.com/i/chat';
+  const urlId = convId.includes(':') ? convId.replace(/:/g, '-') : convId;
+  return `https://x.com/messages/${encodeURIComponent(urlId)}`;
+}
+
 function setupFilterPills() {
   const pills = document.querySelectorAll('.filter-pill');
   pills.forEach((pill) => {
@@ -392,7 +447,7 @@ function getCRMStatusForUser(u) {
 
 function applyFilterAndRender() {
   const q = (document.getElementById('mutual-search-input').value || '').toLowerCase().trim();
-  let list = cachedUsers;
+  let list = cachedUsers.filter(matchesPlatform);
 
   if (currentFilter === 'vip') {
     list = list.filter(u => u.isPinned);
@@ -499,6 +554,7 @@ function renderUserList(users) {
           </div>
           <div class="mutual-handle-sub">
             <span>@${escapeHtml(u.handle)}</span>
+            <span class="platform-chip platform-chip-${escapeHtml(u.platform || 'x')}" title="${escapeHtml((BondPlatforms.get(u.platform || 'x').fullName) || 'X')}">${BondPlatforms.get(u.platform || 'x').emoji} ${BondPlatforms.get(u.platform || 'x').shortLabel}</span>
             ${dmsTotal > 0 ? `<span class="mutual-dm-count" title="${dmsTotal} direct messages tracked">✉️ ${dmsTotal} DMs</span>` : ''}
             ${u.note ? `<span class="mutual-note-snippet" title="${escapeHtml(u.note)}">📝 ${escapeHtml(u.note)}</span>` : ''}
           </div>
@@ -522,9 +578,10 @@ function renderUserList(users) {
       await loadLeaderboard();
     });
 
-    // Click card to open X profile in new tab
+    // Click card to open the right profile on its native network
     item.addEventListener('click', () => {
-      chrome.tabs.create({ url: `https://x.com/${u.handle}` });
+      const url = BondPlatforms.profileUrl(u.platform || 'x', u.handle);
+      if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) chrome.tabs.create({ url });
     });
 
     listEl.appendChild(item);
@@ -578,20 +635,20 @@ function renderOrbitCanvas() {
   drawCenterSun(ctx, centerX, centerY, currentUsername);
 
   // Group mutuals by inclusive tier rings - all tracked mutuals appear and persist!
-  const coreUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 70);
-  const closeUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
-  const casualUsers = cachedUsers.filter(u => (u.currentScore || 0) < 35);
+  const coreUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 70);
+  const closeUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
+  const casualUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) < 35);
 
   distributePlanetsOnRing(ctx, coreUsers, centerX, centerY, rCore, '#f91880');
   distributePlanetsOnRing(ctx, closeUsers, centerX, centerY, rClose, '#1d9bf0');
   distributePlanetsOnRing(ctx, casualUsers, centerX, centerY, rCasual, '#794bc4');
 
   // If no mutuals, draw empty state tip
-  if (cachedUsers.length === 0) {
+  if (cachedUsers.filter(matchesPlatform).length === 0) {
     ctx.fillStyle = isLight ? '#64748b' : '#71767b';
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Interact with accounts on X to populate your orbit', centerX, centerY + 90);
+    ctx.fillText('Interact with accounts on a supported network to populate your orbit', centerX, centerY + 90);
   }
 }
 
@@ -812,9 +869,9 @@ function setupOrbitExporter() {
     ctx.restore();
 
     // Planets - inclusive rings for all tracked accounts
-    const coreUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 70);
-    const closeUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
-    const casualUsers = cachedUsers.filter(u => (u.currentScore || 0) < 35);
+    const coreUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 70);
+    const closeUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
+    const casualUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) < 35);
 
     renderHighResPlanets(ctx, coreUsers, cx, cy, rCore, '#f91880');
     renderHighResPlanets(ctx, closeUsers, cx, cy, rClose, '#1d9bf0');
@@ -824,7 +881,7 @@ function setupOrbitExporter() {
     ctx.fillStyle = '#71767b';
     ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`BondScore for X • Created by @MaserSuspended • ${new Date().toLocaleDateString()}`, cx, 960);
+    ctx.fillText(`BondScore • Created by @MaserSuspended • ${new Date().toLocaleDateString()}`, cx, 960);
 
     // Download PNG
     const link = document.createElement('a');
@@ -893,10 +950,60 @@ function renderHighResPlanets(ctx, users, cx, cy, radius, color) {
 }
 
 /**
+ * 🌐 Platform master + granular sub-toggle controls.
+ * Every change persists immediately so scripts start/stop on the next page load.
+ */
+function setupPlatformToggles(settings) {
+  const config = BondPlatforms.getConfig(settings);
+
+  const paint = (id) => {
+    const cfg = BondPlatforms.getConfig(window.bondStorage.settingsCache || settings)[id];
+    const card = document.querySelector(`[data-platform-card="${id}"]`);
+    const subs = document.querySelector(`[data-platform-subs="${id}"]`);
+    if (card) card.classList.toggle('is-off', !cfg.enabled);
+    if (subs) {
+      subs.querySelectorAll('input').forEach((input) => { input.disabled = !cfg.enabled; });
+    }
+  };
+
+  ['x', 'threads', 'bluesky'].forEach((id) => {
+    const master = document.getElementById(`platform-${id}-enabled`);
+    const timeline = document.getElementById(`platform-${id}-timeline`);
+    const dms = document.getElementById(`platform-${id}-dms`);
+
+    if (master) master.checked = config[id].enabled;
+    if (timeline) timeline.checked = config[id].timeline;
+    if (dms) dms.checked = config[id].dms;
+    paint(id);
+
+    const persist = async (patch) => {
+      const current = await window.bondStorage.getSettings();
+      const next = BondPlatforms.patchSettings(current, id, patch);
+      await window.bondStorage.updateSettings(next);
+      paint(id);
+    };
+
+    if (master && !master.dataset.bound) {
+      master.dataset.bound = 'true';
+      master.addEventListener('change', () => persist({ enabled: master.checked }));
+    }
+    if (timeline && !timeline.dataset.bound) {
+      timeline.dataset.bound = 'true';
+      timeline.addEventListener('change', () => persist({ timeline: timeline.checked }));
+    }
+    if (dms && !dms.dataset.bound) {
+      dms.dataset.bound = 'true';
+      dms.addEventListener('change', () => persist({ dms: dms.checked }));
+    }
+  });
+}
+
+/**
  * ⚙️ Settings Form Handler
  */
 async function loadSettingsForm() {
   const settings = await window.bondStorage.getSettings();
+  setupPlatformToggles(settings);
 
   const halfLifeInput = document.getElementById('decay-halflife');
   const halfLifeVal = document.getElementById('decay-halflife-val');
@@ -996,7 +1103,7 @@ function renderRadarTab() {
   const dormantList = document.getElementById('dormant-list');
 
   // Compute local engagement memory metrics
-  const memory = BondScoring.analyzeEngagementMemory(cachedUsers);
+  const memory = BondScoring.analyzeEngagementMemory(cachedUsers.filter(matchesPlatform));
 
   // Update Global Balance Card
   const badgeEl = document.getElementById('eng-balance-badge');
@@ -1024,7 +1131,7 @@ function renderRadarTab() {
       supportersList.innerHTML = topSupporters.map(u => {
         const crm = getCRMStatusForUser(u);
         return `
-          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X">
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}">
             <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
               ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#ec4899;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
               <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
@@ -1035,7 +1142,7 @@ function renderRadarTab() {
         `;
       }).join('');
     } else {
-      supportersList.innerHTML = `<div class="radar-empty">No supporter data yet. Interact on X to build memory!</div>`;
+      supportersList.innerHTML = `<div class="radar-empty">No supporter data yet. Interact on a connected platform to build memory!</div>`;
     }
   }
 
@@ -1044,7 +1151,7 @@ function renderRadarTab() {
     const topOutbound = memory.topEngagedByYou.slice(0, 5);
     if (topOutbound.length > 0) {
       outboundList.innerHTML = topOutbound.map(u => `
-        <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X">
+        <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}">
           <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
             ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
             <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
@@ -1090,7 +1197,7 @@ function renderRadarTab() {
   // 4. Relationship Signals (Follow-backs, Unfollows, Blocks)
   const signalsRadarList = document.getElementById('signals-radar-list');
   if (signalsRadarList) {
-    const signalUsers = cachedUsers.filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou !== null)).slice(0, 6);
+    const signalUsers = cachedUsers.filter(matchesPlatform).filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou !== null)).slice(0, 6);
     if (signalUsers.length > 0) {
       signalsRadarList.innerHTML = signalUsers.map(u => {
         const fRel = typeof BondScoring !== 'undefined' && BondScoring.getFollowRelationship
@@ -1099,7 +1206,7 @@ function renderRadarTab() {
         let label = fRel ? fRel.badgeText : '🤝 Mutual Follow';
         let color = fRel ? fRel.color : '#00ba7c';
         return `
-          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}" onclick="chrome.tabs.create({url:'${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}'})">
             <div class="radar-item-left">
               ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
               <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
@@ -1109,13 +1216,13 @@ function renderRadarTab() {
         `;
       }).join('');
     } else {
-      signalsRadarList.innerHTML = `<div class="radar-empty">No relationship signals detected yet. Visit profiles on X to observe!</div>`;
+      signalsRadarList.innerHTML = `<div class="radar-empty">No relationship signals detected yet. Visit profiles on a connected platform to observe!</div>`;
     }
   }
 
   // 5. Active streaks
   if (streaksList) {
-    const streakUsers = cachedUsers.filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
+    const streakUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
     if (streakUsers.length > 0) {
       streaksList.innerHTML = streakUsers.map(u => `
         <div class="radar-item">
@@ -1281,7 +1388,7 @@ function setupDmFilterPills() {
       pills.forEach(p => p.classList.remove('active'));
       pill.classList.add('active');
       currentDmFilter = pill.dataset.dmFilter || 'all';
-      renderDmSubSections(cachedDms, currentDmFilter);
+      renderDmSubSections(cachedDms.filter(matchesPlatform), currentDmFilter);
     });
   });
 }
@@ -1290,7 +1397,7 @@ function setupDmSearchHandler() {
   const searchInput = document.getElementById('dm-search-input');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
-      renderDmSubSections(cachedDms, currentDmFilter);
+      renderDmSubSections(cachedDms.filter(matchesPlatform), currentDmFilter);
     });
   }
 }
@@ -1302,14 +1409,15 @@ async function renderDmsTab() {
   const activeAcc = (currentUsername && currentUsername !== 'you') ? currentUsername : null;
   const allDms = await window.bondStorage.getAllDmConversations(activeAcc);
   cachedDms = allDms;
+  const scopedDms = allDms.filter(matchesPlatform);
 
-  const total = allDms.length;
-  const waitingList = allDms.filter(d => d.waitingForUserReply === true);
+  const total = scopedDms.length;
+  const waitingList = scopedDms.filter(d => d.waitingForUserReply === true);
   const waitingCount = waitingList.length;
 
   const allReplyTimes = [];
   let streakSum = 0;
-  allDms.forEach(d => {
+  scopedDms.forEach(d => {
     if (d.medianReplyTimeMs > 0) allReplyTimes.push(d.medianReplyTimeMs);
     if (d.dailyStreak > 1) streakSum++;
   });
@@ -1335,7 +1443,7 @@ async function renderDmsTab() {
     statBoxWaiting.classList.toggle('has-waiting', waitingCount > 0);
   }
 
-  renderDmSubSections(allDms, currentDmFilter);
+  renderDmSubSections(scopedDms, currentDmFilter);
 }
 
 function renderDmSubSections(allDms, filter = 'all') {
@@ -1381,6 +1489,7 @@ function renderDmSubSections(allDms, filter = 'all') {
             <div class="dm-action-meta">
               <div class="dm-action-title-row">
                 <span class="dm-action-title">${escapeHtml(title)}</span>
+                ${platformChip(d)}
                 <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.shortLabel}</span>
               </div>
               <div class="dm-action-sub">
@@ -1388,7 +1497,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <span>• ${d.replyRate ?? 100}% reply rate</span>
               </div>
             </div>
-            <button class="dm-reply-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Reply ↗</button>
+            <button class="dm-reply-btn" data-url="${messageUrl(d)}">Reply ↗</button>
           </div>
         `;
       }).join('');
@@ -1424,6 +1533,7 @@ function renderDmSubSections(allDms, filter = 'all') {
             <div class="dm-action-meta">
               <div class="dm-action-title-row">
                 <span class="dm-action-title">${escapeHtml(title)}</span>
+                ${platformChip(d)}
                 <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
               </div>
               <div class="dm-action-sub">
@@ -1431,7 +1541,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <span>• Was Bond ${Math.round(d.bondScore || 0)}</span>
               </div>
             </div>
-            <button class="dm-reconnect-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Say Hi ↗</button>
+            <button class="dm-reconnect-btn" data-url="${messageUrl(d)}">Say Hi ↗</button>
           </div>
         `;
       }).join('');
@@ -1452,7 +1562,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     sectionClosest.style.display = showClosest ? 'block' : 'none';
 
     if (closestItems.length === 0) {
-      listClosest.innerHTML = '<div class="dm-empty-state">No direct messages tracked yet. Chat on X to build your private bond scores!</div>';
+      listClosest.innerHTML = '<div class="dm-empty-state">No direct messages tracked yet. Chat on a connected platform to build your private bond scores!</div>';
     } else {
       listClosest.innerHTML = closestItems.map((d, idx) => {
         const title = d.title || (d.participants && d.participants[0]) || d.convId;
@@ -1474,6 +1584,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <div class="dm-closest-names">
                   <div class="dm-closest-name-row">
                     <strong class="dm-closest-name">${escapeHtml(title)}</strong>
+                    ${platformChip(d)}
                     <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
                   </div>
                   <div class="dm-closest-metrics-row">
@@ -1495,7 +1606,7 @@ function renderDmSubSections(allDms, filter = 'all') {
             </div>
             <div class="dm-card-balance-labels">
               <span>You: ${d.sentCount || 0} (${sentPct}%)</span>
-              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open ↗</button>
+              <button class="dm-open-btn" data-url="${messageUrl(d)}">Open ↗</button>
               <span>Them: ${d.receivedCount || 0} (${recvPct}%)</span>
             </div>
           </div>
@@ -1517,7 +1628,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     sectionGroups.style.display = showGroups ? 'block' : 'none';
 
     if (groupItems.length === 0) {
-      listGroups.innerHTML = '<div class="dm-empty-state">No group chats detected yet. Participate in group conversations on X to observe group energy!</div>';
+      listGroups.innerHTML = '<div class="dm-empty-state">No group chats detected yet. Participate in group conversations on a connected platform to observe group energy!</div>';
     } else {
       listGroups.innerHTML = groupItems.map(d => {
         const energyLevel = d.groupEnergyLevel || BondScoring.getGroupEnergyLevel(d.groupEnergyScore || 0);
@@ -1531,6 +1642,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <span class="dm-group-icon">👥</span>
                 <div>
                   <strong class="dm-group-title">${escapeHtml(d.title || 'Group Chat')}</strong>
+                  ${platformChip(d, 'dm-group-platform')}
                   <div class="dm-group-sub">${activeMembers.length || (d.participants ? d.participants.length : 1)} active participants</div>
                 </div>
               </div>
@@ -1548,7 +1660,7 @@ function renderDmSubSections(allDms, filter = 'all') {
 
             <div class="dm-group-footer">
               <span class="dm-group-activity">${d.isDying ? '⚠️ Group is quiet / dormant' : `🔥 ${d.totalMessages || 0} messages recorded`}</span>
-              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open Group ↗</button>
+              <button class="dm-open-btn" data-url="${messageUrl(d)}">Open Group ↗</button>
             </div>
           </div>
         `;
@@ -1584,7 +1696,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     sectionMemories.style.display = showMemories ? 'block' : 'none';
 
     if (topLifetime.length === 0 && allMilestones.length === 0) {
-      listMemories.innerHTML = '<div class="dm-empty-state">💭 No chat memories recorded yet. Chat on X to build your permanent memory ledger!</div>';
+      listMemories.innerHTML = '<div class="dm-empty-state">💭 No chat memories recorded yet. Chat on a connected platform to build your permanent memory ledger!</div>';
     } else {
       let html = '';
 

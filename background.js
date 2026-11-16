@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Service Worker (Background)
+ * BondScore - Service Worker (Background)
  * Manages daily time-decay recalculations and extension lifecycle.
  */
 
@@ -11,6 +11,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     if (!res.settings) {
       chrome.storage.local.set({
         settings: {
+          platforms: {
+            x: { enabled: true, timeline: true, dms: true },
+            threads: { enabled: false, timeline: true, dms: true },
+            bluesky: { enabled: false, timeline: true, dms: true }
+          },
           decayHalfLifeDays: 14,
           gracePeriodDays: 5,
           weights: {
