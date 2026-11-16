@@ -1252,7 +1252,7 @@ class BondStorage {
     const cacheKey = this._cacheKey(cleanId, platformId);
 
     if (!forceRefresh && isCurrentAcc && this.dmCache.has(cacheKey)) {
-      return this.dmCache.get(cacheKey);
+      return this._withFreshGroupEnergy(this.dmCache.get(cacheKey));
     }
 
     const key = this._dmKey(cleanId, activeAccount, platformId);
@@ -1298,10 +1298,30 @@ class BondStorage {
     }
 
     if (conv) {
+      conv = await this._withFreshGroupEnergy(conv);
       conv.platform = conv.platform || platformId;
       if (isCurrentAcc) this.dmCache.set(cacheKey, conv);
     }
     return conv;
+  }
+
+  /** Recomputes group energy on read so stored badge data can never go stale. */
+  async _withFreshGroupEnergy(conv) {
+    if (!conv || !conv.isGroup) return conv;
+    const engine = this._getScoringEngine();
+    if (!engine || typeof engine.calculateGroupEnergy !== 'function') return conv;
+    try {
+      const settings = await this.getSettings();
+      const energy = engine.calculateGroupEnergy(conv, settings);
+      return Object.assign({}, conv, {
+        groupEnergyScore: energy.energyScore,
+        groupEnergyLevel: energy.energyLevel,
+        isDying: energy.isDying,
+        energyMetrics: energy
+      });
+    } catch (e) {
+      return conv;
+    }
   }
 
   /**
