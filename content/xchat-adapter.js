@@ -184,8 +184,11 @@
           currentUser = (await window.bondStorage.getCurrentUser()) || '';
         }
 
-        await this._scanInbox(currentUser);
+        // Save the active thread first, then badge the inbox in the same pass,
+        // otherwise a freshly recorded conversation gets no badge until the
+        // next DOM mutation.
         await this._scanActiveThread(currentUser);
+        await this._scanInbox(currentUser);
       } finally {
         this.inFlight = false;
       }

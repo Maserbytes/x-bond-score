@@ -847,6 +847,12 @@ class BondUI {
     const settings = await window.bondStorage.getSettings();
     if (settings.showBadgesInDMs === false || settings.trackDirectMessages === false) return;
 
+    // XChat reuses the header node across conversations. Drop pills belonging
+    // to a previously opened thread so only the active conversation is shown.
+    headerElement.querySelectorAll('.bond-dm-header-pill').forEach((oldPill) => {
+      if (oldPill.getAttribute('data-bond-dm-header') !== cleanConvId) oldPill.remove();
+    });
+
     let pill = headerElement.querySelector(`.bond-dm-header-pill[data-bond-dm-header="${cleanConvId}"]`);
     const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
       convId: cleanConvId,
