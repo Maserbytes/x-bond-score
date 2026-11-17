@@ -113,14 +113,14 @@
       }
       const stored = (await window.bondStorage.getCurrentUser()) || null;
       const detectedHandle = identity && identity.handle ? normalizeHandle(identity.handle) : null;
-      const handle = detectedHandle || stored;
+      // Use the stored account as the ledger key. DOM detection is only used
+      // to know which handle is "you" for badge suppression - switching the
+      // storage account on every scan can swap the active key back and forth
+      // and make scores flicker to 0.
+      const handle = stored || detectedHandle;
       if (!handle) return null;
       this.currentUser = normalizeHandle(handle);
-      if (detectedHandle && detectedHandle !== stored) {
-        // Keep the CRM account-scoped: a different signed-in handle on this
-        // platform must not inherit or leak another account's records.
-        await window.bondStorage.switchAccount(detectedHandle, identity || {}).catch(() => {});
-      } else if (!stored) {
+      if (!stored && detectedHandle) {
         window.bondStorage.currentUser = this.currentUser;
       }
       return this.currentUser;
@@ -171,7 +171,14 @@
         await this.scanNotifications();
         if (window.BondPlatforms.isFeatureEnabled(settings, this.id, 'dms')) await this.scanDms();
       } catch (err) {
-        console.warn(`[BondScore] ${this.id} scan error:`, err && err.message);
+        const message = String((err && err.message) || err || '');
+        // Fired by Chrome on the previous content script when the extension is
+        // reloaded. Harmless, and would otherwise show as an extension error.
+        if (/Extension context invalidated/i.test(message)) {
+          this.stopObservation();
+        } else {
+          console.warn(`[BondScore] ${this.id} scan error:`, message);
+        }
       } finally {
         this.inFlight = false;
       }
@@ -416,8 +423,10 @@
 
         const avatar = author.avatarUrl;
         if (avatar) {
-          const user = await window.bondStorage.getUser(author.handle);
-          if (!user || !user.avatarUrl) {
+          const stored = await window.bondStorage.getUser(author.handle);
+          // Never create a fresh record just to store an avatar: a transient
+          // null during account re-detection would reset an existing score to 0.
+          if (stored && !stored.avatarUrl) {
             await window.bondStorage.saveUser(author.handle, { avatarUrl: avatar, displayName: author.displayName });
           }
         }
@@ -639,8 +648,8 @@
         }
 
         if (author.avatarUrl) {
-          const user = await window.bondStorage.getUser(author.handle);
-          if (!user || !user.avatarUrl) {
+          const stored = await window.bondStorage.getUser(author.handle);
+          if (stored && !stored.avatarUrl) {
             await window.bondStorage.saveUser(author.handle, { avatarUrl: author.avatarUrl, displayName: author.displayName });
           }
         }
