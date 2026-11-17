@@ -120,6 +120,9 @@
       const handle = stored || detectedHandle;
       if (!handle) return null;
       this.currentUser = normalizeHandle(handle);
+      // The ledger account can differ from the handle shown on this network.
+      // Keep them separate so "you" badges are suppressed correctly.
+      this.selfHandle = normalizeHandle(detectedHandle || stored || handle);
       if (!stored && detectedHandle) {
         window.bondStorage.currentUser = this.currentUser;
       }
@@ -208,7 +211,7 @@
             const m = href.match(/(?:^|\/)(?:@|profile\/)([A-Za-z0-9._-]{1,40})/);
             if (!m) continue;
             const handle = normalizeHandle(m[1]);
-            if (handle && handle !== this.currentUser && !RESERVED.has(handle) && !handles.includes(handle)) handles.push(handle);
+            if (handle && handle !== this.selfHandle && !RESERVED.has(handle) && !handles.includes(handle)) handles.push(handle);
           }
           if (!handles.length) continue;
 
@@ -246,10 +249,19 @@
     // ---- shared helpers ----------------------------------------------------
     async injectInto(container, handle) {
       if (!container || !handle) return;
-      if (this.currentUser && normalizeHandle(handle) === this.currentUser) return;
+      if (this.selfHandle && normalizeHandle(handle) === this.selfHandle) return;
       if (container.querySelector && container.querySelector('.bond-badge')) return;
       try {
-        await window.bondUI.injectBadge(container, normalizeHandle(handle), false);
+        const clean = normalizeHandle(handle);
+        // Only badge people with a real interaction ledger. A 0-score badge
+        // on every feed author is noise.
+        const user = await window.bondStorage.getUser(clean);
+        if (!user || !(user.currentScore > 0)) return;
+        await window.bondUI.injectBadge(container, clean, false);
+        if (this.id === 'bluesky') {
+          const placed = container.querySelector(`.bond-badge[data-bond-handle="${clean}"]`);
+          if (placed) placed.classList.add('bond-badge-compact');
+        }
       } catch (e) {}
     }
 
@@ -399,7 +411,7 @@
       for (const post of this.postContainers()) {
         const author = this.authorFor(post);
         if (!author) continue;
-        if (this.currentUser && author.handle === this.currentUser) continue;
+        if (this.selfHandle && author.handle === this.selfHandle) continue;
 
         const nameLink = post.querySelector('a[href^="/@"]');
         if (!nameLink) continue;
@@ -415,7 +427,7 @@
         // Threads exposes the current state only as <svg><title>Like/Unlike</title>.
         for (const actionEl of post.querySelectorAll('[role="button"], button')) {
           const state = cleanText(actionEl.querySelector('svg title, title')).toLowerCase();
-          if (/^(unlike|liked|repost(ed)?|reposted)$/.test(state)) {
+          if (/^(unlike|liked|reposted)$/.test(state)) {
             const type = /like/.test(state) ? 'like' : 'quote';
             await this.record(author.handle, type, { tweetId: this.postKey(post), isMutual: false, direction: 'outbound' });
           }
@@ -437,7 +449,7 @@
       const match = location.pathname.match(/^\/@([A-Za-z0-9._]{1,40})\/?$/);
       if (!match) return;
       const handle = normalizeHandle(match[1]);
-      if (!handle || (this.currentUser && handle === this.currentUser)) return;
+      if (!handle || (this.selfHandle && handle === this.selfHandle)) return;
 
       const header = document.querySelector('header') || document.querySelector('main');
       if (!header) return;
@@ -449,9 +461,11 @@
         await this.bindProfileSignal(handle, { ...signals, displayName: cleanText(titleEl) || handle, avatarUrl: avatarImg ? avatarImg.src : '' });
       }
 
-      const nameRow = titleEl ? titleEl.parentElement : header;
-      if (nameRow) await window.bondUI.injectBadge(nameRow, handle, true);
       const stored = await window.bondStorage.getUser(handle);
+      const nameRow = titleEl ? titleEl.parentElement : header;
+      if (nameRow && stored && stored.currentScore > 0) {
+        await window.bondUI.injectBadge(nameRow, handle, true);
+      }
       if (window.bondUI && window.bondUI.updateProfileFollowBadge) {
         await window.bondUI.updateProfileFollowBadge(handle, stored ? stored.signals : signals);
       }
@@ -635,7 +649,7 @@
       for (const post of this.postContainers()) {
         const author = this.authorFor(post);
         if (!author) continue;
-        if (this.currentUser && author.handle === this.currentUser) continue;
+        if (this.selfHandle && author.handle === this.selfHandle) continue;
         const link = post.querySelector('a[href^="/profile/"]');
         const container = link || post;
         if (link) {
@@ -666,7 +680,7 @@
       const match = location.pathname.match(/^\/profile\/([^/]+)/);
       if (!match) return;
       const handle = normalizeHandle(decodeURIComponent(match[1]));
-      if (!handle || (this.currentUser && handle === this.currentUser)) return;
+      if (!handle || (this.selfHandle && handle === this.selfHandle)) return;
 
       const main = document.querySelector('main') || document.body;
       const header = main.querySelector('[data-testid="profileScreen"]') || main;
@@ -681,10 +695,16 @@
         });
       }
 
+      const stored = await window.bondStorage.getUser(handle);
       const nameEl = header.querySelector('[data-testid="profileHeaderDisplayName"], h1, h2');
       const container = nameEl || header;
-      if (container) await window.bondUI.injectBadge(container, handle, true);
-      const stored = await window.bondStorage.getUser(handle);
+      if (container && stored && stored.currentScore > 0) {
+        await window.bondUI.injectBadge(container, handle, true);
+        if (this.id === 'bluesky') {
+          const placed = container.querySelector(`.bond-badge[data-bond-handle="${handle}"]`);
+          if (placed) placed.classList.add('bond-badge-compact');
+        }
+      }
       if (window.bondUI && window.bondUI.updateProfileFollowBadge) {
         await window.bondUI.updateProfileFollowBadge(handle, stored ? stored.signals : signals);
       }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "BondScore - Relationship & Mutuals Tracker",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "Local-first relationship layer for X, Threads & Bluesky. Private bond scores, mutuals CRM, DM analytics and group chat energy with zero backend.",
   "permissions": [
     "storage",
