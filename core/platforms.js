@@ -30,7 +30,7 @@ const BOND_PLATFORMS = {
     emoji: '🧵',
     accent: '#8B5CF6',
     accentSoft: 'rgba(139, 92, 246, 0.16)',
-    hosts: ['threads.net', 'www.threads.net'],
+    hosts: ['threads.net', 'www.threads.net', 'threads.com', 'www.threads.com'],
     feedPaths: ['/', '/@'],
     profilePattern: /^\/@([A-Za-z0-9._]{1,40})\/?$/,
     defaultEnabled: false,

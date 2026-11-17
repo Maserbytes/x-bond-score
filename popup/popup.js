@@ -990,7 +990,8 @@ function setupPlatformToggles(settings) {
         quick.dataset.bound = 'true';
         quick.addEventListener('change', () => {
           if (master) master.checked = quick.checked;
-          if (subs) subs.querySelectorAll('input').forEach((input) => { input.disabled = !quick.checked; });
+          const subContainer = document.querySelector(`[data-platform-subs="${id}"]`);
+          if (subContainer) subContainer.querySelectorAll('input').forEach((input) => { input.disabled = !quick.checked; });
           persist({ enabled: quick.checked });
         });
       }

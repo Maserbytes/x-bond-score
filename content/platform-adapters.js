@@ -190,11 +190,11 @@
      * notification message body.
      */
     async scanNotifications() {
-      if (!/\/activity|notifications/.test(location.pathname)) return;
+      if (!/\/activity|notifications|interactions/.test(location.pathname)) return;
       const rows = document.querySelectorAll('[role="listitem"], article, [data-testid*="notification" i]');
       for (const row of rows) {
         try {
-          const links = Array.from(row.querySelectorAll('a[href^="/@"], a[href*="threads.net/@"], a[href*="bsky.app/profile/"]'));
+          const links = Array.from(row.querySelectorAll('a[href^="/@"], a[href*="threads.net/@"], a[href*="threads.com/@"], a[href*="bsky.app/profile/"]'));
           const handles = [];
           for (const link of links) {
             const href = link.getAttribute('href') || '';
@@ -392,7 +392,10 @@
 
         const container = post.querySelector('a[href^="/@"]')?.parentElement;
         if (!container) continue;
-        await this.injectInto(container.parentElement || container, author.handle);
+        const nameRow = container.querySelector('[data-testid="User-Name"]') ||
+          container.closest('[data-pressable-container="true"]')?.querySelector('a[href^="/@"]')?.parentElement ||
+          container;
+        await this.injectInto(nameRow, author.handle);
 
         const avatar = author.avatarUrl;
         if (avatar) {
