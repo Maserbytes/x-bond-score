@@ -637,7 +637,13 @@
         if (!author) continue;
         if (this.currentUser && author.handle === this.currentUser) continue;
         const link = post.querySelector('a[href^="/profile/"]');
-        const container = link ? (link.parentElement?.parentElement || link.parentElement) : post;
+        const container = link || post;
+        if (link) {
+          link.style.display = 'inline-flex';
+          link.style.alignItems = 'center';
+          link.style.whiteSpace = 'nowrap';
+          link.style.gap = '4px';
+        }
         await this.injectInto(container, author.handle);
 
         // Backfill already-active like/repost buttons (state lives in aria-pressed).
