@@ -2259,3 +2259,46 @@ input:checked + .slider:before {
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
 }
+
+/* Quick network switches at the top of Settings */
+.quick-platform-settings {
+  border-color: rgba(52, 199, 89, 0.35);
+}
+
+.quick-platform-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.quick-platform-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(120, 120, 128, 0.29));
+  background: var(--surface, rgba(120, 120, 128, 0.12));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.quick-platform-toggle:hover {
+  border-color: var(--apple-green, #34c759);
+}
+
+.quick-platform-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--apple-green, #34c759);
+  cursor: pointer;
+}
+
+.quick-platform-toggle:has(input:checked) {
+  border-color: var(--apple-green, #34c759);
+  background: rgba(52, 199, 89, 0.12);
+}
+

@@ -652,37 +652,44 @@ class InteractionDetector {
       const text = cellEl.innerText || '';
       if (!text) return;
 
-      const userLink = cellEl.querySelector('a[role="link"][href^="/"]');
-      if (!userLink) return;
-
-      const href = userLink.getAttribute('href') || '';
-      const match = href.match(/^\/([A-Za-z0-9_]+)$/);
-      if (!match || !match[1]) return;
-
-      const handle = match[1].toLowerCase();
-      if (handle === this.currentUser) return;
-
-      const cellId = `notif_${handle}_${text.slice(0, 40).replace(/\s+/g, '_')}`;
-      if (this.processedTweetIds.has(cellId)) return;
-      this.processedTweetIds.add(cellId);
+      // Notification cells contain several links (post, media, profile). Only
+      // single-segment /handle links identify the people who engaged with us.
+      const handles = [];
+      for (const link of cellEl.querySelectorAll('a[href]')) {
+        const href = link.getAttribute('href') || '';
+        const match = href.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
+        if (!match || !match[1]) continue;
+        const handle = match[1].toLowerCase();
+        if (handle === this.currentUser) continue;
+        if (!handles.includes(handle)) handles.push(handle);
+      }
+      if (!handles.length) return;
 
       let type = null;
       if (/liked your (post|reply|tweet)/i.test(text)) {
         type = 'like';
-      } else if (/replied|mentioned you/i.test(text)) {
+      } else if (/repl(y|ied|ying)|mentioned you/i.test(text)) {
         type = 'reply_received';
       } else if (/reposted your/i.test(text)) {
         type = 'quote';
       }
+      if (!type) return;
+      // Stable dedupe: the same notification keeps the same key even when the
+      // "and N others" count changes.
+      for (const handle of handles.slice(0, 4)) {
+        const cellId = `notif_${this.id || 'x'}_${type}_${handle}`;
+        if (this.processedTweetIds.has(cellId)) continue;
+        this.processedTweetIds.add(cellId);
 
-      if (type) {
         await window.bondStorage.recordInteraction(handle, {
           type,
           tweetId: cellId,
-          textSnippet: text.slice(0, 100),
-          isMutual: false,
+          // Never store notification/reply text - metadata only.
+          textSnippet: null,
+          isMutual: true,
           direction: 'inbound'
         }, this.currentUser);
+
 
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(handle, true);

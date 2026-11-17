@@ -168,6 +168,7 @@
           await this.scanFeed();
         }
         await this.scanProfile();
+        await this.scanNotifications();
         if (window.BondPlatforms.isFeatureEnabled(settings, this.id, 'dms')) await this.scanDms();
       } catch (err) {
         console.warn(`[BondScore] ${this.id} scan error:`, err && err.message);
@@ -181,6 +182,58 @@
     async scanFeed() {}
     async scanProfile() {}
     async scanDms() {}
+
+    /**
+     * Notifications are where other people's likes and replies show up. Without
+     * this, only the user's own actions are recorded and every bond looks
+     * one-sided. Only handles, action type and a post id are read - never the
+     * notification message body.
+     */
+    async scanNotifications() {
+      if (!/\/activity|notifications/.test(location.pathname)) return;
+      const rows = document.querySelectorAll('[role="listitem"], article, [data-testid*="notification" i]');
+      for (const row of rows) {
+        try {
+          const links = Array.from(row.querySelectorAll('a[href^="/@"], a[href*="threads.net/@"], a[href*="bsky.app/profile/"]'));
+          const handles = [];
+          for (const link of links) {
+            const href = link.getAttribute('href') || '';
+            const m = href.match(/(?:^|\/)(?:@|profile\/)([A-Za-z0-9._-]{1,40})/);
+            if (!m) continue;
+            const handle = normalizeHandle(m[1]);
+            if (handle && handle !== this.currentUser && !RESERVED.has(handle) && !handles.includes(handle)) handles.push(handle);
+          }
+          if (!handles.length) continue;
+
+          // The heading is the notification metadata ("X liked your post").
+          // Reply text lives in a separate element and is deliberately ignored.
+          const heading = row.querySelector('[role="heading"], h1, h2, h3');
+          const labelText = heading ? cleanText(heading).slice(0, 120) : '';
+          const attrText = Array.from(row.querySelectorAll('[aria-label], [title]'))
+            .map((el) => `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`)
+            .join(' ')
+            .slice(0, 200);
+          const text = `${labelText} ${attrText}`.toLowerCase();
+
+          let type = null;
+          if (/repl|respond/.test(text)) type = 'reply_received';
+          else if (/repost|reblog/.test(text)) type = 'quote';
+          else if (/mention/.test(text)) type = 'mention';
+          else if (/like|favourite|favorite/.test(text)) type = 'like';
+          if (!type) continue;
+
+          const postLink = Array.from(row.querySelectorAll('a[href]'))
+            .map((a) => a.getAttribute('href') || '')
+            .find((href) => /\/post\/|\/profile\/[A-Za-z0-9._-]+\/post\//.test(href)) || '';
+          const noticeKey = `${this.id}_notice_${type}_${postLink || handles[0]}`;
+          for (const handle of handles) {
+            await this.record(handle, type, { direction: 'inbound', tweetId: noticeKey, isMutual: true });
+          }
+        } catch (err) {
+          // Keep scanning the remaining notifications.
+        }
+      }
+    }
     attach() {}
 
     // ---- shared helpers ----------------------------------------------------

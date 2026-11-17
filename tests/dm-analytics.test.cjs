@@ -243,6 +243,31 @@ test('BondStorage handles DM conversation storage, recording, and querying', asy
   assert.ok(closest.length >= 1);
 });
 
+test('Inbound notification likes and replies count as received engagement', () => {
+  const now = Date.now();
+  const events = [
+    { type: 'like', direction: 'inbound', timestamp: now - 1000, tweetId: 'notif_a', isMutual: true },
+    { type: 'reply_received', direction: 'inbound', timestamp: now - 2000, tweetId: 'notif_b', isMutual: true },
+    { type: 'like', direction: 'outbound', timestamp: now - 3000, tweetId: 'out_a' }
+  ];
+  const scored = BondScoring.calculateUserScore(events, DEFAULT_SETTINGS, 0, 0);
+  assert.equal(scored.crmStatus.id, 'mutuals');
+  assert.ok(scored.score > 10);
+
+  const outboundOnly = BondScoring.calculateUserScore([
+    { type: 'like', direction: 'outbound', timestamp: now - 1000, tweetId: 'out_b' },
+    { type: 'like', direction: 'outbound', timestamp: now - 2000, tweetId: 'out_c' }
+  ], DEFAULT_SETTINGS, 0, 0);
+  assert.equal(outboundOnly.crmStatus.id, 'one_sided');
+
+  // Even when you engage much more, two inbound replies still make it mutual.
+  const skewed = [];
+  for (let i = 0; i < 10; i++) skewed.push({ type: 'like', direction: 'outbound', timestamp: now - i * 1000, tweetId: `out_${i}` });
+  skewed.push({ type: 'like', direction: 'inbound', timestamp: now, tweetId: 'in_a', isMutual: true });
+  skewed.push({ type: 'reply_received', direction: 'inbound', timestamp: now, tweetId: 'in_b', isMutual: true });
+  assert.ok(['mutuals', 'besties'].includes(BondScoring.calculateUserScore(skewed, DEFAULT_SETTINGS, 0, 0).crmStatus.id));
+});
+
 test('Chat Memories & Lifetime History: retains permanent memories and never resets to 0 after restart or 2-day gap', async () => {
   const mockStore = {};
   global.chrome = {

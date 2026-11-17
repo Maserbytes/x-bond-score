@@ -983,9 +983,25 @@ function setupPlatformToggles(settings) {
       paint(id);
     };
 
+    const quick = document.getElementById(`quick-platform-${id}`);
+    if (quick) {
+      quick.checked = config[id].enabled;
+      if (!quick.dataset.bound) {
+        quick.dataset.bound = 'true';
+        quick.addEventListener('change', () => {
+          if (master) master.checked = quick.checked;
+          if (subs) subs.querySelectorAll('input').forEach((input) => { input.disabled = !quick.checked; });
+          persist({ enabled: quick.checked });
+        });
+      }
+    }
+
     if (master && !master.dataset.bound) {
       master.dataset.bound = 'true';
-      master.addEventListener('change', () => persist({ enabled: master.checked }));
+      master.addEventListener('change', () => {
+        if (quick) quick.checked = master.checked;
+        persist({ enabled: master.checked });
+      });
     }
     if (timeline && !timeline.dataset.bound) {
       timeline.dataset.bound = 'true';
@@ -1131,6 +1147,20 @@ async function loadSettingsForm() {
   });
 }
 
+// One delegated listener for all "open profile" cards. Inline onclick handlers
+// are blocked by the extension page CSP and show up as errors.
+if (!window.__bondProfileOpenBound) {
+  window.__bondProfileOpenBound = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target && event.target.closest
+      ? event.target.closest('[data-open-url]')
+      : null;
+    if (!target) return;
+    const url = target.getAttribute('data-open-url');
+    if (url && chrome.tabs) chrome.tabs.create({ url });
+  });
+}
+
 /**
  * 🧠 Render Local Engagement Memory, Balance, Supporters & Dormant Bonds
  */
@@ -1170,7 +1200,7 @@ function renderRadarTab() {
         const crm = getCRMStatusForUser(u);
         return `
           <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}">
-            <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+            <div class="radar-item-left" data-open-url="${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}">
               ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#ec4899;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
               <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
               <span class="popup-crm-pill ${crm.id}">${crm.label}</span>
@@ -1190,7 +1220,7 @@ function renderRadarTab() {
     if (topOutbound.length > 0) {
       outboundList.innerHTML = topOutbound.map(u => `
         <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}">
-          <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+          <div class="radar-item-left" data-open-url="${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}">
             ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
             <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
           </div>
@@ -1244,7 +1274,7 @@ function renderRadarTab() {
         let label = fRel ? fRel.badgeText : '🤝 Mutual Follow';
         let color = fRel ? fRel.color : '#00ba7c';
         return `
-          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}" onclick="chrome.tabs.create({url:'${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}'})">
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}" data-open-url="${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}">
             <div class="radar-item-left">
               ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
               <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>

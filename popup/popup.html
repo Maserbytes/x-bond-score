@@ -233,6 +233,17 @@
 
       <!-- Tab 4: Settings -->
       <section id="tab-settings" class="tab-pane">
+        <!-- Quick network switches: always visible at the top of Settings -->
+        <div class="settings-group quick-platform-settings">
+          <h3>⚡ Quick Network Switches</h3>
+          <p class="settings-hint">Turn a network on or off instantly. Detailed Timeline and DM switches are just below.</p>
+          <div class="quick-platform-row">
+            <label class="quick-platform-toggle"><input type="checkbox" id="quick-platform-x" data-quick-platform="x" checked><span>𝕏 X</span></label>
+            <label class="quick-platform-toggle"><input type="checkbox" id="quick-platform-threads" data-quick-platform="threads"><span>🧵 Threads</span></label>
+            <label class="quick-platform-toggle"><input type="checkbox" id="quick-platform-bluesky" data-quick-platform="bluesky"><span>🦋 Bluesky</span></label>
+          </div>
+        </div>
+
         <!-- Platform Controls -->
         <div class="settings-group platform-settings-group">
           <h3>🌐 Platforms & Observation Scope</h3>

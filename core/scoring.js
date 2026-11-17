@@ -743,8 +743,23 @@ class BondScoring {
     // Reciprocity Radar
     const reciprocity = this.calculateReciprocity(sentCount, receivedCount);
 
-    // CRM Relationship Status (Besties / Mutuals / One-sided / Stranger)
-    const crmStatus = this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays);
+    // A reply from them is proof of a two-way conversation even when the
+    // extension never observed your side of it (e.g. replies typed before it
+    // was installed). Never label someone "one-sided" in that case.
+    const hasInboundReply = sorted.some((evt) =>
+      evt.direction === 'inbound' &&
+      (evt.type === 'reply_received' || evt.type === 'reply_thread' || evt.type === 'mention')
+    );
+    const crmStatus = hasInboundReply
+      ? {
+          id: finalScore >= 65 ? 'besties' : 'mutuals',
+          label: finalScore >= 65 ? 'Besties' : 'Mutuals',
+          emoji: finalScore >= 65 ? '💖' : '🤝',
+          desc: 'Two-way conversation with replies from both sides',
+          color: finalScore >= 65 ? '#F91880' : '#00BA7C',
+          badgeBg: finalScore >= 65 ? 'rgba(249, 24, 128, 0.18)' : 'rgba(0, 186, 124, 0.18)'
+        }
+      : this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays);
 
     // 30-Day Trend Sparkline
     const sparkline = this.generate30DaySparkline(sorted, settings, K);
@@ -842,8 +857,22 @@ class BondScoring {
 
     const sentRatio = total > 0 ? (sentCount / total) * 100 : 50;
 
-    // One-sided (You lead): You send a lot, but they rarely or never engage back
-    if (sentCount >= 2 && sentRatio >= 75) {
+    // Two or more inbound interactions prove they engage back. That is a mutual
+    // bond regardless of who initiated more often.
+    if (sentCount > 0 && receivedCount >= 2) {
+      return {
+        id: 'mutuals',
+        label: 'Mutuals',
+        emoji: '🤝',
+        desc: 'Two-way engagement from both sides',
+        color: '#00BA7C',
+        badgeBg: 'rgba(0, 186, 124, 0.18)'
+      };
+    }
+
+    // One-sided (You lead): they have never engaged back at all. Any inbound
+    // reply/like means there is a two-way relationship, however lopsided.
+    if (sentCount >= 2 && receivedCount === 0) {
       return {
         id: 'one_sided',
         label: 'One-sided',
@@ -855,8 +884,8 @@ class BondScoring {
       };
     }
 
-    // One-sided (They lead): They engage with you frequently, you rarely reply
-    if (receivedCount >= 2 && sentRatio <= 25) {
+    // One-sided (They lead): you have never engaged back at all.
+    if (receivedCount >= 2 && sentCount === 0) {
       return {
         id: 'one_sided_them',
         label: 'One-sided',

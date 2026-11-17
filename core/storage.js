@@ -718,6 +718,41 @@ class BondStorage {
     return await this.saveUser(handle, user, account);
   }
 
+  /** Recomputes score/CRM from the event ledger, used on new and repeat events. */
+  async _recomputeUserFromEvents(handle, events, user, account, platform, latestTimestamp = 0) {
+    const scoringEngine = this._getScoringEngine();
+    if (!scoringEngine) return user;
+
+    user.stats = this._buildDirectionalStats(events, user.stats || {});
+    if (latestTimestamp) user.lastInteraction = Math.max(user.lastInteraction || 0, latestTimestamp);
+
+    const settings = await this.getSettings();
+    const previousScore = user.currentScore || 0;
+    const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } =
+      scoringEngine.calculateUserScore(events, settings, previousScore);
+    user.currentScore = score;
+    user.tier = tier.id;
+    user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
+    user.crmStatusId = crmStatus ? crmStatus.id : 'stranger';
+    user.crmStatusData = crmStatus || null;
+    user.trend = trend;
+    user.streakDays = streakDays;
+    user.reciprocity = reciprocity;
+    user.recencyBoost = recencyBoost;
+    user.twoWayMultiplier = twoWayMultiplier;
+    user.qualityMetrics = qualityMetrics;
+    user.lastCalculated = Date.now();
+
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent || 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+    if (typeof scoringEngine.classifyRelationship === 'function') {
+      user.relationshipClass = scoringEngine.classifyRelationship(score, sSent, sRecv, user.lastInteraction);
+    }
+
+    await this.saveUser(handle, user, account, platform);
+    return user;
+  }
+
   /**
    * Records a new interaction event, deduplicating by event ID or tweet ID.
    * Isolated to the active account.
@@ -749,7 +784,11 @@ class BondStorage {
     if (eventData.tweetId) {
       const exists = events.some(e => e.tweetId === eventData.tweetId);
       if (exists) {
-        return await this.getUser(cleanHandle, false, activeAccount, platformId);
+        // Still recompute: scoring rules may have been improved since this
+        // event was first recorded (e.g. inbound notifications now count).
+        const user = await this.getUser(cleanHandle, false, activeAccount, platformId);
+        if (user) return await this._recomputeUserFromEvents(cleanHandle, events, user, activeAccount, platformId);
+        return user;
       }
     }
 
@@ -809,39 +848,9 @@ class BondStorage {
     if (eventData.avatarUrl) user.avatarUrl = eventData.avatarUrl;
     if (!user.stats) user.stats = {};
 
-    // Rebuild counters from the ledger, including for existing installations.
-    user.stats = this._buildDirectionalStats(events, user.stats);
-
-    user.lastInteraction = Math.max(user.lastInteraction || 0, newEvent.timestamp);
-
-    // Recalculate from the event ledger so recent activity raises the score and inactivity can decay it.
-    const scoringEngine = this._getScoringEngine();
-    if (scoringEngine) {
-      const settings = await this.getSettings();
-      const previousScore = user.currentScore || 0;
-      const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } = scoringEngine.calculateUserScore(events, settings, previousScore);
-      user.currentScore = score;
-      user.tier = tier.id;
-      user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
-      user.crmStatusId = crmStatus ? crmStatus.id : 'stranger';
-      user.crmStatusData = crmStatus || null;
-      user.trend = trend;
-      user.streakDays = streakDays;
-      user.reciprocity = reciprocity;
-      user.recencyBoost = recencyBoost;
-      user.twoWayMultiplier = twoWayMultiplier;
-      user.qualityMetrics = qualityMetrics;
-      user.lastCalculated = Date.now();
-
-      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent || 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
-      if (typeof scoringEngine.classifyRelationship === 'function') {
-        user.relationshipClass = scoringEngine.classifyRelationship(score, sSent, sRecv, user.lastInteraction);
-      }
-    }
-
-    await this.saveUser(cleanHandle, user, activeAccount, platformId);
-    return user;
+    return await this._recomputeUserFromEvents(
+      cleanHandle, events, user, activeAccount, platformId, newEvent.timestamp
+    );
   }
 
   /**

@@ -132,7 +132,7 @@
 
       // 2. Process Notifications (Passive Incoming Engagement)
       if (location.pathname.startsWith('/notifications')) {
-        const cells = document.querySelectorAll('[data-testid="cellInnerDiv"]');
+        const cells = document.querySelectorAll('[data-testid="cellInnerDiv"], [data-testid="notification"], [role="listitem"]');
         for (const cell of cells) {
           try {
             await window.interactionDetector.detectNotificationCell(cell);
