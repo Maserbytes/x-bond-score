@@ -85,6 +85,14 @@ class BondUI {
     if (!containerEl || !handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
 
+    // A profile badge from an older placement can survive a DOM redesign.
+    // Keep only the one in the intended container.
+    if (isProfileHeader) {
+      document.querySelectorAll(`.bond-badge-profile[data-bond-handle="${cleanHandle}"]`).forEach((old) => {
+        if (!containerEl.contains(old)) old.remove();
+      });
+    }
+
     // 1. Immediate synchronous deduplication: if badge(s) already exist, keep only 1 and exit
     const existingBadges = containerEl.querySelectorAll('.bond-badge');
     if (existingBadges.length > 0) {

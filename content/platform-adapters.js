@@ -394,12 +394,15 @@
         if (!author) continue;
         if (this.currentUser && author.handle === this.currentUser) continue;
 
-        const container = post.querySelector('a[href^="/@"]')?.parentElement;
-        if (!container) continue;
-        const nameRow = container.querySelector('[data-testid="User-Name"]') ||
-          container.closest('[data-pressable-container="true"]')?.querySelector('a[href^="/@"]')?.parentElement ||
-          container;
-        await this.injectInto(nameRow, author.handle);
+        const nameLink = post.querySelector('a[href^="/@"]');
+        if (!nameLink) continue;
+        // Put the badge inside the name link so it stays on the same line as
+        // the handle instead of wrapping underneath it.
+        nameLink.style.display = 'inline-flex';
+        nameLink.style.alignItems = 'center';
+        nameLink.style.whiteSpace = 'nowrap';
+        nameLink.style.gap = '4px';
+        await this.injectInto(nameLink, author.handle);
 
         // Backfill interactions that happened before the extension was enabled:
         // Threads exposes the current state only as <svg><title>Like/Unlike</title>.
@@ -663,8 +666,8 @@
         });
       }
 
-      const nameEl = header.querySelector('h1, h2, [data-testid="profileHeaderDisplayName"]');
-      const container = nameEl ? nameEl.parentElement : header;
+      const nameEl = header.querySelector('[data-testid="profileHeaderDisplayName"], h1, h2');
+      const container = nameEl || header;
       if (container) await window.bondUI.injectBadge(container, handle, true);
       const stored = await window.bondStorage.getUser(handle);
       if (window.bondUI && window.bondUI.updateProfileFollowBadge) {
