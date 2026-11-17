@@ -252,11 +252,15 @@
       if (window.BondPlatforms && !window.BondPlatforms.isFeatureEnabled(platformSettings(), this.id, 'timeline')) {
         return null;
       }
-      return window.bondStorage.recordInteraction(target, {
+      const result = await window.bondStorage.recordInteraction(target, {
         type,
         direction: type.includes('received') ? 'inbound' : 'outbound',
         ...extra
       }, this.currentUser);
+      if (result && window.bondUI && window.bondUI.refreshBadgesForUser) {
+        window.bondUI.refreshBadgesForUser(target, true).catch(() => {});
+      }
+      return result;
     }
 
     attachGenericClickCapture() {
@@ -397,6 +401,16 @@
           container;
         await this.injectInto(nameRow, author.handle);
 
+        // Backfill interactions that happened before the extension was enabled:
+        // Threads exposes the current state only as <svg><title>Like/Unlike</title>.
+        for (const actionEl of post.querySelectorAll('[role="button"], button')) {
+          const state = cleanText(actionEl.querySelector('svg title, title')).toLowerCase();
+          if (/^(unlike|liked|repost(ed)?|reposted)$/.test(state)) {
+            const type = /like/.test(state) ? 'like' : 'quote';
+            await this.record(author.handle, type, { tweetId: this.postKey(post), isMutual: false, direction: 'outbound' });
+          }
+        }
+
         const avatar = author.avatarUrl;
         if (avatar) {
           const user = await window.bondStorage.getUser(author.handle);
@@ -439,11 +453,15 @@
       const author = this.authorFor(post);
       if (!author) return;
 
+      const actionEl = target.closest('[role="button"], button');
       const aria = (target.closest('[aria-label]')?.getAttribute('aria-label') || '').toLowerCase();
-      const label = aria || cleanText(target.closest('[role="button"], button')).toLowerCase();
+      // Threads puts the action name in <svg><title>, not in aria-label/text.
+      const svgTitle = actionEl ? cleanText(actionEl.querySelector('svg title, title')) : '';
+      const label = `${aria} ${cleanText(actionEl)} ${svgTitle}`.trim().toLowerCase();
 
       if (/\blike\b|\bliked\b/.test(label)) {
-        const active = (target.closest('[aria-pressed]')?.getAttribute('aria-pressed') === 'true') || /unlike|liked/.test(label);
+        const active = (target.closest('[aria-pressed]')?.getAttribute('aria-pressed') === 'true') ||
+          /\b(unlike|liked|likes)\b/.test(label);
         if (!active) {
           if (window.bondUI) window.bondUI.optimisticBoost(author.handle, 3);
           this.record(author.handle, 'like', { tweetId: this.postKey(post), isMutual: false });
@@ -609,6 +627,13 @@
         const link = post.querySelector('a[href^="/profile/"]');
         const container = link ? (link.parentElement?.parentElement || link.parentElement) : post;
         await this.injectInto(container, author.handle);
+
+        // Backfill already-active like/repost buttons (state lives in aria-pressed).
+        for (const btn of post.querySelectorAll('[data-testid="likeBtn"], [data-testid="repostBtn"]')) {
+          if (btn.getAttribute('aria-pressed') !== 'true') continue;
+          const type = (btn.getAttribute('data-testid') || '').includes('like') ? 'like' : 'quote';
+          await this.record(author.handle, type, { tweetId: this.postKey(post), isMutual: false, direction: 'outbound' });
+        }
 
         if (author.avatarUrl) {
           const user = await window.bondStorage.getUser(author.handle);

@@ -274,7 +274,9 @@ class BondUI {
    */
   async refreshBadgesForUser(handle, shouldAnimate = false) {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const user = (await window.bondStorage.getUser(cleanHandle)) || {
+    // Force a storage read: a cached pre-interaction record can otherwise
+    // overwrite a freshly bumped badge with 0 a moment later.
+    const user = (await window.bondStorage.getUser(cleanHandle, true)) || {
       handle: cleanHandle,
       currentScore: 0,
       tier: 'dormant',
