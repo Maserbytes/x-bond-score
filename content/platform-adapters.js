@@ -58,7 +58,12 @@
     async boot() {
       if (!window.bondStorage) return;
       this.watchSettings();
-      await window.bondStorage.init();
+      try {
+        await window.bondStorage.init();
+      } catch (err) {
+        console.warn('[BondScore] storage init failed:', (err && err.message) || err);
+        return;
+      }
       window.bondStorage.setActivePlatform(this.id);
       const settings = await window.bondStorage.getSettings();
       if (!window.BondPlatforms || !window.BondPlatforms.isEnabled(settings, this.id)) {
@@ -382,15 +387,25 @@
       document.querySelectorAll('article, div[data-pressable-container="true"]').forEach((el) => {
         if (el.querySelector('a[href^="/@"]') && !el.querySelector('article')) set.add(el);
       });
-      // Threads also renders compact posts as divs with a time element.
-      document.querySelectorAll('div').forEach((el) => {
-        if (el.children.length > 6) return;
-        if (el.querySelector('a[href^="/@"]') && el.querySelector('time')) {
-          const parent = el.parentElement;
-          if (parent && !parent.querySelector('article')) set.add(el);
-        }
-      });
+      // Only real post containers. Scanning arbitrary divs picked up profile
+      // wrappers and tab bars, which then put badges on the sticky header and
+      // the Threads/Replies tabs instead of on posts.
       return Array.from(set).slice(0, 60);
+    }
+
+    /** Threads tab labels are links to the same profile - never badge them. */
+    isTabLabel(text) {
+      return /^(threads|replies|media|reposts|followers|following)$/i.test(cleanText(text));
+    }
+
+    /** Nearest ancestor that looks like the profile header block. */
+    profileBlock(titleEl) {
+      let el = titleEl;
+      for (let i = 0; i < 10 && el && el !== document.body; i++) {
+        if (el.querySelector && el.querySelector('[role="button"], button') && el.querySelector('img')) return el;
+        el = el.parentElement;
+      }
+      return document.body;
     }
 
     authorFor(post) {
@@ -398,7 +413,7 @@
       for (const link of links) {
         const href = link.getAttribute('href') || '';
         const handle = normalizeHandle(href.replace(/^\/@/, ''));
-        if (handle && !RESERVED.has(handle) && !href.includes('/post/')) {
+        if (handle && !RESERVED.has(handle) && !href.includes('/post/') && !this.isTabLabel(link)) {
           return { handle, displayName: cleanText(link) || handle, avatarUrl: (link.querySelector('img') || {}).src || '' };
         }
       }
@@ -413,7 +428,8 @@
         if (!author) continue;
         if (this.selfHandle && author.handle === this.selfHandle) continue;
 
-        const nameLink = post.querySelector('a[href^="/@"]');
+        const nameLink = Array.from(post.querySelectorAll('a[href^="/@"]'))
+          .find((link) => !this.isTabLabel(link));
         if (!nameLink) continue;
         // Put the badge inside the name link so it stays on the same line as
         // the handle instead of wrapping underneath it.
@@ -451,18 +467,29 @@
       const handle = normalizeHandle(match[1]);
       if (!handle || (this.selfHandle && handle === this.selfHandle)) return;
 
-      const header = document.querySelector('header') || document.querySelector('main');
-      if (!header) return;
+      // Threads does not always render <header>/<main> on profile routes, so
+      // locate the profile block from its name heading instead.
+      const headings = Array.from(document.querySelectorAll('h1, h2'));
+      // The sticky top bar also contains an <h1> (inside a link). Prefer the
+      // real profile heading so the badge sits next to the name, not the nav.
+      const titleEl = headings.find((el) => cleanText(el) && !el.closest('a')) || null;
+      if (!titleEl) return;
 
-      const titleEl = header.querySelector('h1, h2');
-      const avatarImg = header.querySelector('img[src*="/t51."], header img');
+      const header = this.profileBlock(titleEl);
+      const avatarImg = header.querySelector('img[src*="/t51."], img');
       const signals = this.readFollowState(header);
       if (signals.isBlocked || signals.theyFollowYou !== null || signals.youFollowThem !== null) {
         await this.bindProfileSignal(handle, { ...signals, displayName: cleanText(titleEl) || handle, avatarUrl: avatarImg ? avatarImg.src : '' });
       }
 
+      // Drop badges left on the sticky header link by older builds.
+      document.querySelectorAll('.bond-badge').forEach((b) => {
+        const host = b.parentElement;
+        if (host && host.tagName === 'A' && host.querySelector('h1, h2')) b.remove();
+      });
+
       const stored = await window.bondStorage.getUser(handle);
-      const nameRow = titleEl ? titleEl.parentElement : header;
+      const nameRow = titleEl || header;
       if (nameRow && stored && stored.currentScore > 0) {
         await window.bondUI.injectBadge(nameRow, handle, true);
       }
@@ -695,13 +722,18 @@
         });
       }
 
-      const stored = await window.bondStorage.getUser(handle);
+      // Never fall back to the whole profile screen: it would park the badge at
+      // the bottom of the page while the header is still a skeleton.
       const nameEl = header.querySelector('[data-testid="profileHeaderDisplayName"], h1, h2');
-      const container = nameEl || header;
-      if (container && stored && stored.currentScore > 0) {
-        await window.bondUI.injectBadge(container, handle, true);
+      if (!nameEl) return;
+      const stored = await window.bondStorage.getUser(handle);
+      if (stored && stored.currentScore > 0) {
+        document.querySelectorAll(`.bond-badge-profile[data-bond-handle="${handle}"]`).forEach((old) => {
+          if (!nameEl.contains(old)) old.remove();
+        });
+        await window.bondUI.injectBadge(nameEl, handle, true);
         if (this.id === 'bluesky') {
-          const placed = container.querySelector(`.bond-badge[data-bond-handle="${handle}"]`);
+          const placed = nameEl.querySelector(`.bond-badge[data-bond-handle="${handle}"]`);
           if (placed) placed.classList.add('bond-badge-compact');
         }
       }
