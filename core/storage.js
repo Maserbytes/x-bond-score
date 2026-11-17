@@ -193,9 +193,41 @@ class BondStorage {
       if (this.currentUser) {
         await this._migrateLegacyDataIfNeeded(this.currentUser);
       }
+      await this._purgeBogusFeedEventsIfNeeded();
     } catch (err) {
       console.warn('[BondScore] Storage init error:', err);
       this.settingsCache = Object.assign({}, DEFAULT_SETTINGS);
+    }
+  }
+
+  /**
+   * One-time cleanup of the fake quote events created by an earlier build that
+   * misread Threads' "Repost" button title as an active state. Those events
+   * gave every feed author a score of 18.
+   */
+  async _purgeBogusFeedEventsIfNeeded() {
+    if (!this._hasChromeStorage()) return;
+    try {
+      const flag = await this._getRaw(['bondscoreFeedPurgeDone']);
+      if (flag.bondscoreFeedPurgeDone) return;
+      const all = await this._getAllRaw();
+      for (const [key, value] of Object.entries(all)) {
+        if (!key.includes(':events:') || !Array.isArray(value)) continue;
+        const platform = this._platformFromKey(key);
+        if (platform !== 'threads' && platform !== 'bluesky') continue;
+        const filtered = value.filter((evt) => !(
+          evt && evt.type === 'quote' && evt.direction === 'outbound' &&
+          typeof evt.tweetId === 'string' && /^(threads_|bsky_)/.test(evt.tweetId)
+        ));
+        if (filtered.length === value.length) continue;
+        await this._setRaw({ [key]: filtered });
+        const handle = key.split(':events:')[1];
+        const user = handle ? await this.getUser(handle, true, null, platform) : null;
+        if (user) await this._recomputeUserFromEvents(handle, filtered, user, null, platform);
+      }
+      await this._setRaw({ bondscoreFeedPurgeDone: true });
+    } catch (err) {
+      // Never block startup for cleanup.
     }
   }
 
