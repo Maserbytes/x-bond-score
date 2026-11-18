@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Scoring, Streak & Time-Decay Engine (v1.1.3)
+ * BondScore - Scoring, Streak & Time-Decay Engine (v1.4.0)
  * Computes relationship scores, streaks, reciprocity balance, and 30-day historical trends.
  */
 
@@ -138,55 +138,65 @@ const DmRanks = {
  * Measures vitality, activity rate, and member participation health
  */
 const GroupEnergyLevels = {
-  BUZZING: {
-    id: 'buzzing',
-    name: 'Buzzing',
+  HYPERACTIVE: {
+    id: 'hyperactive',
+    name: 'Hyperactive',
+    emoji: '💥',
+    minScore: 95,
+    color: '#EF4444', // Hot red
+    bg: 'rgba(239, 68, 68, 0.16)',
+    border: 'rgba(239, 68, 68, 0.40)',
+    description: '99+ messages in the last hour. Non-stop chat.'
+  },
+  ENERGETIC: {
+    id: 'energetic',
+    name: 'Energetic',
     emoji: '⚡',
     minScore: 80,
     color: '#10B981', // Vibrant emerald
     bg: 'rgba(16, 185, 129, 0.16)',
     border: 'rgba(16, 185, 129, 0.40)',
-    description: 'Chat is on fire! Messages flying and high participation.'
+    description: '50+ messages in the last 20 hours.'
   },
   ACTIVE: {
     id: 'active',
     name: 'Active',
     emoji: '🔥',
-    minScore: 55,
+    minScore: 60,
     color: '#3B82F6', // Electric blue
     bg: 'rgba(59, 130, 246, 0.16)',
     border: 'rgba(59, 130, 246, 0.35)',
-    description: 'Regular energetic discussions and steady flow.'
+    description: 'More than 20 messages in the last 20 hours.'
+  },
+  STEADY: {
+    id: 'steady',
+    name: 'Steady',
+    emoji: '☕',
+    minScore: 40,
+    color: '#F59E0B', // Warm amber
+    bg: 'rgba(245, 158, 11, 0.16)',
+    border: 'rgba(245, 158, 11, 0.35)',
+    description: 'Comfortable rhythm with reliable day-to-day chatter.'
   },
   CHILL: {
     id: 'chill',
     name: 'Chill',
-    emoji: '☕',
-    minScore: 30,
-    color: '#F59E0B', // Warm amber
-    bg: 'rgba(245, 158, 11, 0.16)',
-    border: 'rgba(245, 158, 11, 0.35)',
-    description: 'Casual banter at a relaxed and comfortable pace.'
-  },
-  COOLING: {
-    id: 'cooling',
-    name: 'Cooling',
-    emoji: '🍂',
-    minScore: 15,
+    emoji: '🛋️',
+    minScore: 20,
     color: '#F97316', // Rust orange
     bg: 'rgba(249, 115, 22, 0.16)',
     border: 'rgba(249, 115, 22, 0.35)',
-    description: 'Activity is slowing down. Has not had much chatter lately.'
+    description: 'Quiet, low-key group that checks in from time to time.'
   },
-  INACTIVE: {
-    id: 'inactive',
+  DYING: {
+    id: 'dying',
     name: 'Dying / Inactive',
-    emoji: '❄️',
+    emoji: '🪦',
     minScore: 0,
     color: '#64748B', // Faded slate
     bg: 'rgba(100, 116, 139, 0.14)',
     border: 'rgba(100, 116, 139, 0.25)',
-    description: 'Quiet group chat. Danger of becoming dormant.'
+    description: 'Fewer than 21 messages in the last 20 hours.'
   }
 };
 
@@ -220,11 +230,10 @@ class BondScoring {
    */
   static getGroupEnergyLevel(score) {
     const s = Math.max(0, Math.min(100, Math.round(score || 0)));
-    if (s >= GroupEnergyLevels.BUZZING.minScore) return GroupEnergyLevels.BUZZING;
+    if (s >= GroupEnergyLevels.HYPERACTIVE.minScore) return GroupEnergyLevels.HYPERACTIVE;
+    if (s >= GroupEnergyLevels.ENERGETIC.minScore) return GroupEnergyLevels.ENERGETIC;
     if (s >= GroupEnergyLevels.ACTIVE.minScore) return GroupEnergyLevels.ACTIVE;
-    if (s >= GroupEnergyLevels.CHILL.minScore) return GroupEnergyLevels.CHILL;
-    if (s >= GroupEnergyLevels.COOLING.minScore) return GroupEnergyLevels.COOLING;
-    return GroupEnergyLevels.INACTIVE;
+    return GroupEnergyLevels.DYING;
   }
 
   /**
@@ -412,63 +421,75 @@ class BondScoring {
   /**
    * Computes energy score, activity status, and active member roster for a Group Chat.
    */
-  static calculateGroupEnergy(groupData = {}) {
-    const totalMessages = groupData.totalMessages || 0;
-    const recent3d = groupData.recentMessages3d || 0;
-    const recent7d = groupData.recentMessages7d || (recent3d * 2);
-    const lastMessage = groupData.lastMessageTimestamp || Date.now();
-    const now = Date.now();
-    const msInDay = 86400000;
-    const daysSince = Math.max(0, (now - lastMessage) / msInDay);
+  static calculateGroupEnergy(groupData = {}, settings = {}) {
+    const cfg = Object.assign({
+      windowHours: 20,
+      activeMin: 21,
+      energeticMin: 50,
+      hyperactiveWindowHours: 1,
+      hyperactiveMin: 99
+    }, (settings && settings.groupActivity) || {});
 
-    // 1. Member Participation Roster
+    const now = Date.now();
+    const timeline = Array.isArray(groupData.messageTimeline) ? groupData.messageTimeline : [];
+    const recent20h = groupData.recentMessages20h !== undefined
+      ? groupData.recentMessages20h
+      : timeline.filter((t) => now - t <= cfg.windowHours * 3600000).length;
+    const recent1h = groupData.recentMessages1h !== undefined
+      ? groupData.recentMessages1h
+      : timeline.filter((t) => now - t <= cfg.hyperactiveWindowHours * 3600000).length;
+    const totalMessages = groupData.totalMessages || 0;
+
+    const lastMessage = groupData.lastMessageTimestamp || now;
+    const daysSince = Math.max(0, (now - lastMessage) / 86400000);
+
+    // Member participation roster (metadata only, used by the Score Card).
     const memberCounts = groupData.memberMessageCounts || {};
     const memberEntries = Object.entries(memberCounts);
     let memberSum = 0;
     memberEntries.forEach(([, count]) => { memberSum += count; });
     const effectiveTotal = Math.max(totalMessages, memberSum);
+    const activeMembers = memberEntries.map(([handle, count]) => ({
+      handle,
+      count,
+      share: effectiveTotal > 0 ? Math.round((count / effectiveTotal) * 100) : 0
+    })).sort((a, b) => b.count - a.count);
 
-    const activeMembers = memberEntries.map(([handle, count]) => {
-      const share = effectiveTotal > 0 ? Math.round((count / effectiveTotal) * 100) : 0;
-      return { handle, count, share };
-    }).sort((a, b) => b.count - a.count);
-
-    // 2. Diversity Score (0 to 20 pts)
-    const distinctMembers = activeMembers.length;
-    let diversityScore = 5;
-    if (distinctMembers >= 5) diversityScore = 20;
-    else if (distinctMembers >= 3) diversityScore = 15;
-    else if (distinctMembers >= 2) diversityScore = 10;
-
-    // 3. Message Volume Score (0 to 50 pts)
-    const activeVol = recent7d + Math.min(20, totalMessages * 0.2);
-    const volumeScore = Math.min(50, Math.round(50 * (1 - Math.exp(-activeVol / 25))));
-
-    // 4. Recency Score (0 to 30 pts)
-    let recencyScore = 30;
-    if (daysSince <= 1) recencyScore = 30;
-    else if (daysSince <= 3) recencyScore = 22;
-    else if (daysSince <= 7) recencyScore = 14;
-    else if (daysSince <= 14) recencyScore = 6;
-    else recencyScore = 0;
-
-    // 5. Final Group Energy Score
-    let energyScore = volumeScore + recencyScore + diversityScore;
-    if (totalMessages === 0) energyScore = 0;
-    energyScore = Math.min(100, Math.max(0, energyScore));
-
-    const energyLevel = BondScoring.getGroupEnergyLevel(energyScore);
-    const isDying = energyScore < 18 || daysSince >= 14;
+    // Strict activity gates: a group is only "Active" with more than 20
+    // messages in the last 20 hours; "Energetic" needs 50+, and "Hyperactive"
+    // needs 99+ within the last hour. Everything else is Inactive.
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const activeSpan = Math.max(1, cfg.energeticMin - cfg.activeMin);
+    let energyLevel;
+    let energyScore;
+    if (recent1h >= cfg.hyperactiveMin) {
+      energyLevel = GroupEnergyLevels.HYPERACTIVE;
+      // 95-100, scaling with volume beyond the hyperactive threshold.
+      energyScore = clamp(95 + Math.round(((recent1h - cfg.hyperactiveMin) / cfg.hyperactiveMin) * 5), 95, 100);
+    } else if (recent20h >= cfg.energeticMin) {
+      energyLevel = GroupEnergyLevels.ENERGETIC;
+      // 80-94, scaling from the Energetic threshold up to Hyperactive.
+      energyScore = clamp(80 + Math.round(((recent20h - cfg.energeticMin) / activeSpan) * 14), 80, 94);
+    } else if (recent20h >= cfg.activeMin) {
+      energyLevel = GroupEnergyLevels.ACTIVE;
+      // 60-79, scaling from the Active threshold up to Energetic.
+      energyScore = clamp(60 + Math.round(((recent20h - cfg.activeMin) / activeSpan) * 19), 60, 79);
+    } else {
+      energyLevel = GroupEnergyLevels.DYING;
+      energyScore = clamp(Math.round((recent20h / Math.max(1, cfg.activeMin)) * 19), 0, 19);
+    }
 
     return {
       energyScore,
       energyLevel,
-      isDying,
+      isDying: energyLevel.id === 'dying',
       daysSinceLast: Math.floor(daysSince),
       totalMessages,
-      recent7d,
+      recent20h,
+      recent1h,
       activeMembers,
-      distinctMembers
+      distinctMembers: activeMembers.length,
+      thresholds: cfg
     };
   }
 
@@ -546,6 +567,7 @@ class BondScoring {
       replySent: 8,
       replyReceived: 8,
       quote: 6,
+      repost: 5,
       mention: 5,
       like: 2,
       deepSyncExchange: 10
@@ -625,6 +647,12 @@ class BondScoring {
           break;
         case 'quote':
           baseWeight = weights.quote || 6;
+          if (isInbound) receivedCount++; else sentCount++;
+          break;
+        case 'repost':
+          // A repost is a deliberate signal: worth more than a like, less than
+          // a reply or a quote post.
+          baseWeight = weights.repost || 5;
           if (isInbound) receivedCount++; else sentCount++;
           break;
         case 'mention':
@@ -722,8 +750,23 @@ class BondScoring {
     // Reciprocity Radar
     const reciprocity = this.calculateReciprocity(sentCount, receivedCount);
 
-    // CRM Relationship Status (Besties / Mutuals / One-sided / Stranger)
-    const crmStatus = this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays);
+    // A reply from them is proof of a two-way conversation even when the
+    // extension never observed your side of it (e.g. replies typed before it
+    // was installed). Never label someone "one-sided" in that case.
+    const hasInboundReply = sorted.some((evt) =>
+      evt.direction === 'inbound' &&
+      (evt.type === 'reply_received' || evt.type === 'reply_thread' || evt.type === 'mention')
+    );
+    const crmStatus = hasInboundReply
+      ? {
+          id: finalScore >= 65 ? 'besties' : 'mutuals',
+          label: finalScore >= 65 ? 'Besties' : 'Mutuals',
+          emoji: finalScore >= 65 ? '💖' : '🤝',
+          desc: 'Two-way conversation with replies from both sides',
+          color: finalScore >= 65 ? '#F91880' : '#00BA7C',
+          badgeBg: finalScore >= 65 ? 'rgba(249, 24, 128, 0.18)' : 'rgba(0, 186, 124, 0.18)'
+        }
+      : this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays);
 
     // 30-Day Trend Sparkline
     const sparkline = this.generate30DaySparkline(sorted, settings, K);
@@ -821,8 +864,22 @@ class BondScoring {
 
     const sentRatio = total > 0 ? (sentCount / total) * 100 : 50;
 
-    // One-sided (You lead): You send a lot, but they rarely or never engage back
-    if (sentCount >= 2 && sentRatio >= 75) {
+    // Two or more inbound interactions prove they engage back. That is a mutual
+    // bond regardless of who initiated more often.
+    if (sentCount > 0 && receivedCount >= 2) {
+      return {
+        id: 'mutuals',
+        label: 'Mutuals',
+        emoji: '🤝',
+        desc: 'Two-way engagement from both sides',
+        color: '#00BA7C',
+        badgeBg: 'rgba(0, 186, 124, 0.18)'
+      };
+    }
+
+    // One-sided (You lead): they have never engaged back at all. Any inbound
+    // reply/like means there is a two-way relationship, however lopsided.
+    if (sentCount >= 2 && receivedCount === 0) {
       return {
         id: 'one_sided',
         label: 'One-sided',
@@ -834,8 +891,8 @@ class BondScoring {
       };
     }
 
-    // One-sided (They lead): They engage with you frequently, you rarely reply
-    if (receivedCount >= 2 && sentRatio <= 25) {
+    // One-sided (They lead): you have never engaged back at all.
+    if (receivedCount >= 2 && sentCount === 0) {
       return {
         id: 'one_sided_them',
         label: 'One-sided',
@@ -874,6 +931,85 @@ class BondScoring {
 
     return {
       id: 'casual',
+      label: 'Acquaintance',
+      emoji: '👋',
+      desc: 'Occasional light interactions',
+      color: '#FFD400',
+      badgeBg: 'rgba(255, 212, 0, 0.18)'
+    };
+  }
+
+  /**
+   * v1.4.0 CRM relationship classification used by the in-page badges, the
+   * platform-filtered leaderboard, and the "Mutual backs" tab.
+   * - 🌟 Top Supporters  : inbound-heavy, they show up for you
+   * - 🎯 Outbound Focus  : you invest most of the energy
+   * - ⚖️ Balanced Mutuals: healthy two-way dialogue
+   * - ❄️ Dormant / At Risk: a real bond that has gone quiet for 14+ days
+   */
+  static classifyRelationship(score = 0, sentCount = 0, receivedCount = 0, lastInteraction = 0) {
+    const total = sentCount + receivedCount;
+    const finalScore = Math.round(score || 0);
+    const daysSince = lastInteraction
+      ? Math.max(0, Math.floor((Date.now() - lastInteraction) / 86400000))
+      : 0;
+
+    if (finalScore >= 8 && lastInteraction && daysSince >= 14) {
+      return {
+        id: 'dormant',
+        label: 'Dormant',
+        subLabel: `${daysSince}d quiet`,
+        emoji: '❄️',
+        desc: `A ${finalScore}-point bond has been quiet for ${daysSince} days`,
+        color: '#60A5FA',
+        badgeBg: 'rgba(96, 165, 250, 0.16)'
+      };
+    }
+
+    if (total === 0 || finalScore < 3) {
+      return {
+        id: 'new',
+        label: 'New',
+        emoji: '🌱',
+        desc: 'No meaningful interaction history yet',
+        color: '#71767B',
+        badgeBg: 'rgba(113, 118, 123, 0.15)'
+      };
+    }
+
+    const sentRatio = total > 0 ? (sentCount / total) * 100 : 50;
+    if (receivedCount > 0 && (sentRatio <= 38 || receivedCount >= sentCount * 1.6)) {
+      return {
+        id: 'top_supporter',
+        label: 'Top Supporter',
+        emoji: '🌟',
+        desc: 'They reply, mention, and show up for you most',
+        color: '#F59E0B',
+        badgeBg: 'rgba(245, 158, 11, 0.18)'
+      };
+    }
+    if (sentCount > 0 && (sentRatio >= 62 || sentCount >= receivedCount * 1.6)) {
+      return {
+        id: 'outbound_focus',
+        label: 'Outbound Focus',
+        emoji: '🎯',
+        desc: 'You initiate most of the interactions here',
+        color: '#F97316',
+        badgeBg: 'rgba(249, 115, 22, 0.18)'
+      };
+    }
+    if (sentCount > 0 && receivedCount > 0) {
+      return {
+        id: 'balanced',
+        label: 'Balanced Mutual',
+        emoji: '⚖️',
+        desc: 'Healthy back-and-forth dialogue',
+        color: '#00BA7C',
+        badgeBg: 'rgba(0, 186, 124, 0.18)'
+      };
+    }
+    return {
+      id: 'new',
       label: 'Acquaintance',
       emoji: '👋',
       desc: 'Occasional light interactions',
@@ -924,6 +1060,7 @@ class BondScoring {
       replySent: 8,
       replyReceived: 8,
       quote: 6,
+      repost: 5,
       mention: 5,
       like: 2,
       deepSyncExchange: 10

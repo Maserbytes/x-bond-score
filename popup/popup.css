@@ -1082,10 +1082,12 @@ body {
 
 #orbit-canvas {
   width: 100%;
-  max-width: 350px;
-  height: 350px;
+  max-width: 420px;
+  height: auto;
+  aspect-ratio: 1 / 1;
   border-radius: 12px;
   display: block;
+  cursor: default;
 }
 
 .orbit-legend {

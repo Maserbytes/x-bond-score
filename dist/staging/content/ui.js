@@ -1,5 +1,5 @@
 /**
- * BondScore for X - UI Injection & Score Card Component (v1.1.3)
+ * BondScore - UI Injection & Score Card Component (v1.4.0)
  * Renders badges inline with streaks, reciprocity radar, 30-day sparklines, VIP pins, and private notes.
  */
 
@@ -78,12 +78,50 @@ class BondUI {
   }
 
   /**
+   * Single source of truth for badge markup.
+   * `signature` lets the scanner skip re-writing identical content, which is
+   * what made Threads badges flicker on every DOM mutation after a like.
+   */
+  buildBadgeInner(scoreVal, tier, crm, user) {
+    const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
+    const trendClass = user.trend ? `trend-${user.trend}` : '';
+    const body = `
+          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
+          <span class="bond-emoji">${tier.emoji}</span>
+          <span class="bond-score-num">${scoreVal}</span>
+          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
+          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
+          ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
+        `;
+    return {
+      body,
+      html: `<span class="bond-badge-inner">${body}</span>`,
+      signature: [
+        user.isPinned ? 'pin' : '',
+        tier.id || tier.emoji || '',
+        scoreVal,
+        crm ? crm.id : '',
+        user.streakDays || 0,
+        trendSymbol
+      ].join('|')
+    };
+  }
+
+  /**
    * Injects a badge next to a user handle on tweets or profile headers.
    * Completely immune to async race duplication.
    */
   async injectBadge(containerEl, handle, isProfileHeader = false) {
     if (!containerEl || !handle) return;
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
+
+    // A profile badge from an older placement can survive a DOM redesign.
+    // Keep only the one in the intended container.
+    if (isProfileHeader) {
+      document.querySelectorAll(`.bond-badge-profile[data-bond-handle="${cleanHandle}"]`).forEach((old) => {
+        if (!containerEl.contains(old)) old.remove();
+      });
+    }
 
     // 1. Immediate synchronous deduplication: if badge(s) already exist, keep only 1 and exit
     const existingBadges = containerEl.querySelectorAll('.bond-badge');
@@ -138,8 +176,8 @@ class BondUI {
       const tier = BondScoring.getTier(user.currentScore);
       const scoreVal = Math.round(user.currentScore || 0);
 
-      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
       const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
       const badge = document.createElement('span');
@@ -149,19 +187,9 @@ class BondUI {
       badge.style.setProperty('--bond-color', tier.color);
       badge.style.setProperty('--bond-bg', tier.bg);
 
-      const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
-      const trendClass = user.trend ? `trend-${user.trend}` : '';
-
-      badge.innerHTML = `
-        <span class="bond-badge-inner">
-          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
-          <span class="bond-emoji">${tier.emoji}</span>
-          <span class="bond-score-num">${scoreVal}</span>
-          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
-          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
-          ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
-        </span>
-      `;
+      const rendered = this.buildBadgeInner(scoreVal, tier, crm, user);
+      badge.innerHTML = rendered.html;
+      badge.dataset.bondSig = rendered.signature;
 
       badge.addEventListener('click', (e) => {
         e.preventDefault();
@@ -245,23 +273,14 @@ class BondUI {
   }
 
   /**
-   * Immediately bumps the badge score and shows pulse animation with zero latency
+   * Gives instant feedback on an interaction.
+   * The number is intentionally left alone: guessing "+3" and then replacing it
+   * with the real recomputed score is what produced the Threads flicker.
    */
   optimisticBoost(handle, pointBoost = 4) {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
+    const badges = Array.from(document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`)).slice(0, 4);
     badges.forEach((b) => {
-      const scoreNumEl = b.querySelector('.bond-score-num');
-      const emojiEl = b.querySelector('.bond-emoji');
-      if (scoreNumEl) {
-        const cur = parseFloat(scoreNumEl.innerText) || 0;
-        const next = Math.min(100, Math.round(cur + pointBoost));
-        scoreNumEl.innerText = next;
-        const tier = BondScoring.getTier(next);
-        b.style.setProperty('--bond-color', tier.color);
-        b.style.setProperty('--bond-bg', tier.bg);
-        if (emojiEl) emojiEl.innerText = tier.emoji;
-      }
       b.classList.remove('bond-badge-bump');
       void b.offsetWidth;
       b.classList.add('bond-badge-bump');
@@ -274,7 +293,9 @@ class BondUI {
    */
   async refreshBadgesForUser(handle, shouldAnimate = false) {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const user = (await window.bondStorage.getUser(cleanHandle)) || {
+    // Force a storage read: a cached pre-interaction record can otherwise
+    // overwrite a freshly bumped badge with 0 a moment later.
+    const user = (await window.bondStorage.getUser(cleanHandle, true)) || {
       handle: cleanHandle,
       currentScore: 0,
       tier: 'dormant',
@@ -286,14 +307,15 @@ class BondUI {
 
     const tier = BondScoring.getTier(user.currentScore);
     const scoreVal = Math.round(user.currentScore || 0);
-    const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
+    const rendered = this.buildBadgeInner(scoreVal, tier, crm, user);
 
     const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
     const seenParents = new Set();
+    let changed = false;
     badges.forEach((b) => {
       if (b.parentElement) {
         if (seenParents.has(b.parentElement)) {
@@ -302,27 +324,27 @@ class BondUI {
         }
         seenParents.add(b.parentElement);
       }
-      b.style.setProperty('--bond-color', tier.color);
-      b.style.setProperty('--bond-bg', tier.bg);
-      b.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
-      const inner = b.querySelector('.bond-badge-inner');
-      if (inner) {
-        inner.innerHTML = `
-          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
-          <span class="bond-emoji">${tier.emoji}</span>
-          <span class="bond-score-num">${scoreVal}</span>
-          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
-          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
-          ${trendSymbol ? `<span class="bond-trend trend-${user.trend}">${trendSymbol}</span>` : ''}
-        `;
+      // Every DOM write on a scanned badge costs a repaint, so only touch the
+      // element when its rendered content actually differs.
+      if (b.dataset.bondSig !== rendered.signature) {
+        b.dataset.bondSig = rendered.signature;
+        b.style.setProperty('--bond-color', tier.color);
+        b.style.setProperty('--bond-bg', tier.bg);
+        b.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
+        const inner = b.querySelector('.bond-badge-inner');
+        if (inner) inner.innerHTML = rendered.body;
+        changed = true;
       }
-      if (shouldAnimate) {
+    });
+
+    if (shouldAnimate && changed) {
+      badges.forEach((b) => {
         b.classList.remove('bond-badge-bump');
         void b.offsetWidth;
         b.classList.add('bond-badge-bump');
         b.addEventListener('animationend', () => b.classList.remove('bond-badge-bump'), { once: true });
-      }
-    });
+      });
+    }
 
     // Also update follow relationship badge on profile header
     await this.updateProfileFollowBadge(cleanHandle, user.signals);
@@ -340,6 +362,8 @@ class BondUI {
 
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
     const currentUser = await window.bondStorage.getCurrentUser();
+    // Deep Mode uses X's own in-tab archive search; keep it off other networks.
+    const isXHost = !window.BondPlatforms || window.BondPlatforms.current().id === 'x';
     const user = (await window.bondStorage.getUser(cleanHandle)) || {
       handle: cleanHandle,
       displayName: cleanHandle,
@@ -359,8 +383,8 @@ class BondUI {
     const scoreVal = Math.round(scoringResult.score || 0);
     const reciprocity = scoringResult.reciprocity;
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     const crm = scoringResult.crmStatus || user.crmStatusData || BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0);
 
     const dmEvents = events.filter(e => e.type && e.type.startsWith('dm_'));
@@ -530,8 +554,8 @@ class BondUI {
             <div class="bond-stat-lbl">📥 Received</div>
           </div>
           <div class="bond-stat-item">
-            <div class="bond-stat-val">${(user.stats.likes || 0) + (user.stats.quotes || 0)}</div>
-            <div class="bond-stat-lbl">❤️ Likes & Quotes</div>
+            <div class="bond-stat-val">${(user.stats.likes || 0) + (user.stats.reposts || 0) + (user.stats.quotes || 0)}</div>
+            <div class="bond-stat-lbl">❤️ Likes · 🔁 Reposts</div>
           </div>
           <div class="bond-stat-item">
             <div class="bond-stat-val">${user.streakDays || 0}d</div>
@@ -549,6 +573,7 @@ class BondUI {
         </div>
 
         <!-- Deep Mode Section -->
+        ${isXHost ? `
         <div class="bond-deep-section">
           <div class="bond-deep-header">
             <div>
@@ -566,6 +591,7 @@ class BondUI {
             <span>🔍 Run Deep Analysis</span>
           </button>
         </div>
+        ` : ''}
 
         <!-- Personal Relationship History Ledger -->
         <div class="bond-timeline-preview">
@@ -649,34 +675,36 @@ class BondUI {
     const progressFill = modal.querySelector('.bond-deep-progress-fill');
     const statusText = modal.querySelector('.bond-deep-status-text');
 
-    deepBtn.addEventListener('click', async () => {
-      try {
-        deepBtn.disabled = true;
-        deepBtn.classList.add('loading');
-        progressBar.style.display = 'block';
-        statusText.style.display = 'block';
+    if (deepBtn && progressBar && progressFill && statusText) {
+      deepBtn.addEventListener('click', async () => {
+        try {
+          deepBtn.disabled = true;
+          deepBtn.classList.add('loading');
+          progressBar.style.display = 'block';
+          statusText.style.display = 'block';
 
-        const currentUser = await window.bondStorage.getCurrentUser();
-        await window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, ({ percent, stage, itemsFound }) => {
-          progressFill.style.width = `${percent}%`;
-          statusText.innerText = `${stage} (${itemsFound || 0} found)`;
-        });
+          const currentUser = await window.bondStorage.getCurrentUser();
+          await window.deepAnalyzer.runAnalysis(currentUser, cleanHandle, ({ percent, stage, itemsFound }) => {
+            progressFill.style.width = `${percent}%`;
+            statusText.innerText = `${stage} (${itemsFound || 0} found)`;
+          });
 
-        deepBtn.disabled = false;
-        deepBtn.classList.remove('loading');
-        deepBtn.innerHTML = `<span>✓ Deep Analysis Complete</span>`;
-        setTimeout(() => {
-          if (this.activeModal) {
-            this.updateModalContent(cleanHandle);
-          }
-        }, 700);
-      } catch (err) {
-        console.error('[BondScore] Deep analysis error:', err);
-        deepBtn.disabled = false;
-        deepBtn.classList.remove('loading');
-        statusText.innerText = 'Analysis incomplete. Click to retry.';
-      }
-    });
+          deepBtn.disabled = false;
+          deepBtn.classList.remove('loading');
+          deepBtn.innerHTML = `<span>✓ Deep Analysis Complete</span>`;
+          setTimeout(() => {
+            if (this.activeModal) {
+              this.updateModalContent(cleanHandle);
+            }
+          }, 700);
+        } catch (err) {
+          console.error('[BondScore] Deep analysis error:', err);
+          deepBtn.disabled = false;
+          deepBtn.classList.remove('loading');
+          statusText.innerText = 'Analysis incomplete. Click to retry.';
+        }
+      });
+    }
   }
 
   renderTimelineItems(items) {
@@ -810,7 +838,6 @@ class BondUI {
           <span class="bond-dm-score">${score}</span>
         </span>
         ${conv.dailyStreak > 1 ? `<span class="bond-status-pill bond-streak-pill" title="Daily Streak">🔥${conv.dailyStreak}d</span>` : ''}
-        ${conv.waitingForUserReply ? `<span class="bond-status-pill bond-waiting-pill" title="Waiting for your reply">⏳ Reply</span>` : ''}
         ${conv.isFading ? `<span class="bond-status-pill bond-cooling-pill" title="High-bond chat cooling off">🧊 Cold</span>` : ''}
       `;
     }
@@ -825,7 +852,7 @@ class BondUI {
         this.openDmScoreCard(cleanConvId, badge);
       });
 
-      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"]') || convElement;
+      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"], [class*="min-w-0"][class*="flex-col"]') || convElement;
       targetContainer.appendChild(badge);
     }
 
@@ -840,6 +867,12 @@ class BondUI {
     const cleanConvId = convId.toLowerCase().trim();
     const settings = await window.bondStorage.getSettings();
     if (settings.showBadgesInDMs === false || settings.trackDirectMessages === false) return;
+
+    // XChat reuses the header node across conversations. Drop pills belonging
+    // to a previously opened thread so only the active conversation is shown.
+    headerElement.querySelectorAll('.bond-dm-header-pill').forEach((oldPill) => {
+      if (oldPill.getAttribute('data-bond-dm-header') !== cleanConvId) oldPill.remove();
+    });
 
     let pill = headerElement.querySelector(`.bond-dm-header-pill[data-bond-dm-header="${cleanConvId}"]`);
     const conv = (await window.bondStorage.getDmConversation(cleanConvId)) || {
@@ -878,7 +911,6 @@ class BondUI {
           <span class="bond-header-pill-dot">•</span>
           <span class="bond-header-pill-meta">${replyRate}% Reply</span>
           ${conv.dailyStreak > 1 ? `<span class="bond-header-pill-dot">•</span><span class="bond-header-pill-streak">🔥 ${conv.dailyStreak}d</span>` : ''}
-          ${conv.waitingForUserReply ? `<span class="bond-header-pill-waiting" title="Awaiting your reply">⏳</span>` : ''}
         </div>
       `;
     }
@@ -894,8 +926,12 @@ class BondUI {
         this.openDmScoreCard(cleanConvId, pill);
       });
 
-      const actionsContainer = headerElement.querySelector('div[style*="flex-direction: row"], [role="group"]') || headerElement;
-      actionsContainer.parentNode ? actionsContainer.parentNode.insertBefore(pill, actionsContainer) : headerElement.appendChild(pill);
+      const actionsContainer = headerElement.querySelector('div[style*="flex-direction: row"], [role="group"]');
+      if (actionsContainer && actionsContainer.parentNode) {
+        actionsContainer.parentNode.insertBefore(pill, actionsContainer);
+      } else {
+        headerElement.appendChild(pill);
+      }
     }
 
     pill.innerHTML = pillHtml;
@@ -997,7 +1033,7 @@ class BondUI {
               ${conv.isDying ? `
                 <div class="bond-warning-banner" style="margin-top: 8px;">
                   <span class="bond-warning-icon">⚠️</span>
-                  <div><strong>Chat is going quiet!</strong> Low activity in the past 14 days.</div>
+                  <div><strong>Chat is going quiet!</strong> Not enough recent messages to stay Active.</div>
                 </div>
               ` : ''}
             </div>
@@ -1120,13 +1156,6 @@ class BondUI {
               <span class="bond-dm-metric-label">🔥 Daily Streak</span>
               <strong class="bond-dm-metric-val">${conv.dailyStreak || 0}d</strong>
               <span class="bond-dm-metric-sub">Consecutive days</span>
-            </div>
-            <div class="bond-dm-metric-box">
-              <span class="bond-dm-metric-label">⏳ Reply State</span>
-              <strong class="bond-dm-metric-val ${conv.waitingForUserReply ? 'state-waiting' : 'state-caughtup'}">
-                ${conv.waitingForUserReply ? 'Waiting on You' : 'Caught Up ✅'}
-              </strong>
-              <span class="bond-dm-metric-sub">${conv.waitingForUserReply ? `Waiting ${conv.formattedWaitingDuration || ''}` : 'No pending replies'}</span>
             </div>
           </div>
 

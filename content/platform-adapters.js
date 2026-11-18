@@ -150,6 +150,8 @@
       this.pollTimer = setInterval(() => {
         if (location.href !== this.lastScanUrl) {
           this.lastScanUrl = location.href;
+          // Opening a reply composer rewrites the URL to the post's permalink,
+          // so a URL change must not drop the pending reply.
           this.scan();
         }
       }, 900);
@@ -282,9 +284,78 @@
         ...extra
       }, this.currentUser);
       if (result && window.bondUI && window.bondUI.refreshBadgesForUser) {
-        window.bondUI.refreshBadgesForUser(target, true).catch(() => {});
+        // The pulse already played on click; this write must be silent or the
+        // badge repaints twice and visibly flickers.
+        window.bondUI.refreshBadgesForUser(target, false).catch(() => {});
       }
       return result;
+    }
+
+    /**
+     * Remembers which author a reply/repost action belongs to. Menus and
+     * composers render outside the post subtree, so the follow-up click has to
+     * be attributed to the post that started it.
+     */
+    holdPending(kind, handle, key, trigger = null) {
+      this.pending = { kind, handle, key, trigger, at: Date.now() };
+    }
+
+    takePending(kind, maxAgeMs = 2 * 60 * 1000) {
+      const pending = this.pending;
+      if (!pending || pending.kind !== kind) return null;
+      this.pending = null;
+      if (Date.now() - pending.at > maxAgeMs) return null;
+      return pending;
+    }
+
+    /** Composer submit controls are text buttons ("Post"/"Reply"), not icons. */
+    submitControl(target) {
+      if (!target || !target.closest) return null;
+      // A post's own action bar can read "Reply" too, so only controls outside
+      // a post card count as the composer's publish button.
+      if (target.closest('[data-pressable-container="true"], article, [data-testid^="feedItem-"], [data-testid^="postThreadItem-"]')) {
+        return null;
+      }
+      const btn = target.closest('button, [role="button"]');
+      if (!btn) return null;
+      if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return null;
+      const text = cleanText(btn).replace(/\s+/g, ' ').trim().toLowerCase();
+      return /^(post|reply|send)$/.test(text) ? btn : null;
+    }
+
+    /**
+     * The post a composer is answering: an open reply composer renders the
+     * parent post above the editor, so its author can be read straight from
+     * the DOM instead of relying on the click that opened it.
+     */
+    composerTarget(btn) {
+      // Only look inside the composer itself; the feed behind it is full of
+      // posts that have nothing to do with this reply.
+      const root = btn.closest('[role="dialog"], [data-testid="composePostView"], form');
+      if (!root) return null;
+      const host = root.querySelector(
+        '[data-pressable-container="true"], article, [data-testid^="postThreadItem-by-"], [data-testid^="feedItem-by-"]'
+      );
+      if (host && !host.contains(btn)) {
+        const author = this.authorFor(host);
+        if (author) return { handle: author.handle, key: this.postKey(host) };
+      }
+      return null;
+    }
+
+    /** Prefers the click that opened the composer, then the visible parent. */
+    confirmReply(btn) {
+      const pending = this.takePending('reply');
+      if (pending) return { handle: pending.handle, key: pending.key };
+      return this.composerTarget(btn);
+    }
+
+    /** Only a confirming menu item counts, never "Undo repost". */
+    repostMenuControl(target) {      if (!target || !target.closest) return null;
+      const el = target.closest('[role="menuitem"], [role="menuitemradio"], button, [role="button"]');
+      if (!el) return null;
+      const text = cleanText(el).replace(/\s+/g, ' ').trim().toLowerCase();
+      return /^repost( post)?$/.test(text) ? el : null;
     }
 
     attachGenericClickCapture() {
@@ -292,6 +363,10 @@
       this.attached = true;
       document.addEventListener('click', (e) => {
         try {
+          // Each adapter may only act on its own network; otherwise a click on
+          // one site would be recorded by the other platform's ledger.
+          const current = window.BondPlatforms ? window.BondPlatforms.current() : null;
+          if (current && current.id !== this.id) return;
           if (window.BondPlatforms) {
             const settings = platformSettings();
             if (!window.BondPlatforms.isEnabled(settings, this.id)) return;
@@ -444,8 +519,8 @@
         for (const actionEl of post.querySelectorAll('[role="button"], button')) {
           const state = cleanText(actionEl.querySelector('svg title, title')).toLowerCase();
           if (/^(unlike|liked|reposted)$/.test(state)) {
-            const type = /like/.test(state) ? 'like' : 'quote';
-            await this.record(author.handle, type, { tweetId: this.postKey(post), isMutual: false, direction: 'outbound' });
+            const type = /like/.test(state) ? 'like' : 'repost';
+            await this.record(author.handle, type, { tweetId: `${this.postKey(post)}#${type}`, isMutual: false, direction: 'outbound' });
           }
         }
 
@@ -501,6 +576,37 @@
     onClick(e) {
       const target = e.target;
       if (!target || !target.closest) return;
+
+      // 1. Composer submit: the reply was actually published.
+      if (this.submitControl(target)) {
+        const reply = this.confirmReply(target);
+        if (reply) {
+          this.record(reply.handle, 'reply_sent', {
+            tweetId: `${reply.key}#reply`, isMutual: false, direction: 'outbound'
+          });
+        }
+        return;
+      }
+
+      // 2. A "Repost" choice in the menu that the trigger opens. The trigger
+      //    carries the very same label, so a click only confirms the repost
+      //    when it lands on a different control than the one that opened it;
+      //    otherwise it falls through and arms the pending state below.
+      const repostControl = this.repostMenuControl(target);
+      if (repostControl) {
+        const pending = this.pending;
+        if (pending && pending.kind === 'repost' && pending.trigger !== repostControl) {
+          const confirmed = this.takePending('repost');
+          if (confirmed) {
+            if (window.bondUI) window.bondUI.optimisticBoost(confirmed.handle, 3);
+            this.record(confirmed.handle, 'repost', {
+              tweetId: `${confirmed.key}#repost`, isMutual: false
+            });
+          }
+          return;
+        }
+      }
+
       const post = target.closest('article, div[data-pressable-container="true"]') || this.findPostAncestor(target);
       if (!post) return;
       const author = this.authorFor(post);
@@ -517,10 +623,13 @@
           /\b(unlike|liked|likes)\b/.test(label);
         if (!active) {
           if (window.bondUI) window.bondUI.optimisticBoost(author.handle, 3);
-          this.record(author.handle, 'like', { tweetId: this.postKey(post), isMutual: false });
+          this.record(author.handle, 'like', { tweetId: `${this.postKey(post)}#like`, isMutual: false });
         }
       } else if (/\brepost\b|\breposted\b/.test(label)) {
-        this.record(author.handle, 'quote', { tweetId: this.postKey(post), isMutual: false });
+        // Threads opens a Repost / Quote menu, so hold until Repost is chosen.
+        this.holdPending('repost', author.handle, this.postKey(post), actionEl);
+      } else if (/\bcomment\b|\breply\b/.test(label)) {
+        this.holdPending('reply', author.handle, this.postKey(post), actionEl);
       }
     }
 
@@ -534,8 +643,15 @@
     }
 
     postKey(post) {
+      // A stable per-post id: the permalink's post id, then the timestamp,
+      // then the author handle. Falls back so it never returns a bare prefix.
+      const link = Array.from(post.querySelectorAll('a[href*="/post/"]'))
+        .map((a) => a.getAttribute('href') || '')
+        .find((h) => /\/post\/[^/?#]+/.test(h));
+      const postId = link ? (link.match(/\/post\/([^/?#]+)/) || [])[1] : '';
       const time = post.querySelector('time[datetime]');
-      return `threads_${normalizeHandle((post.querySelector('a[href^="/@"]') || {}).getAttribute?.('href') || '')}_${time ? time.getAttribute('datetime') : ''}`;
+      const handle = normalizeHandle((post.querySelector('a[href^="/@"]') || {}).getAttribute?.('href') || '');
+      return `threads_${postId || (time ? time.getAttribute('datetime') : '') || handle}`;
     }
 
     async scanDms() {
@@ -690,8 +806,8 @@
         // Backfill already-active like/repost buttons (state lives in aria-pressed).
         for (const btn of post.querySelectorAll('[data-testid="likeBtn"], [data-testid="repostBtn"]')) {
           if (btn.getAttribute('aria-pressed') !== 'true') continue;
-          const type = (btn.getAttribute('data-testid') || '').includes('like') ? 'like' : 'quote';
-          await this.record(author.handle, type, { tweetId: this.postKey(post), isMutual: false, direction: 'outbound' });
+          const type = (btn.getAttribute('data-testid') || '').includes('like') ? 'like' : 'repost';
+          await this.record(author.handle, type, { tweetId: `${this.postKey(post)}#${type}`, isMutual: false, direction: 'outbound' });
         }
 
         if (author.avatarUrl) {
@@ -745,6 +861,36 @@
     onClick(e) {
       const target = e.target;
       if (!target || !target.closest) return;
+
+      // 1. Composer submit: the reply was actually published.
+      if (this.submitControl(target)) {
+        const reply = this.confirmReply(target);
+        if (reply) {
+          this.record(reply.handle, 'reply_sent', {
+            tweetId: `${reply.key}#reply`, isMutual: false, direction: 'outbound'
+          });
+        }
+        return;
+      }
+
+      // 2. A "Repost" choice in the menu that the repost button opens. Only a
+      //    click on a different control than the one that opened it confirms;
+      //    otherwise it falls through and arms the pending state below.
+      const repostControl = this.repostMenuControl(target);
+      if (repostControl) {
+        const pending = this.pending;
+        if (pending && pending.kind === 'repost' && pending.trigger !== repostControl) {
+          const confirmed = this.takePending('repost');
+          if (confirmed) {
+            if (window.bondUI) window.bondUI.optimisticBoost(confirmed.handle, 3);
+            this.record(confirmed.handle, 'repost', {
+              tweetId: `${confirmed.key}#repost`, isMutual: false
+            });
+          }
+          return;
+        }
+      }
+
       const post = target.closest('[data-testid^="feedItem-by-"], [data-testid^="postThreadItem-by-"], [data-testid^="feedItem-"]') ||
         this.findPostAncestor(target);
       if (!post) return;
@@ -758,10 +904,16 @@
         const pressed = btn.getAttribute('aria-pressed') === 'true';
         if (!pressed) {
           if (window.bondUI) window.bondUI.optimisticBoost(author.handle, 3);
-          this.record(author.handle, 'like', { tweetId: this.postKey(post), isMutual: false });
+          this.record(author.handle, 'like', { tweetId: `${this.postKey(post)}#like`, isMutual: false });
         }
       } else if (id.includes('repost')) {
-        this.record(author.handle, 'quote', { tweetId: this.postKey(post), isMutual: false });
+        const pressed = btn.getAttribute('aria-pressed') === 'true';
+        // A repost button opens a menu first; hold until the user confirms.
+        // An already-reposted control reads "Undo repost" - never arm for that.
+        const undo = /undo|unrepost|remove/.test(`${id} ${cleanText(btn)}`.toLowerCase());
+        if (!pressed && !undo) this.holdPending('repost', author.handle, this.postKey(post), btn);
+      } else if (id.includes('reply') || id.includes('comment')) {
+        this.holdPending('reply', author.handle, this.postKey(post), btn);
       }
     }
 
@@ -776,10 +928,16 @@
     }
 
     postKey(post) {
+      // Bluesky exposes the post URI on the item when available; otherwise use
+      // the permalink rkey, so two posts by the same author never collide.
       const uri = post.getAttribute('data-uri') || '';
+      const link = Array.from(post.querySelectorAll('a[href*="/post/"]'))
+        .map((a) => a.getAttribute('href') || '')
+        .find((h) => /\/post\/[^/?#]+/.test(h));
+      const rkey = link ? (link.match(/\/post\/([^/?#]+)/) || [])[1] : '';
       const testid = post.getAttribute('data-testid') || '';
       const time = post.querySelector('time[datetime]');
-      return `bsky_${uri || testid}_${time ? time.getAttribute('datetime') : ''}`;
+      return `bsky_${uri || rkey || testid}${time ? '_' + time.getAttribute('datetime') : ''}`;
     }
 
     async scanDms() {

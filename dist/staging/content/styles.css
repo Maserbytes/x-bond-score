@@ -1,5 +1,5 @@
 /**
- * BondScore for X - Styling (v1.1.3)
+ * BondScore - Styling (v1.4.0)
  * Refined Twitter/X design system: dark, dim, and light modes.
  */
 
@@ -1169,6 +1169,14 @@
   border-style: solid;
 }
 
+.bond-energy-hyperactive {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.40);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.30);
+}
+
+.bond-energy-energetic,
 .bond-energy-buzzing {
   color: #34d399;
   background: rgba(16, 185, 129, 0.16);
@@ -1182,18 +1190,20 @@
   border-color: rgba(59, 130, 246, 0.35);
 }
 
-.bond-energy-chill {
+.bond-energy-steady {
   color: #fbbf24;
   background: rgba(245, 158, 11, 0.16);
   border-color: rgba(245, 158, 11, 0.35);
 }
 
-.bond-energy-cooling {
+.bond-energy-chill {
   color: #fb923c;
   background: rgba(249, 115, 22, 0.16);
   border-color: rgba(249, 115, 22, 0.35);
 }
 
+.bond-energy-dying,
+.bond-energy-cooling,
 .bond-energy-inactive {
   color: #94a3b8;
   background: rgba(100, 116, 139, 0.14);
@@ -1572,4 +1582,12 @@
   color: var(--bond-card-subtext, #71767b);
   padding: 10px 4px;
 }
+
+
+
+/* Bluesky-only compact badge: keep it short so long handles have room. */
+.bond-badge-compact .bond-badge-inner { gap: 2px; padding: 1px 4px; font-size: 9px; line-height: 1; }
+.bond-badge-compact .bond-crm-pill,
+.bond-badge-compact .bond-streak-tag,
+.bond-badge-compact .bond-trend { display: none; }
 

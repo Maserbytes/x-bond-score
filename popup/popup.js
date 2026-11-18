@@ -8,6 +8,7 @@ let cachedUsers = [];
 let currentFilter = 'all';
 let currentPlatformFilter = 'all'; // 'all' | 'x' | 'threads' | 'bluesky'
 let currentUsername = 'you';
+let currentAvatarUrl = '';
 let currentTheme = 'system'; // 'system' | 'dark' | 'light'
 let leaderboardRefreshTimer = null;
 let leaderboardLoadGeneration = 0;
@@ -217,6 +218,7 @@ async function setupAccountSwitcher() {
   if (avatarMiniEl) {
     const activeMeta = accounts.find(a => a.handle === activeAccount);
     if (activeMeta && activeMeta.avatarUrl) {
+      currentAvatarUrl = activeMeta.avatarUrl;
       avatarMiniEl.innerHTML = `<img src="${activeMeta.avatarUrl}" alt="${activeAccount}">`;
     } else {
       avatarMiniEl.innerText = activeAccount ? activeAccount.charAt(0).toUpperCase() : '👤';
@@ -351,6 +353,12 @@ async function loadCurrentUserTag() {
   } else {
     if (userTag) userTag.innerText = 'Browse a supported network to auto-detect';
   }
+  // The orbit center is you: resolve your own avatar once for the canvas.
+  try {
+    const { accounts } = await window.bondStorage.getKnownAccounts();
+    const meta = accounts.find((a) => a.handle === currentUsername);
+    if (meta && meta.avatarUrl) currentAvatarUrl = meta.avatarUrl;
+  } catch (e) {}
 }
 
 async function loadLeaderboard() {
@@ -598,58 +606,273 @@ function setupSearchHandler() {
 /**
  * 🪐 Mutuals Orbit Canvas Rendering (Solar System)
  */
+const ORBIT_TIERS = [
+  { id: 'core', min: 70, color: '#f91880', share: 0.2 },
+  { id: 'close', min: 35, color: '#1d9bf0', share: 0.32 },
+  { id: 'casual', min: 0, color: '#794bc4', share: 0.45 }
+];
+
+let orbitHitAreas = [];
+let orbitHoverHandle = null;
+let orbitGeometry = null;
+
+function orbitGroups() {
+  const users = cachedUsers
+    .filter(matchesPlatform)
+    .filter((u) => (u.currentScore || 0) > 0)
+    .sort((a, b) => (b.currentScore || 0) - (a.currentScore || 0));
+  return {
+    core: users.filter((u) => u.currentScore >= 70),
+    close: users.filter((u) => u.currentScore >= 35 && u.currentScore < 70),
+    casual: users.filter((u) => u.currentScore < 35)
+  };
+}
+
+/**
+ * Capacity-aware geometry. Each ring grows until it can seat its population
+ * with breathing room, and the overflow is reported instead of piled up.
+ */
+function computeOrbitGeometry(size) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const scale = size / 420;
+  const groups = orbitGroups();
+  const sunRadius = Math.round(size * 0.088);
+  const maxRadius = size / 2 - Math.round(20 * scale);
+  const gap = Math.round(7 * scale);
+
+  const rings = [];
+  let previousEdge = sunRadius + Math.round(14 * scale);
+
+  ORBIT_TIERS.forEach((tier) => {
+    const all = groups[tier.id] || [];
+    const diameter = Math.round(
+      (tier.id === 'core' ? 32 : tier.id === 'close' ? 26 : 21) * scale
+    );
+    const slot = diameter + gap;
+    const fitsAtMax = Math.max(1, Math.floor((Math.PI * 2 * maxRadius) / slot));
+    let visible = all.slice(0, fitsAtMax);
+    const needed = (slot * visible.length) / (Math.PI * 2);
+    let radius = Math.max(tier.share * size, needed, previousEdge + diameter / 2 + gap);
+    radius = Math.min(radius, maxRadius);
+    const fitsHere = Math.max(1, Math.floor((Math.PI * 2 * radius) / slot));
+    if (visible.length > fitsHere) visible = visible.slice(0, fitsHere);
+
+    rings.push({ tier, radius, diameter, users: visible, hidden: all.length - visible.length });
+    previousEdge = radius + diameter / 2;
+  });
+
+  return {
+    size,
+    cx,
+    cy,
+    sunRadius,
+    rings,
+    total: groups.core.length + groups.close.length + groups.casual.length
+  };
+}
+
 function renderOrbitCanvas() {
   const canvas = document.getElementById('orbit-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  const centerX = w / 2;
-  const centerY = h / 2;
+  const size = Math.max(240, Math.round(canvas.clientWidth || canvas.width || 370));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const backing = Math.round(size * dpr);
+  if (canvas.width !== backing || canvas.height !== backing) {
+    canvas.width = backing;
+    canvas.height = backing;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const isLight = isLightMode();
+  const geo = computeOrbitGeometry(size);
+  orbitGeometry = geo;
 
-  // Clear & Canvas Background
   ctx.fillStyle = isLight ? '#f8fafc' : '#05070a';
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, size, size);
+  if (!isLight) drawStarfield(ctx, size, size, 60);
+  else drawLightGrid(ctx, size, size);
 
-  if (!isLight) {
-    // Background stars for dark mode
-    drawStarfield(ctx, w, h, 60);
-  } else {
-    // Subtle constellation grid dots for light mode
-    drawLightGrid(ctx, w, h);
-  }
+  geo.rings.forEach((ring) => drawOrbitRing(ctx, geo.cx, geo.cy, ring.radius, ring.tier.color));
 
-  // Orbit Radii
-  const rCore = 52;
-  const rClose = 100;
-  const rCasual = 150;
+  drawCenterSun(ctx, geo.cx, geo.cy, geo.sunRadius, currentUsername);
 
-  // Draw concentric orbit tracks
-  drawOrbitRing(ctx, centerX, centerY, rCasual, '#794bc4', 'Mutuals & Acquaintances (1-34)');
-  drawOrbitRing(ctx, centerX, centerY, rClose, '#1d9bf0', 'Close Conversants (35-69)');
-  drawOrbitRing(ctx, centerX, centerY, rCore, '#f91880', 'Core Bonds (70+)');
+  orbitHitAreas = [];
+  geo.rings.forEach((ring, ringIndex) => {
+    const count = ring.users.length;
+    if (!count) return;
+    const step = (Math.PI * 2) / count;
+    const offset = -Math.PI / 2 + ringIndex * (Math.PI / 9);
+    ring.users.forEach((u, i) => {
+      const angle = offset + i * step;
+      const px = geo.cx + Math.cos(angle) * ring.radius;
+      const py = geo.cy + Math.sin(angle) * ring.radius;
+      drawOrbitPlanet(ctx, px, py, ring.diameter, ring.tier.color, u);
+      orbitHitAreas.push({
+        x: px, y: py, r: ring.diameter / 2 + 2, user: u, color: ring.tier.color
+      });
+    });
+  });
 
-  // Draw Sun / Center User
-  drawCenterSun(ctx, centerX, centerY, currentUsername);
-
-  // Group mutuals by inclusive tier rings - all tracked mutuals appear and persist!
-  const coreUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 70);
-  const closeUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
-  const casualUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) < 35);
-
-  distributePlanetsOnRing(ctx, coreUsers, centerX, centerY, rCore, '#f91880');
-  distributePlanetsOnRing(ctx, closeUsers, centerX, centerY, rClose, '#1d9bf0');
-  distributePlanetsOnRing(ctx, casualUsers, centerX, centerY, rCasual, '#794bc4');
-
-  // If no mutuals, draw empty state tip
-  if (cachedUsers.filter(matchesPlatform).length === 0) {
-    ctx.fillStyle = isLight ? '#64748b' : '#71767b';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = isLight ? '#64748b' : '#71767b';
+  if (geo.total === 0) {
     ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Interact with accounts on a supported network to populate your orbit', centerX, centerY + 90);
+    ctx.fillText('Interact with accounts on a supported network to populate your orbit', geo.cx, size - 16);
+  } else {
+    const hidden = geo.rings.reduce((sum, ring) => sum + ring.hidden, 0);
+    if (hidden > 0) {
+      ctx.font = '10px sans-serif';
+      ctx.fillText(`+${hidden} more in your CRM`, geo.cx, size - 8);
+    }
   }
+
+  bindOrbitHover(canvas);
+  drawOrbitTooltip(ctx, size);
+}
+
+/** Rounded capsule used by score chips, tooltips and export cards. */
+function roundRectPath(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function drawOrbitPlanet(ctx, px, py, diameter, color, user, opts = {}) {
+  const r = diameter / 2;
+  const isLight = isLightMode();
+  const showChip = opts.chip !== false;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px, py, r + Math.max(1.5, r * 0.09), 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  const pfp = getLoadedPfp(user.avatarUrl, queueOrbitCanvasRender);
+  if (pfp) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(pfp, px - r, py - r, r * 2, r * 2);
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = isLight ? '#e2e8f0' : '#16181c';
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.font = `bold ${Math.max(9, Math.round(r))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((user.displayName || user.handle || 'X').charAt(0).toUpperCase(), px, py);
+  }
+
+  if (showChip) {
+    const label = String(Math.round(user.currentScore || 0));
+    const fontSize = Math.max(6, Math.round(diameter * 0.36));
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    const chipW = Math.max(fontSize + 5, ctx.measureText(label).width + 7);
+    const chipH = fontSize + 4;
+    const chipX = px + r * 0.7;
+    const chipY = py + r * 0.7;
+    roundRectPath(ctx, chipX - chipW / 2, chipY - chipH / 2, chipW, chipH, chipH / 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = isLight ? '#ffffff' : '#05070a';
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, chipX, chipY + 0.5);
+  }
+
+  ctx.restore();
+}
+
+function bindOrbitHover(canvas) {
+  if (canvas.dataset.orbitHoverBound === 'true') return;
+  canvas.dataset.orbitHoverBound = 'true';
+
+  const locate = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width) return null;
+    const scale = (orbitGeometry ? orbitGeometry.size : rect.width) / rect.width;
+    const x = (event.clientX - rect.left) * scale;
+    const y = (event.clientY - rect.top) * scale;
+    return orbitHitAreas.find((a) => Math.hypot(a.x - x, a.y - y) <= a.r) || null;
+  };
+
+  canvas.addEventListener('mousemove', (event) => {
+    if (!orbitHitAreas.length) return;
+    const hit = locate(event);
+    const handle = hit ? hit.user.handle : null;
+    if (handle === orbitHoverHandle) return;
+    orbitHoverHandle = handle;
+    renderOrbitCanvas();
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (orbitHoverHandle === null) return;
+    orbitHoverHandle = null;
+    renderOrbitCanvas();
+  });
+}
+
+function drawOrbitTooltip(ctx, size) {
+  if (!orbitHoverHandle) return;
+  const hit = orbitHitAreas.find((a) => a.user.handle === orbitHoverHandle);
+  if (!hit) return;
+  const user = hit.user;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(hit.x, hit.y, hit.r + 3, 0, Math.PI * 2);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const title = `@${user.handle}`;
+  const tier = BondScoring.getTier(user.currentScore || 0);
+  const subtitle = `${Math.round(user.currentScore || 0)} · ${tier.name}${user.streakDays > 1 ? ` · ${user.streakDays}d streak` : ''}`;
+
+  ctx.font = 'bold 11px sans-serif';
+  const titleW = ctx.measureText(title).width;
+  ctx.font = '10px sans-serif';
+  const subW = ctx.measureText(subtitle).width;
+
+  const padX = 9;
+  const boxW = Math.min(size - 12, Math.max(titleW, subW) + padX * 2);
+  const boxH = 36;
+  const boxX = Math.min(size - boxW - 6, Math.max(6, hit.x - boxW / 2));
+  const above = hit.y > size / 2;
+  const boxY = above ? hit.y - hit.r - boxH - 10 : hit.y + hit.r + 10;
+
+  roundRectPath(ctx, boxX, boxY, boxW, boxH, 9);
+  ctx.fillStyle = 'rgba(9, 14, 23, 0.94)';
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+  ctx.stroke();
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText(title, boxX + padX, boxY + 13);
+  ctx.fillStyle = '#9aa4b2';
+  ctx.font = '10px sans-serif';
+  ctx.fillText(subtitle, boxX + padX, boxY + 26);
+  ctx.restore();
 }
 
 function drawLightGrid(ctx, w, h) {
@@ -676,7 +899,7 @@ function drawStarfield(ctx, w, h, count) {
   ctx.globalAlpha = 1.0;
 }
 
-function drawOrbitRing(ctx, cx, cy, radius, color, label) {
+function drawOrbitRing(ctx, cx, cy, radius, color) {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -688,31 +911,45 @@ function drawOrbitRing(ctx, cx, cy, radius, color, label) {
   ctx.restore();
 }
 
-function drawCenterSun(ctx, cx, cy, username) {
+/** The gravity center is always you: your own avatar, ringed in gold. */
+function drawCenterSun(ctx, cx, cy, radius, username) {
+  const isLight = isLightMode();
   ctx.save();
 
-  // Outer glow
-  const grad = ctx.createRadialGradient(cx, cy, 6, cx, cy, 26);
-  grad.addColorStop(0, '#ffd400');
-  grad.addColorStop(0.5, 'rgba(255, 122, 0, 0.4)');
-  grad.addColorStop(1, 'rgba(255, 122, 0, 0)');
-  ctx.fillStyle = grad;
+  const glow = ctx.createRadialGradient(cx, cy, radius * 0.55, cx, cy, radius * 2.1);
+  glow.addColorStop(0, 'rgba(255, 200, 0, 0.42)');
+  glow.addColorStop(0.6, 'rgba(255, 122, 0, 0.16)');
+  glow.addColorStop(1, 'rgba(255, 122, 0, 0)');
+  ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+  ctx.arc(cx, cy, radius * 2.1, 0, Math.PI * 2);
   ctx.fill();
 
-  // Core sphere
-  ctx.fillStyle = '#ff7a00';
   ctx.beginPath();
-  ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+  ctx.arc(cx, cy, radius + 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffc400';
   ctx.fill();
 
-  // Text
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 9px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('YOU', cx, cy);
+  const pfp = getLoadedPfp(currentAvatarUrl, queueOrbitCanvasRender);
+  if (pfp) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(pfp, cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = isLight ? '#0f172a' : '#16181c';
+    ctx.fill();
+    ctx.fillStyle = '#ffc400';
+    ctx.font = `bold ${Math.round(radius * 0.8)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const initial = (username && username !== 'you' ? username : 'you').charAt(0).toUpperCase();
+    ctx.fillText(initial, cx, cy);
+  }
 
   ctx.restore();
 }
@@ -722,77 +959,22 @@ const pfpCache = new Map();
 
 function getLoadedPfp(url, onLoadedCallback) {
   if (!url) return null;
-  if (pfpCache.has(url)) {
-    const img = pfpCache.get(url);
-    return (img.complete && img.naturalWidth > 0) ? img : null;
+  let img = pfpCache.get(url);
+  if (!img) {
+    img = new Image();
+    // Handlers must exist before src: an avatar can finish synchronously
+    // (data URIs, cached bitmaps) and then onload would never fire.
+    img.onload = () => {
+      if (onLoadedCallback) onLoadedCallback();
+    };
+    img.onerror = () => { pfpCache.delete(url); };
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    pfpCache.set(url, img);
   }
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.src = url;
-  img.onload = () => {
-    if (onLoadedCallback) onLoadedCallback();
-  };
-  pfpCache.set(url, img);
-  return null;
-}
-
-function distributePlanetsOnRing(ctx, users, cx, cy, radius, color) {
-  if (!users || users.length === 0) return;
-  const count = users.length;
-  const angleStep = (Math.PI * 2) / count;
-  const offset = radius * 0.1;
-  const pfpRadius = 13; // 26px diameter for clear avatar visibility
-
-  users.forEach((u, i) => {
-    const angle = i * angleStep + offset;
-    const px = cx + Math.cos(angle) * radius;
-    const py = cy + Math.sin(angle) * radius;
-
-    ctx.save();
-
-    // 1. Accent border ring in tier color
-    ctx.beginPath();
-    ctx.arc(px, py, pfpRadius + 1.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-
-    // 2. Profile Picture (PFP) or initial fallback
-    const pfp = getLoadedPfp(u.avatarUrl, () => {
-      queueOrbitCanvasRender();
-    });
-
-    if (pfp) {
-      // Draw circular clipped avatar PFP
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(pfp, px - pfpRadius, py - pfpRadius, pfpRadius * 2, pfpRadius * 2);
-      ctx.restore();
-    } else {
-      // Fallback: planet with colored initial
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.fillStyle = isLightMode() ? '#e2e8f0' : '#16181c';
-      ctx.fill();
-
-      ctx.fillStyle = color;
-      ctx.font = 'bold 11px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const initial = (u.displayName || u.handle || 'X').charAt(0).toUpperCase();
-      ctx.fillText(initial, px, py);
-    }
-
-    // 3. Planet handle & score pill
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillStyle = isLightMode() ? '#0f172a' : '#ffffff';
-    ctx.textAlign = 'center';
-    const labelY = py > cy ? py + pfpRadius + 11 : py - pfpRadius - 4;
-    ctx.fillText(`@${u.handle.slice(0, 9)} (${Math.round(u.currentScore || 0)})`, px, labelY);
-
-    ctx.restore();
-  });
+  const ready = img.complete && img.naturalWidth > 0;
+  const size = img.width || img.naturalWidth || 0;
+  return ready && size > 0 ? img : null;
 }
 
 /**
@@ -836,46 +1018,61 @@ function setupOrbitExporter() {
     ctx.fillStyle = '#1d9bf0';
     ctx.fillText(`Gravitational center: @${currentUsername}`, cx, 115);
 
-    // Radii
-    const rCore = 140;
-    const rClose = 260;
-    const rCasual = 380;
+    // Radii scale with the population so nothing overlaps
+    const ringsForExport = [
+      { users: cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 70), radius: 150, d: 46, color: '#f91880' },
+      { users: cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70), radius: 265, d: 38, color: '#1d9bf0' },
+      { users: cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) > 0 && (u.currentScore || 0) < 35), radius: 375, d: 32, color: '#794bc4' }
+    ];
 
-    drawOrbitRing(ctx, cx, cy, rCasual, '#794bc4', 'Mutuals & Acquaintances');
-    drawOrbitRing(ctx, cx, cy, rClose, '#1d9bf0', 'Close Conversants');
-    drawOrbitRing(ctx, cx, cy, rCore, '#f91880', 'Core Bonds');
+    ringsForExport.forEach((ring) => {
+      drawOrbitRing(ctx, cx, cy, ring.radius, ring.color);
+      const slot = ring.d + 10;
+      const fits = Math.max(1, Math.floor((Math.PI * 2 * ring.radius) / slot));
+      const visible = ring.users.slice(0, fits);
+      visible.forEach((u, i) => {
+        const angle = -Math.PI / 2 + (i * (Math.PI * 2)) / visible.length;
+        const px = cx + Math.cos(angle) * ring.radius;
+        const py = cy + Math.sin(angle) * ring.radius;
+        drawOrbitPlanet(ctx, px, py, ring.d, ring.color, u);
+      });
+    });
 
-    // Sun
+    // Sun: your own avatar at the gravity center
     ctx.save();
-    const sunGrad = ctx.createRadialGradient(cx, cy, 15, cx, cy, 60);
-    sunGrad.addColorStop(0, '#ffd400');
-    sunGrad.addColorStop(0.5, 'rgba(255, 122, 0, 0.4)');
+    const sunGrad = ctx.createRadialGradient(cx, cy, 20, cx, cy, 90);
+    sunGrad.addColorStop(0, 'rgba(255, 200, 0, 0.45)');
     sunGrad.addColorStop(1, 'rgba(255, 122, 0, 0)');
     ctx.fillStyle = sunGrad;
     ctx.beginPath();
-    ctx.arc(cx, cy, 60, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 90, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#ff7a00';
     ctx.beginPath();
-    ctx.arc(cx, cy, 32, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 36, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffc400';
     ctx.fill();
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`@${currentUsername.slice(0, 8)}`, cx, cy);
+    const selfPfp = getLoadedPfp(currentAvatarUrl);
+    if (selfPfp) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 33, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(selfPfp, cx - 33, cy - 33, 66, 66);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 33, 0, Math.PI * 2);
+      ctx.fillStyle = '#16181c';
+      ctx.fill();
+      ctx.fillStyle = '#ffc400';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(currentUsername.charAt(0).toUpperCase(), cx, cy);
+    }
     ctx.restore();
-
-    // Planets - inclusive rings for all tracked accounts
-    const coreUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 70);
-    const closeUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
-    const casualUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) < 35);
-
-    renderHighResPlanets(ctx, coreUsers, cx, cy, rCore, '#f91880');
-    renderHighResPlanets(ctx, closeUsers, cx, cy, rClose, '#1d9bf0');
-    renderHighResPlanets(ctx, casualUsers, cx, cy, rCasual, '#794bc4');
 
     // Watermark & Creator Credit
     ctx.fillStyle = '#71767b';
@@ -899,53 +1096,20 @@ function setupOrbitExporter() {
 }
 
 function renderHighResPlanets(ctx, users, cx, cy, radius, color) {
+  // Superseded by drawOrbitPlanet + capacity-aware rings.
   if (!users || users.length === 0) return;
-  const count = users.length;
-  const angleStep = (Math.PI * 2) / count;
-  const pfpRadius = 22;
-
-  users.forEach((u, i) => {
-    const angle = i * angleStep;
-    const px = cx + Math.cos(angle) * radius;
-    const py = cy + Math.sin(angle) * radius;
-
-    ctx.save();
-    // Glowing border ring in tier color
-    ctx.beginPath();
-    ctx.arc(px, py, pfpRadius + 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-
-    const pfp = getLoadedPfp(u.avatarUrl);
-    if (pfp) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(pfp, px - pfpRadius, py - pfpRadius, pfpRadius * 2, pfpRadius * 2);
-      ctx.restore();
-    } else {
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#16181c';
-      ctx.fill();
-
-      ctx.fillStyle = color;
-      ctx.font = 'bold 16px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const initial = (u.displayName || u.handle || 'X').charAt(0).toUpperCase();
-      ctx.fillText(initial, px, py);
-    }
-
-    // Label
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    const labelY = py > cy ? py + pfpRadius + 16 : py - pfpRadius - 6;
-    ctx.fillText(`@${u.handle} (${Math.round(u.currentScore || 0)})`, px, labelY);
-
-    ctx.restore();
+  const slot = 42;
+  const fits = Math.max(1, Math.floor((Math.PI * 2 * radius) / slot));
+  users.slice(0, fits).forEach((u, i) => {
+    const angle = -Math.PI / 2 + (i * (Math.PI * 2)) / Math.min(users.length, fits);
+    drawOrbitPlanet(
+      ctx,
+      cx + Math.cos(angle) * radius,
+      cy + Math.sin(angle) * radius,
+      34,
+      color,
+      u
+    );
   });
 }
 

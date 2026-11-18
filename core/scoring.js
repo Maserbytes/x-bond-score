@@ -567,6 +567,7 @@ class BondScoring {
       replySent: 8,
       replyReceived: 8,
       quote: 6,
+      repost: 5,
       mention: 5,
       like: 2,
       deepSyncExchange: 10
@@ -646,6 +647,12 @@ class BondScoring {
           break;
         case 'quote':
           baseWeight = weights.quote || 6;
+          if (isInbound) receivedCount++; else sentCount++;
+          break;
+        case 'repost':
+          // A repost is a deliberate signal: worth more than a like, less than
+          // a reply or a quote post.
+          baseWeight = weights.repost || 5;
           if (isInbound) receivedCount++; else sentCount++;
           break;
         case 'mention':
@@ -1053,6 +1060,7 @@ class BondScoring {
       replySent: 8,
       replyReceived: 8,
       quote: 6,
+      repost: 5,
       mention: 5,
       like: 2,
       deepSyncExchange: 10

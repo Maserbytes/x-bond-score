@@ -716,6 +716,7 @@ class BondStorage {
       dmsSent: 0, dmsReceived: 0,
       likes: 0, likesSent: 0, likesReceived: 0,
       quotes: 0, quotesSent: 0, quotesReceived: 0,
+      reposts: 0, repostsSent: 0, repostsReceived: 0,
       mentionsSent: 0, mentionsReceived: 0, mutualExchanges: 0
     };
     for (const evt of events || []) {
@@ -733,6 +734,9 @@ class BondStorage {
       } else if (evt.type === 'quote') {
         stats.quotes++;
         stats[inbound ? 'quotesReceived' : 'quotesSent']++;
+      } else if (evt.type === 'repost') {
+        stats.reposts++;
+        stats[inbound ? 'repostsReceived' : 'repostsSent']++;
       } else if (evt.type === 'mention') {
         stats[inbound ? 'mentionsReceived' : 'mentionsSent']++;
       }
@@ -775,8 +779,8 @@ class BondStorage {
     user.qualityMetrics = qualityMetrics;
     user.lastCalculated = Date.now();
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent || 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent || 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     if (typeof scoringEngine.classifyRelationship === 'function') {
       user.relationshipClass = scoringEngine.classifyRelationship(score, sSent, sRecv, user.lastInteraction);
     }
@@ -1103,15 +1107,15 @@ class BondStorage {
                 seen.add(identity);
                 value.platform = value.platform || keyPlatform;
                 if (!value.crmStatusData && typeof BondScoring !== 'undefined') {
-                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent ?? value.stats.likes ?? 0) + (value.stats.quotesSent || 0) + (value.stats.mentionsSent || 0))) || 0;
-                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
+                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent ?? value.stats.likes ?? 0) + (value.stats.quotesSent || 0) + (value.stats.repostsSent || 0) + (value.stats.mentionsSent || 0))) || 0;
+                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.repostsReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
                   value.crmStatusData = BondScoring.calculateCRMStatus(value.currentScore || 0, sSent, sRecv, value.streakDays || 0);
                   value.crmStatus = value.crmStatusData.label;
                   value.crmStatusId = value.crmStatusData.id;
                 }
                 if (!value.relationshipClass && typeof BondScoring !== 'undefined' && BondScoring.classifyRelationship) {
-                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent || 0) + (value.stats.quotesSent || 0) + (value.stats.mentionsSent || 0))) || 0;
-                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
+                  const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent || 0) + (value.stats.quotesSent || 0) + (value.stats.repostsSent || 0) + (value.stats.mentionsSent || 0))) || 0;
+                  const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.repostsReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
                   value.relationshipClass = BondScoring.classifyRelationship(value.currentScore || 0, sSent, sRecv, value.lastInteraction);
                 }
                 users.push(value);
@@ -1167,8 +1171,8 @@ class BondStorage {
                 seen.add(identity);
                 u.platform = u.platform || keyPlatform;
                 if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
-                  const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.mentionsSent || 0))) || 0;
-                  const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
+                  const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.repostsSent || 0) + (u.stats.mentionsSent || 0))) || 0;
+                  const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.repostsReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
                   u.crmStatusData = BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
                   u.crmStatus = u.crmStatusData.label;
                   u.crmStatusId = u.crmStatusData.id;

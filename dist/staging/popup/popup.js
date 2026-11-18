@@ -1,12 +1,14 @@
 /**
- * BondScore for X - Extension Popup Logic (v1.2 - Pro Design System)
+ * BondScore - Extension Popup Logic (v1.4.0)
  * Controls leaderboard, filter pills, solar system orbit view, graphic exporter,
  * dynamic theme switcher (system auto, dark, light), settings, and CRM analytics.
  */
 
 let cachedUsers = [];
 let currentFilter = 'all';
+let currentPlatformFilter = 'all'; // 'all' | 'x' | 'threads' | 'bluesky'
 let currentUsername = 'you';
+let currentAvatarUrl = '';
 let currentTheme = 'system'; // 'system' | 'dark' | 'light'
 let leaderboardRefreshTimer = null;
 let leaderboardLoadGeneration = 0;
@@ -18,9 +20,11 @@ function shouldRefreshDashboardForStorageChanges(changes, activeAccount) {
 
   const account = (activeAccount || '').replace(/^@/, '').toLowerCase().trim();
   const prefix = account ? `acc:${account}:` : '';
-  return Object.keys(changes).some((key) => account
-    ? key.startsWith(`${prefix}user:`) || key.startsWith(`${prefix}events:`) || key.startsWith(`${prefix}dm:`)
-    : key.startsWith('user:') || key.startsWith('events:') || key.startsWith('dm:'));
+  const isRecordKey = (key) => {
+    const sub = account ? (key.startsWith(prefix) ? key.slice(prefix.length) : '') : key;
+    return /^(?:p:[a-z0-9]+:)?(?:user|events|dm):/.test(sub);
+  };
+  return Object.keys(changes).some(isRecordKey);
 }
 
 function queueDashboardRefresh() {
@@ -167,6 +171,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderRadarTab();
   setupFilterPills();
   setupSearchHandler();
+  setupPlatformFilters();
   setupDmFilterPills();
   setupDmSearchHandler();
   setupOrbitExporter();
@@ -213,6 +218,7 @@ async function setupAccountSwitcher() {
   if (avatarMiniEl) {
     const activeMeta = accounts.find(a => a.handle === activeAccount);
     if (activeMeta && activeMeta.avatarUrl) {
+      currentAvatarUrl = activeMeta.avatarUrl;
       avatarMiniEl.innerHTML = `<img src="${activeMeta.avatarUrl}" alt="${activeAccount}">`;
     } else {
       avatarMiniEl.innerText = activeAccount ? activeAccount.charAt(0).toUpperCase() : '👤';
@@ -305,8 +311,9 @@ async function setupAccountSwitcher() {
 }
 
 /**
- * Checks if active browser tab is on X and auto-detects account on initial run.
- * Preserves user account selection once established to avoid asynchronous race overrides.
+ * Checks if the active browser tab is on a supported network and auto-detects
+ * the signed-in account on initial run. Preserves user account selection once
+ * established to avoid asynchronous race overrides.
  */
 async function syncActiveTabAccountIfAvailable() {
   const currentStored = await window.bondStorage.getCurrentUser();
@@ -315,7 +322,9 @@ async function syncActiveTabAccountIfAvailable() {
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
     try {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs && tabs[0] && tabs[0].url && (tabs[0].url.includes('x.com') || tabs[0].url.includes('twitter.com'))) {
+        const url = (tabs && tabs[0] && tabs[0].url) || '';
+        const supported = ['x.com', 'twitter.com', 'threads.net', 'bsky.app'].some((host) => url.includes(host));
+        if (supported) {
           chrome.tabs.sendMessage(tabs[0].id, { type: 'bondscore:get_active_account' }, async (response) => {
             if (response && response.handle) {
               const freshStored = await window.bondStorage.getCurrentUser();
@@ -342,8 +351,14 @@ async function loadCurrentUserTag() {
     currentUsername = currentUser;
     if (userTag) userTag.innerText = `@${currentUser}`;
   } else {
-    if (userTag) userTag.innerText = 'Browse X to auto-detect';
+    if (userTag) userTag.innerText = 'Browse a supported network to auto-detect';
   }
+  // The orbit center is you: resolve your own avatar once for the canvas.
+  try {
+    const { accounts } = await window.bondStorage.getKnownAccounts();
+    const meta = accounts.find((a) => a.handle === currentUsername);
+    if (meta && meta.avatarUrl) currentAvatarUrl = meta.avatarUrl;
+  } catch (e) {}
 }
 
 async function loadLeaderboard() {
@@ -371,6 +386,54 @@ async function loadLeaderboard() {
   applyFilterAndRender();
 }
 
+function setupPlatformFilters() {
+  const bars = document.querySelectorAll('.platform-capsule-bar');
+  bars.forEach((bar) => {
+    const capsules = bar.querySelectorAll('.platform-capsule');
+    capsules.forEach((capsule) => {
+      capsule.addEventListener('click', () => {
+        currentPlatformFilter = capsule.dataset.platformFilter || 'all';
+        // Keep every platform bar in sync (leaderboard + DMs share the scope).
+        document.querySelectorAll('.platform-capsule').forEach((c) => {
+          const active = (c.dataset.platformFilter || 'all') === currentPlatformFilter;
+          c.classList.toggle('active', active);
+          c.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        applyFilterAndRender();
+        renderDmSubSections(cachedDms.filter(matchesPlatform), currentDmFilter);
+      });
+    });
+  });
+}
+
+function matchesPlatform(item) {
+  if (currentPlatformFilter === 'all') return true;
+  return (item.platform || 'x') === currentPlatformFilter;
+}
+
+/** Small platform badge used on user and DM cards. */
+function platformChip(item, extraClass = '') {
+  const p = BondPlatforms.get((item && item.platform) || 'x');
+  return `<span class="platform-chip platform-chip-${p.id}${extraClass ? ` ${extraClass}` : ''}" title="${escapeHtml(p.fullName)}">${p.emoji} ${p.shortLabel}</span>`;
+}
+
+/** Platform-aware deep link for a conversation. */
+function messageUrl(item) {
+  const p = (item && item.platform) || 'x';
+  const convId = String((item && item.convId) || '');
+  if (p === 'threads') return `https://www.threads.net/messages/${encodeURIComponent(convId)}`;
+  if (p === 'bluesky') return `https://bsky.app/messages/${encodeURIComponent(convId)}`;
+
+  // XChat opens a thread only when it arrives through the legacy redirect:
+  // /messages/<a>-<b> 302s to /i/chat/<a>-<b> and mounts the conversation.
+  // Loading /i/chat/<id> directly mounts the shell but leaves the thread closed,
+  // and /messages/g<id> drops the id and lands in the inbox, so groups point at
+  // the inbox where the user can pick the chat.
+  if (/^g/i.test(convId)) return 'https://x.com/i/chat';
+  const urlId = convId.includes(':') ? convId.replace(/:/g, '-') : convId;
+  return `https://x.com/messages/${encodeURIComponent(urlId)}`;
+}
+
 function setupFilterPills() {
   const pills = document.querySelectorAll('.filter-pill');
   pills.forEach((pill) => {
@@ -392,7 +455,7 @@ function getCRMStatusForUser(u) {
 
 function applyFilterAndRender() {
   const q = (document.getElementById('mutual-search-input').value || '').toLowerCase().trim();
-  let list = cachedUsers;
+  let list = cachedUsers.filter(matchesPlatform);
 
   if (currentFilter === 'vip') {
     list = list.filter(u => u.isPinned);
@@ -499,6 +562,7 @@ function renderUserList(users) {
           </div>
           <div class="mutual-handle-sub">
             <span>@${escapeHtml(u.handle)}</span>
+            <span class="platform-chip platform-chip-${escapeHtml(u.platform || 'x')}" title="${escapeHtml((BondPlatforms.get(u.platform || 'x').fullName) || 'X')}">${BondPlatforms.get(u.platform || 'x').emoji} ${BondPlatforms.get(u.platform || 'x').shortLabel}</span>
             ${dmsTotal > 0 ? `<span class="mutual-dm-count" title="${dmsTotal} direct messages tracked">✉️ ${dmsTotal} DMs</span>` : ''}
             ${u.note ? `<span class="mutual-note-snippet" title="${escapeHtml(u.note)}">📝 ${escapeHtml(u.note)}</span>` : ''}
           </div>
@@ -522,9 +586,10 @@ function renderUserList(users) {
       await loadLeaderboard();
     });
 
-    // Click card to open X profile in new tab
+    // Click card to open the right profile on its native network
     item.addEventListener('click', () => {
-      chrome.tabs.create({ url: `https://x.com/${u.handle}` });
+      const url = BondPlatforms.profileUrl(u.platform || 'x', u.handle);
+      if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) chrome.tabs.create({ url });
     });
 
     listEl.appendChild(item);
@@ -541,58 +606,273 @@ function setupSearchHandler() {
 /**
  * 🪐 Mutuals Orbit Canvas Rendering (Solar System)
  */
+const ORBIT_TIERS = [
+  { id: 'core', min: 70, color: '#f91880', share: 0.2 },
+  { id: 'close', min: 35, color: '#1d9bf0', share: 0.32 },
+  { id: 'casual', min: 0, color: '#794bc4', share: 0.45 }
+];
+
+let orbitHitAreas = [];
+let orbitHoverHandle = null;
+let orbitGeometry = null;
+
+function orbitGroups() {
+  const users = cachedUsers
+    .filter(matchesPlatform)
+    .filter((u) => (u.currentScore || 0) > 0)
+    .sort((a, b) => (b.currentScore || 0) - (a.currentScore || 0));
+  return {
+    core: users.filter((u) => u.currentScore >= 70),
+    close: users.filter((u) => u.currentScore >= 35 && u.currentScore < 70),
+    casual: users.filter((u) => u.currentScore < 35)
+  };
+}
+
+/**
+ * Capacity-aware geometry. Each ring grows until it can seat its population
+ * with breathing room, and the overflow is reported instead of piled up.
+ */
+function computeOrbitGeometry(size) {
+  const cx = size / 2;
+  const cy = size / 2;
+  const scale = size / 420;
+  const groups = orbitGroups();
+  const sunRadius = Math.round(size * 0.088);
+  const maxRadius = size / 2 - Math.round(20 * scale);
+  const gap = Math.round(7 * scale);
+
+  const rings = [];
+  let previousEdge = sunRadius + Math.round(14 * scale);
+
+  ORBIT_TIERS.forEach((tier) => {
+    const all = groups[tier.id] || [];
+    const diameter = Math.round(
+      (tier.id === 'core' ? 32 : tier.id === 'close' ? 26 : 21) * scale
+    );
+    const slot = diameter + gap;
+    const fitsAtMax = Math.max(1, Math.floor((Math.PI * 2 * maxRadius) / slot));
+    let visible = all.slice(0, fitsAtMax);
+    const needed = (slot * visible.length) / (Math.PI * 2);
+    let radius = Math.max(tier.share * size, needed, previousEdge + diameter / 2 + gap);
+    radius = Math.min(radius, maxRadius);
+    const fitsHere = Math.max(1, Math.floor((Math.PI * 2 * radius) / slot));
+    if (visible.length > fitsHere) visible = visible.slice(0, fitsHere);
+
+    rings.push({ tier, radius, diameter, users: visible, hidden: all.length - visible.length });
+    previousEdge = radius + diameter / 2;
+  });
+
+  return {
+    size,
+    cx,
+    cy,
+    sunRadius,
+    rings,
+    total: groups.core.length + groups.close.length + groups.casual.length
+  };
+}
+
 function renderOrbitCanvas() {
   const canvas = document.getElementById('orbit-canvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  const centerX = w / 2;
-  const centerY = h / 2;
+  const size = Math.max(240, Math.round(canvas.clientWidth || canvas.width || 370));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const backing = Math.round(size * dpr);
+  if (canvas.width !== backing || canvas.height !== backing) {
+    canvas.width = backing;
+    canvas.height = backing;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const isLight = isLightMode();
+  const geo = computeOrbitGeometry(size);
+  orbitGeometry = geo;
 
-  // Clear & Canvas Background
   ctx.fillStyle = isLight ? '#f8fafc' : '#05070a';
-  ctx.fillRect(0, 0, w, h);
+  ctx.fillRect(0, 0, size, size);
+  if (!isLight) drawStarfield(ctx, size, size, 60);
+  else drawLightGrid(ctx, size, size);
 
-  if (!isLight) {
-    // Background stars for dark mode
-    drawStarfield(ctx, w, h, 60);
-  } else {
-    // Subtle constellation grid dots for light mode
-    drawLightGrid(ctx, w, h);
-  }
+  geo.rings.forEach((ring) => drawOrbitRing(ctx, geo.cx, geo.cy, ring.radius, ring.tier.color));
 
-  // Orbit Radii
-  const rCore = 52;
-  const rClose = 100;
-  const rCasual = 150;
+  drawCenterSun(ctx, geo.cx, geo.cy, geo.sunRadius, currentUsername);
 
-  // Draw concentric orbit tracks
-  drawOrbitRing(ctx, centerX, centerY, rCasual, '#794bc4', 'Mutuals & Acquaintances (1-34)');
-  drawOrbitRing(ctx, centerX, centerY, rClose, '#1d9bf0', 'Close Conversants (35-69)');
-  drawOrbitRing(ctx, centerX, centerY, rCore, '#f91880', 'Core Bonds (70+)');
+  orbitHitAreas = [];
+  geo.rings.forEach((ring, ringIndex) => {
+    const count = ring.users.length;
+    if (!count) return;
+    const step = (Math.PI * 2) / count;
+    const offset = -Math.PI / 2 + ringIndex * (Math.PI / 9);
+    ring.users.forEach((u, i) => {
+      const angle = offset + i * step;
+      const px = geo.cx + Math.cos(angle) * ring.radius;
+      const py = geo.cy + Math.sin(angle) * ring.radius;
+      drawOrbitPlanet(ctx, px, py, ring.diameter, ring.tier.color, u);
+      orbitHitAreas.push({
+        x: px, y: py, r: ring.diameter / 2 + 2, user: u, color: ring.tier.color
+      });
+    });
+  });
 
-  // Draw Sun / Center User
-  drawCenterSun(ctx, centerX, centerY, currentUsername);
-
-  // Group mutuals by inclusive tier rings - all tracked mutuals appear and persist!
-  const coreUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 70);
-  const closeUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
-  const casualUsers = cachedUsers.filter(u => (u.currentScore || 0) < 35);
-
-  distributePlanetsOnRing(ctx, coreUsers, centerX, centerY, rCore, '#f91880');
-  distributePlanetsOnRing(ctx, closeUsers, centerX, centerY, rClose, '#1d9bf0');
-  distributePlanetsOnRing(ctx, casualUsers, centerX, centerY, rCasual, '#794bc4');
-
-  // If no mutuals, draw empty state tip
-  if (cachedUsers.length === 0) {
-    ctx.fillStyle = isLight ? '#64748b' : '#71767b';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = isLight ? '#64748b' : '#71767b';
+  if (geo.total === 0) {
     ctx.font = '11px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Interact with accounts on X to populate your orbit', centerX, centerY + 90);
+    ctx.fillText('Interact with accounts on a supported network to populate your orbit', geo.cx, size - 16);
+  } else {
+    const hidden = geo.rings.reduce((sum, ring) => sum + ring.hidden, 0);
+    if (hidden > 0) {
+      ctx.font = '10px sans-serif';
+      ctx.fillText(`+${hidden} more in your CRM`, geo.cx, size - 8);
+    }
   }
+
+  bindOrbitHover(canvas);
+  drawOrbitTooltip(ctx, size);
+}
+
+/** Rounded capsule used by score chips, tooltips and export cards. */
+function roundRectPath(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, h / 2, w / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function drawOrbitPlanet(ctx, px, py, diameter, color, user, opts = {}) {
+  const r = diameter / 2;
+  const isLight = isLightMode();
+  const showChip = opts.chip !== false;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px, py, r + Math.max(1.5, r * 0.09), 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  const pfp = getLoadedPfp(user.avatarUrl, queueOrbitCanvasRender);
+  if (pfp) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(pfp, px - r, py - r, r * 2, r * 2);
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fillStyle = isLight ? '#e2e8f0' : '#16181c';
+    ctx.fill();
+    ctx.fillStyle = color;
+    ctx.font = `bold ${Math.max(9, Math.round(r))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((user.displayName || user.handle || 'X').charAt(0).toUpperCase(), px, py);
+  }
+
+  if (showChip) {
+    const label = String(Math.round(user.currentScore || 0));
+    const fontSize = Math.max(6, Math.round(diameter * 0.36));
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    const chipW = Math.max(fontSize + 5, ctx.measureText(label).width + 7);
+    const chipH = fontSize + 4;
+    const chipX = px + r * 0.7;
+    const chipY = py + r * 0.7;
+    roundRectPath(ctx, chipX - chipW / 2, chipY - chipH / 2, chipW, chipH, chipH / 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = isLight ? '#ffffff' : '#05070a';
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, chipX, chipY + 0.5);
+  }
+
+  ctx.restore();
+}
+
+function bindOrbitHover(canvas) {
+  if (canvas.dataset.orbitHoverBound === 'true') return;
+  canvas.dataset.orbitHoverBound = 'true';
+
+  const locate = (event) => {
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width) return null;
+    const scale = (orbitGeometry ? orbitGeometry.size : rect.width) / rect.width;
+    const x = (event.clientX - rect.left) * scale;
+    const y = (event.clientY - rect.top) * scale;
+    return orbitHitAreas.find((a) => Math.hypot(a.x - x, a.y - y) <= a.r) || null;
+  };
+
+  canvas.addEventListener('mousemove', (event) => {
+    if (!orbitHitAreas.length) return;
+    const hit = locate(event);
+    const handle = hit ? hit.user.handle : null;
+    if (handle === orbitHoverHandle) return;
+    orbitHoverHandle = handle;
+    renderOrbitCanvas();
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    if (orbitHoverHandle === null) return;
+    orbitHoverHandle = null;
+    renderOrbitCanvas();
+  });
+}
+
+function drawOrbitTooltip(ctx, size) {
+  if (!orbitHoverHandle) return;
+  const hit = orbitHitAreas.find((a) => a.user.handle === orbitHoverHandle);
+  if (!hit) return;
+  const user = hit.user;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(hit.x, hit.y, hit.r + 3, 0, Math.PI * 2);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  const title = `@${user.handle}`;
+  const tier = BondScoring.getTier(user.currentScore || 0);
+  const subtitle = `${Math.round(user.currentScore || 0)} · ${tier.name}${user.streakDays > 1 ? ` · ${user.streakDays}d streak` : ''}`;
+
+  ctx.font = 'bold 11px sans-serif';
+  const titleW = ctx.measureText(title).width;
+  ctx.font = '10px sans-serif';
+  const subW = ctx.measureText(subtitle).width;
+
+  const padX = 9;
+  const boxW = Math.min(size - 12, Math.max(titleW, subW) + padX * 2);
+  const boxH = 36;
+  const boxX = Math.min(size - boxW - 6, Math.max(6, hit.x - boxW / 2));
+  const above = hit.y > size / 2;
+  const boxY = above ? hit.y - hit.r - boxH - 10 : hit.y + hit.r + 10;
+
+  roundRectPath(ctx, boxX, boxY, boxW, boxH, 9);
+  ctx.fillStyle = 'rgba(9, 14, 23, 0.94)';
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+  ctx.stroke();
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillText(title, boxX + padX, boxY + 13);
+  ctx.fillStyle = '#9aa4b2';
+  ctx.font = '10px sans-serif';
+  ctx.fillText(subtitle, boxX + padX, boxY + 26);
+  ctx.restore();
 }
 
 function drawLightGrid(ctx, w, h) {
@@ -619,7 +899,7 @@ function drawStarfield(ctx, w, h, count) {
   ctx.globalAlpha = 1.0;
 }
 
-function drawOrbitRing(ctx, cx, cy, radius, color, label) {
+function drawOrbitRing(ctx, cx, cy, radius, color) {
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
@@ -631,31 +911,45 @@ function drawOrbitRing(ctx, cx, cy, radius, color, label) {
   ctx.restore();
 }
 
-function drawCenterSun(ctx, cx, cy, username) {
+/** The gravity center is always you: your own avatar, ringed in gold. */
+function drawCenterSun(ctx, cx, cy, radius, username) {
+  const isLight = isLightMode();
   ctx.save();
 
-  // Outer glow
-  const grad = ctx.createRadialGradient(cx, cy, 6, cx, cy, 26);
-  grad.addColorStop(0, '#ffd400');
-  grad.addColorStop(0.5, 'rgba(255, 122, 0, 0.4)');
-  grad.addColorStop(1, 'rgba(255, 122, 0, 0)');
-  ctx.fillStyle = grad;
+  const glow = ctx.createRadialGradient(cx, cy, radius * 0.55, cx, cy, radius * 2.1);
+  glow.addColorStop(0, 'rgba(255, 200, 0, 0.42)');
+  glow.addColorStop(0.6, 'rgba(255, 122, 0, 0.16)');
+  glow.addColorStop(1, 'rgba(255, 122, 0, 0)');
+  ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(cx, cy, 26, 0, Math.PI * 2);
+  ctx.arc(cx, cy, radius * 2.1, 0, Math.PI * 2);
   ctx.fill();
 
-  // Core sphere
-  ctx.fillStyle = '#ff7a00';
   ctx.beginPath();
-  ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+  ctx.arc(cx, cy, radius + 2.5, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffc400';
   ctx.fill();
 
-  // Text
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 9px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('YOU', cx, cy);
+  const pfp = getLoadedPfp(currentAvatarUrl, queueOrbitCanvasRender);
+  if (pfp) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(pfp, cx - radius, cy - radius, radius * 2, radius * 2);
+    ctx.restore();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fillStyle = isLight ? '#0f172a' : '#16181c';
+    ctx.fill();
+    ctx.fillStyle = '#ffc400';
+    ctx.font = `bold ${Math.round(radius * 0.8)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const initial = (username && username !== 'you' ? username : 'you').charAt(0).toUpperCase();
+    ctx.fillText(initial, cx, cy);
+  }
 
   ctx.restore();
 }
@@ -665,77 +959,22 @@ const pfpCache = new Map();
 
 function getLoadedPfp(url, onLoadedCallback) {
   if (!url) return null;
-  if (pfpCache.has(url)) {
-    const img = pfpCache.get(url);
-    return (img.complete && img.naturalWidth > 0) ? img : null;
+  let img = pfpCache.get(url);
+  if (!img) {
+    img = new Image();
+    // Handlers must exist before src: an avatar can finish synchronously
+    // (data URIs, cached bitmaps) and then onload would never fire.
+    img.onload = () => {
+      if (onLoadedCallback) onLoadedCallback();
+    };
+    img.onerror = () => { pfpCache.delete(url); };
+    img.crossOrigin = 'anonymous';
+    img.src = url;
+    pfpCache.set(url, img);
   }
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.src = url;
-  img.onload = () => {
-    if (onLoadedCallback) onLoadedCallback();
-  };
-  pfpCache.set(url, img);
-  return null;
-}
-
-function distributePlanetsOnRing(ctx, users, cx, cy, radius, color) {
-  if (!users || users.length === 0) return;
-  const count = users.length;
-  const angleStep = (Math.PI * 2) / count;
-  const offset = radius * 0.1;
-  const pfpRadius = 13; // 26px diameter for clear avatar visibility
-
-  users.forEach((u, i) => {
-    const angle = i * angleStep + offset;
-    const px = cx + Math.cos(angle) * radius;
-    const py = cy + Math.sin(angle) * radius;
-
-    ctx.save();
-
-    // 1. Accent border ring in tier color
-    ctx.beginPath();
-    ctx.arc(px, py, pfpRadius + 1.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
-
-    // 2. Profile Picture (PFP) or initial fallback
-    const pfp = getLoadedPfp(u.avatarUrl, () => {
-      queueOrbitCanvasRender();
-    });
-
-    if (pfp) {
-      // Draw circular clipped avatar PFP
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(pfp, px - pfpRadius, py - pfpRadius, pfpRadius * 2, pfpRadius * 2);
-      ctx.restore();
-    } else {
-      // Fallback: planet with colored initial
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.fillStyle = isLightMode() ? '#e2e8f0' : '#16181c';
-      ctx.fill();
-
-      ctx.fillStyle = color;
-      ctx.font = 'bold 11px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const initial = (u.displayName || u.handle || 'X').charAt(0).toUpperCase();
-      ctx.fillText(initial, px, py);
-    }
-
-    // 3. Planet handle & score pill
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillStyle = isLightMode() ? '#0f172a' : '#ffffff';
-    ctx.textAlign = 'center';
-    const labelY = py > cy ? py + pfpRadius + 11 : py - pfpRadius - 4;
-    ctx.fillText(`@${u.handle.slice(0, 9)} (${Math.round(u.currentScore || 0)})`, px, labelY);
-
-    ctx.restore();
-  });
+  const ready = img.complete && img.naturalWidth > 0;
+  const size = img.width || img.naturalWidth || 0;
+  return ready && size > 0 ? img : null;
 }
 
 /**
@@ -779,52 +1018,67 @@ function setupOrbitExporter() {
     ctx.fillStyle = '#1d9bf0';
     ctx.fillText(`Gravitational center: @${currentUsername}`, cx, 115);
 
-    // Radii
-    const rCore = 140;
-    const rClose = 260;
-    const rCasual = 380;
+    // Radii scale with the population so nothing overlaps
+    const ringsForExport = [
+      { users: cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 70), radius: 150, d: 46, color: '#f91880' },
+      { users: cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70), radius: 265, d: 38, color: '#1d9bf0' },
+      { users: cachedUsers.filter(matchesPlatform).filter(u => (u.currentScore || 0) > 0 && (u.currentScore || 0) < 35), radius: 375, d: 32, color: '#794bc4' }
+    ];
 
-    drawOrbitRing(ctx, cx, cy, rCasual, '#794bc4', 'Mutuals & Acquaintances');
-    drawOrbitRing(ctx, cx, cy, rClose, '#1d9bf0', 'Close Conversants');
-    drawOrbitRing(ctx, cx, cy, rCore, '#f91880', 'Core Bonds');
+    ringsForExport.forEach((ring) => {
+      drawOrbitRing(ctx, cx, cy, ring.radius, ring.color);
+      const slot = ring.d + 10;
+      const fits = Math.max(1, Math.floor((Math.PI * 2 * ring.radius) / slot));
+      const visible = ring.users.slice(0, fits);
+      visible.forEach((u, i) => {
+        const angle = -Math.PI / 2 + (i * (Math.PI * 2)) / visible.length;
+        const px = cx + Math.cos(angle) * ring.radius;
+        const py = cy + Math.sin(angle) * ring.radius;
+        drawOrbitPlanet(ctx, px, py, ring.d, ring.color, u);
+      });
+    });
 
-    // Sun
+    // Sun: your own avatar at the gravity center
     ctx.save();
-    const sunGrad = ctx.createRadialGradient(cx, cy, 15, cx, cy, 60);
-    sunGrad.addColorStop(0, '#ffd400');
-    sunGrad.addColorStop(0.5, 'rgba(255, 122, 0, 0.4)');
+    const sunGrad = ctx.createRadialGradient(cx, cy, 20, cx, cy, 90);
+    sunGrad.addColorStop(0, 'rgba(255, 200, 0, 0.45)');
     sunGrad.addColorStop(1, 'rgba(255, 122, 0, 0)');
     ctx.fillStyle = sunGrad;
     ctx.beginPath();
-    ctx.arc(cx, cy, 60, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 90, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#ff7a00';
     ctx.beginPath();
-    ctx.arc(cx, cy, 32, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 36, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffc400';
     ctx.fill();
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(`@${currentUsername.slice(0, 8)}`, cx, cy);
+    const selfPfp = getLoadedPfp(currentAvatarUrl);
+    if (selfPfp) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 33, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(selfPfp, cx - 33, cy - 33, 66, 66);
+      ctx.restore();
+    } else {
+      ctx.beginPath();
+      ctx.arc(cx, cy, 33, 0, Math.PI * 2);
+      ctx.fillStyle = '#16181c';
+      ctx.fill();
+      ctx.fillStyle = '#ffc400';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(currentUsername.charAt(0).toUpperCase(), cx, cy);
+    }
     ctx.restore();
-
-    // Planets - inclusive rings for all tracked accounts
-    const coreUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 70);
-    const closeUsers = cachedUsers.filter(u => (u.currentScore || 0) >= 35 && (u.currentScore || 0) < 70);
-    const casualUsers = cachedUsers.filter(u => (u.currentScore || 0) < 35);
-
-    renderHighResPlanets(ctx, coreUsers, cx, cy, rCore, '#f91880');
-    renderHighResPlanets(ctx, closeUsers, cx, cy, rClose, '#1d9bf0');
-    renderHighResPlanets(ctx, casualUsers, cx, cy, rCasual, '#794bc4');
 
     // Watermark & Creator Credit
     ctx.fillStyle = '#71767b';
     ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`BondScore for X • Created by @MaserSuspended • ${new Date().toLocaleDateString()}`, cx, 960);
+    ctx.fillText(`BondScore • Created by @MaserSuspended • ${new Date().toLocaleDateString()}`, cx, 960);
 
     // Download PNG
     const link = document.createElement('a');
@@ -842,53 +1096,86 @@ function setupOrbitExporter() {
 }
 
 function renderHighResPlanets(ctx, users, cx, cy, radius, color) {
+  // Superseded by drawOrbitPlanet + capacity-aware rings.
   if (!users || users.length === 0) return;
-  const count = users.length;
-  const angleStep = (Math.PI * 2) / count;
-  const pfpRadius = 22;
+  const slot = 42;
+  const fits = Math.max(1, Math.floor((Math.PI * 2 * radius) / slot));
+  users.slice(0, fits).forEach((u, i) => {
+    const angle = -Math.PI / 2 + (i * (Math.PI * 2)) / Math.min(users.length, fits);
+    drawOrbitPlanet(
+      ctx,
+      cx + Math.cos(angle) * radius,
+      cy + Math.sin(angle) * radius,
+      34,
+      color,
+      u
+    );
+  });
+}
 
-  users.forEach((u, i) => {
-    const angle = i * angleStep;
-    const px = cx + Math.cos(angle) * radius;
-    const py = cy + Math.sin(angle) * radius;
+/**
+ * 🌐 Platform master + granular sub-toggle controls.
+ * Every change persists immediately so scripts start/stop on the next page load.
+ */
+function setupPlatformToggles(settings) {
+  const config = BondPlatforms.getConfig(settings);
 
-    ctx.save();
-    // Glowing border ring in tier color
-    ctx.beginPath();
-    ctx.arc(px, py, pfpRadius + 2.5, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.fill();
+  const paint = (id) => {
+    const cfg = BondPlatforms.getConfig(window.bondStorage.settingsCache || settings)[id];
+    const card = document.querySelector(`[data-platform-card="${id}"]`);
+    const subs = document.querySelector(`[data-platform-subs="${id}"]`);
+    if (card) card.classList.toggle('is-off', !cfg.enabled);
+    if (subs) {
+      subs.querySelectorAll('input').forEach((input) => { input.disabled = !cfg.enabled; });
+    }
+  };
 
-    const pfp = getLoadedPfp(u.avatarUrl);
-    if (pfp) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.drawImage(pfp, px - pfpRadius, py - pfpRadius, pfpRadius * 2, pfpRadius * 2);
-      ctx.restore();
-    } else {
-      ctx.beginPath();
-      ctx.arc(px, py, pfpRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#16181c';
-      ctx.fill();
+  ['x', 'threads', 'bluesky'].forEach((id) => {
+    const master = document.getElementById(`platform-${id}-enabled`);
+    const timeline = document.getElementById(`platform-${id}-timeline`);
+    const dms = document.getElementById(`platform-${id}-dms`);
 
-      ctx.fillStyle = color;
-      ctx.font = 'bold 16px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const initial = (u.displayName || u.handle || 'X').charAt(0).toUpperCase();
-      ctx.fillText(initial, px, py);
+    if (master) master.checked = config[id].enabled;
+    if (timeline) timeline.checked = config[id].timeline;
+    if (dms) dms.checked = config[id].dms;
+    paint(id);
+
+    const persist = async (patch) => {
+      const current = await window.bondStorage.getSettings();
+      const next = BondPlatforms.patchSettings(current, id, patch);
+      await window.bondStorage.updateSettings(next);
+      paint(id);
+    };
+
+    const quick = document.getElementById(`quick-platform-${id}`);
+    if (quick) {
+      quick.checked = config[id].enabled;
+      if (!quick.dataset.bound) {
+        quick.dataset.bound = 'true';
+        quick.addEventListener('change', () => {
+          if (master) master.checked = quick.checked;
+          const subContainer = document.querySelector(`[data-platform-subs="${id}"]`);
+          if (subContainer) subContainer.querySelectorAll('input').forEach((input) => { input.disabled = !quick.checked; });
+          persist({ enabled: quick.checked });
+        });
+      }
     }
 
-    // Label
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillStyle = '#ffffff';
-    ctx.textAlign = 'center';
-    const labelY = py > cy ? py + pfpRadius + 16 : py - pfpRadius - 6;
-    ctx.fillText(`@${u.handle} (${Math.round(u.currentScore || 0)})`, px, labelY);
-
-    ctx.restore();
+    if (master && !master.dataset.bound) {
+      master.dataset.bound = 'true';
+      master.addEventListener('change', () => {
+        if (quick) quick.checked = master.checked;
+        persist({ enabled: master.checked });
+      });
+    }
+    if (timeline && !timeline.dataset.bound) {
+      timeline.dataset.bound = 'true';
+      timeline.addEventListener('change', () => persist({ timeline: timeline.checked }));
+    }
+    if (dms && !dms.dataset.bound) {
+      dms.dataset.bound = 'true';
+      dms.addEventListener('change', () => persist({ dms: dms.checked }));
+    }
   });
 }
 
@@ -897,6 +1184,7 @@ function renderHighResPlanets(ctx, users, cx, cy, radius, color) {
  */
 async function loadSettingsForm() {
   const settings = await window.bondStorage.getSettings();
+  setupPlatformToggles(settings);
 
   const halfLifeInput = document.getElementById('decay-halflife');
   const halfLifeVal = document.getElementById('decay-halflife-val');
@@ -908,6 +1196,20 @@ async function loadSettingsForm() {
   const weightReplyVal = document.getElementById('weight-reply-val');
   const weightLikeInput = document.getElementById('weight-like');
   const weightLikeVal = document.getElementById('weight-like-val');
+  const groupInputs = {
+    windowHours: document.getElementById('group-window-hours'),
+    activeMin: document.getElementById('group-active-min'),
+    energeticMin: document.getElementById('group-energetic-min'),
+    hyperactiveWindowHours: document.getElementById('group-hyper-window'),
+    hyperactiveMin: document.getElementById('group-hyper-min')
+  };
+  const groupVals = {
+    windowHours: document.getElementById('group-window-hours-val'),
+    activeMin: document.getElementById('group-active-min-val'),
+    energeticMin: document.getElementById('group-energetic-min-val'),
+    hyperactiveWindowHours: document.getElementById('group-hyper-window-val'),
+    hyperactiveMin: document.getElementById('group-hyper-min-val')
+  };
 
   halfLifeInput.value = settings.decayHalfLifeDays || 14;
   halfLifeVal.innerText = `${halfLifeInput.value} days`;
@@ -924,6 +1226,23 @@ async function loadSettingsForm() {
 
   weightLikeInput.value = weights.like || 2;
   weightLikeVal.innerText = `${weightLikeInput.value} pts`;
+
+  const groupCfg = settings.groupActivity || {};
+  const groupDefaults = { windowHours: 20, activeMin: 21, energeticMin: 50, hyperactiveWindowHours: 1, hyperactiveMin: 99 };
+  Object.keys(groupInputs).forEach((key) => {
+    const input = groupInputs[key];
+    const val = groupVals[key];
+    if (!input || !val) return;
+    input.value = groupCfg[key] !== undefined ? groupCfg[key] : groupDefaults[key];
+    val.innerText = key.includes('Window') || key === 'windowHours'
+      ? `${input.value} hour${input.value === '1' ? '' : 's'}`
+      : String(input.value);
+    input.addEventListener('input', () => {
+      val.innerText = key.includes('Window') || key === 'windowHours'
+        ? `${input.value} hour${input.value === '1' ? '' : 's'}`
+        : String(input.value);
+    });
+  });
 
   halfLifeInput.addEventListener('input', () => halfLifeVal.innerText = `${halfLifeInput.value} days`);
   graceInput.addEventListener('input', () => graceVal.innerText = `${graceInput.value} days`);
@@ -977,12 +1296,33 @@ async function loadSettingsForm() {
         replySent: parseInt(weightReplyInput.value, 10),
         replyReceived: parseInt(weightReplyInput.value, 10),
         like: parseInt(weightLikeInput.value, 10)
+      },
+      groupActivity: {
+        windowHours: groupInputs.windowHours ? parseInt(groupInputs.windowHours.value, 10) : 20,
+        activeMin: groupInputs.activeMin ? parseInt(groupInputs.activeMin.value, 10) : 21,
+        energeticMin: groupInputs.energeticMin ? parseInt(groupInputs.energeticMin.value, 10) : 50,
+        hyperactiveWindowHours: groupInputs.hyperactiveWindowHours ? parseInt(groupInputs.hyperactiveWindowHours.value, 10) : 1,
+        hyperactiveMin: groupInputs.hyperactiveMin ? parseInt(groupInputs.hyperactiveMin.value, 10) : 99
       }
     });
     saveBtn.innerText = '✓ Preferences Saved';
     setTimeout(() => {
       saveBtn.innerText = 'Save Preferences';
     }, 1500);
+  });
+}
+
+// One delegated listener for all "open profile" cards. Inline onclick handlers
+// are blocked by the extension page CSP and show up as errors.
+if (!window.__bondProfileOpenBound) {
+  window.__bondProfileOpenBound = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target && event.target.closest
+      ? event.target.closest('[data-open-url]')
+      : null;
+    if (!target) return;
+    const url = target.getAttribute('data-open-url');
+    if (url && chrome.tabs) chrome.tabs.create({ url });
   });
 }
 
@@ -996,7 +1336,7 @@ function renderRadarTab() {
   const dormantList = document.getElementById('dormant-list');
 
   // Compute local engagement memory metrics
-  const memory = BondScoring.analyzeEngagementMemory(cachedUsers);
+  const memory = BondScoring.analyzeEngagementMemory(cachedUsers.filter(matchesPlatform));
 
   // Update Global Balance Card
   const badgeEl = document.getElementById('eng-balance-badge');
@@ -1024,8 +1364,8 @@ function renderRadarTab() {
       supportersList.innerHTML = topSupporters.map(u => {
         const crm = getCRMStatusForUser(u);
         return `
-          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X">
-            <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}">
+            <div class="radar-item-left" data-open-url="${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}">
               ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#ec4899;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
               <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
               <span class="popup-crm-pill ${crm.id}">${crm.label}</span>
@@ -1035,7 +1375,7 @@ function renderRadarTab() {
         `;
       }).join('');
     } else {
-      supportersList.innerHTML = `<div class="radar-empty">No supporter data yet. Interact on X to build memory!</div>`;
+      supportersList.innerHTML = `<div class="radar-empty">No supporter data yet. Interact on a connected platform to build memory!</div>`;
     }
   }
 
@@ -1044,8 +1384,8 @@ function renderRadarTab() {
     const topOutbound = memory.topEngagedByYou.slice(0, 5);
     if (topOutbound.length > 0) {
       outboundList.innerHTML = topOutbound.map(u => `
-        <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X">
-          <div class="radar-item-left" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+        <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}">
+          <div class="radar-item-left" data-open-url="${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}">
             ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
             <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
           </div>
@@ -1090,7 +1430,7 @@ function renderRadarTab() {
   // 4. Relationship Signals (Follow-backs, Unfollows, Blocks)
   const signalsRadarList = document.getElementById('signals-radar-list');
   if (signalsRadarList) {
-    const signalUsers = cachedUsers.filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou !== null)).slice(0, 6);
+    const signalUsers = cachedUsers.filter(matchesPlatform).filter(u => u.signals && (u.signals.isBlocked || u.signals.isMutual || u.signals.theyFollowYou !== null)).slice(0, 6);
     if (signalUsers.length > 0) {
       signalsRadarList.innerHTML = signalUsers.map(u => {
         const fRel = typeof BondScoring !== 'undefined' && BondScoring.getFollowRelationship
@@ -1099,7 +1439,7 @@ function renderRadarTab() {
         let label = fRel ? fRel.badgeText : '🤝 Mutual Follow';
         let color = fRel ? fRel.color : '#00ba7c';
         return `
-          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)} on X" onclick="chrome.tabs.create({url:'https://x.com/${escapeHtml(u.handle)}'})">
+          <div class="radar-item" style="cursor:pointer;" title="Click to view @${escapeHtml(u.handle)}" data-open-url="${escapeHtml(BondPlatforms.profileUrl(u.platform || 'x', u.handle))}">
             <div class="radar-item-left">
               ${u.avatarUrl ? `<img class="radar-item-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">` : `<div class="radar-item-avatar" style="background:#1d9bf0;color:#fff;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;">${escapeHtml(u.handle.charAt(0).toUpperCase())}</div>`}
               <span class="radar-item-handle">@${escapeHtml(u.handle)}</span>
@@ -1109,13 +1449,13 @@ function renderRadarTab() {
         `;
       }).join('');
     } else {
-      signalsRadarList.innerHTML = `<div class="radar-empty">No relationship signals detected yet. Visit profiles on X to observe!</div>`;
+      signalsRadarList.innerHTML = `<div class="radar-empty">No relationship signals detected yet. Visit profiles on a connected platform to observe!</div>`;
     }
   }
 
   // 5. Active streaks
   if (streaksList) {
-    const streakUsers = cachedUsers.filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
+    const streakUsers = cachedUsers.filter(matchesPlatform).filter(u => (u.streakDays || 0) > 0).sort((a, b) => (b.streakDays || 0) - (a.streakDays || 0));
     if (streakUsers.length > 0) {
       streaksList.innerHTML = streakUsers.map(u => `
         <div class="radar-item">
@@ -1281,7 +1621,7 @@ function setupDmFilterPills() {
       pills.forEach(p => p.classList.remove('active'));
       pill.classList.add('active');
       currentDmFilter = pill.dataset.dmFilter || 'all';
-      renderDmSubSections(cachedDms, currentDmFilter);
+      renderDmSubSections(cachedDms.filter(matchesPlatform), currentDmFilter);
     });
   });
 }
@@ -1290,7 +1630,7 @@ function setupDmSearchHandler() {
   const searchInput = document.getElementById('dm-search-input');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
-      renderDmSubSections(cachedDms, currentDmFilter);
+      renderDmSubSections(cachedDms.filter(matchesPlatform), currentDmFilter);
     });
   }
 }
@@ -1302,14 +1642,13 @@ async function renderDmsTab() {
   const activeAcc = (currentUsername && currentUsername !== 'you') ? currentUsername : null;
   const allDms = await window.bondStorage.getAllDmConversations(activeAcc);
   cachedDms = allDms;
+  const scopedDms = allDms.filter(matchesPlatform);
 
-  const total = allDms.length;
-  const waitingList = allDms.filter(d => d.waitingForUserReply === true);
-  const waitingCount = waitingList.length;
+  const total = scopedDms.length;
 
   const allReplyTimes = [];
   let streakSum = 0;
-  allDms.forEach(d => {
+  scopedDms.forEach(d => {
     if (d.medianReplyTimeMs > 0) allReplyTimes.push(d.medianReplyTimeMs);
     if (d.dailyStreak > 1) streakSum++;
   });
@@ -1321,21 +1660,14 @@ async function renderDmsTab() {
   }
 
   const statTotal = document.getElementById('dm-stat-total');
-  const statWaiting = document.getElementById('dm-stat-waiting');
   const statSpeed = document.getElementById('dm-stat-speed');
   const statStreaks = document.getElementById('dm-stat-streaks');
-  const statBoxWaiting = document.getElementById('dm-stat-box-waiting');
 
   if (statTotal) statTotal.innerText = total;
-  if (statWaiting) statWaiting.innerText = waitingCount;
   if (statSpeed) statSpeed.innerText = avgSpeedText;
   if (statStreaks) statStreaks.innerText = streakSum;
 
-  if (statBoxWaiting) {
-    statBoxWaiting.classList.toggle('has-waiting', waitingCount > 0);
-  }
-
-  renderDmSubSections(allDms, currentDmFilter);
+  renderDmSubSections(scopedDms, currentDmFilter);
 }
 
 function renderDmSubSections(allDms, filter = 'all') {
@@ -1352,50 +1684,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     });
   }
 
-  // 1. Waiting for your reply
-  const sectionWaiting = document.getElementById('dm-section-waiting');
-  const listWaiting = document.getElementById('dm-waiting-list');
-  const countWaiting = document.getElementById('dm-waiting-count');
-  const waitingItems = filtered.filter(d => d.waitingForUserReply === true);
-
-  if (countWaiting) countWaiting.innerText = waitingItems.length;
-  if (sectionWaiting && listWaiting) {
-    const showWaiting = filter === 'waiting' || (filter === 'all' && waitingItems.length > 0);
-    sectionWaiting.style.display = showWaiting ? 'block' : 'none';
-
-    if (waitingItems.length === 0) {
-      listWaiting.innerHTML = '<div class="dm-empty-state">🎉 All caught up! Zero conversations waiting on your reply.</div>';
-    } else {
-      listWaiting.innerHTML = waitingItems.map(d => {
-        const title = d.title || (d.participants && d.participants[0]) || d.convId;
-        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
-        const avatar = details ? details.avatarUrl : '';
-        const waitTime = d.formattedWaitingDuration || (BondScoring.formatDuration ? BondScoring.formatDuration(d.waitingDurationMs || 0) : 'recently');
-        const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
-
-        return `
-          <div class="dm-action-row" data-conv="${escapeHtml(d.convId)}">
-            <div class="dm-action-avatar">
-              ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
-            </div>
-            <div class="dm-action-meta">
-              <div class="dm-action-title-row">
-                <span class="dm-action-title">${escapeHtml(title)}</span>
-                <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.shortLabel}</span>
-              </div>
-              <div class="dm-action-sub">
-                <span class="dm-wait-tag">⏳ Waiting ${waitTime}</span>
-                <span>• ${d.replyRate ?? 100}% reply rate</span>
-              </div>
-            </div>
-            <button class="dm-reply-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Reply ↗</button>
-          </div>
-        `;
-      }).join('');
-    }
-  }
-
-  // 2. Who Should I Message? (Anti-Fading Smart List)
+  // Who Should I Message? (Anti-Fading Smart List)
   const sectionCold = document.getElementById('dm-section-cold');
   const listCold = document.getElementById('dm-cold-list');
   const countCold = document.getElementById('dm-cold-count');
@@ -1424,6 +1713,7 @@ function renderDmSubSections(allDms, filter = 'all') {
             <div class="dm-action-meta">
               <div class="dm-action-title-row">
                 <span class="dm-action-title">${escapeHtml(title)}</span>
+                ${platformChip(d)}
                 <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
               </div>
               <div class="dm-action-sub">
@@ -1431,7 +1721,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <span>• Was Bond ${Math.round(d.bondScore || 0)}</span>
               </div>
             </div>
-            <button class="dm-reconnect-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Say Hi ↗</button>
+            <button class="dm-reconnect-btn" data-url="${messageUrl(d)}">Say Hi ↗</button>
           </div>
         `;
       }).join('');
@@ -1448,11 +1738,11 @@ function renderDmSubSections(allDms, filter = 'all') {
 
   if (countClosest) countClosest.innerText = closestItems.length;
   if (sectionClosest && listClosest) {
-    const showClosest = filter !== 'groups' && filter !== 'cold' && filter !== 'waiting';
+    const showClosest = filter !== 'groups' && filter !== 'cold';
     sectionClosest.style.display = showClosest ? 'block' : 'none';
 
     if (closestItems.length === 0) {
-      listClosest.innerHTML = '<div class="dm-empty-state">No direct messages tracked yet. Chat on X to build your private bond scores!</div>';
+      listClosest.innerHTML = '<div class="dm-empty-state">No direct messages tracked yet. Chat on a connected platform to build your private bond scores!</div>';
     } else {
       listClosest.innerHTML = closestItems.map((d, idx) => {
         const title = d.title || (d.participants && d.participants[0]) || d.convId;
@@ -1474,6 +1764,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <div class="dm-closest-names">
                   <div class="dm-closest-name-row">
                     <strong class="dm-closest-name">${escapeHtml(title)}</strong>
+                    ${platformChip(d)}
                     <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
                   </div>
                   <div class="dm-closest-metrics-row">
@@ -1495,7 +1786,7 @@ function renderDmSubSections(allDms, filter = 'all') {
             </div>
             <div class="dm-card-balance-labels">
               <span>You: ${d.sentCount || 0} (${sentPct}%)</span>
-              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open ↗</button>
+              <button class="dm-open-btn" data-url="${messageUrl(d)}">Open ↗</button>
               <span>Them: ${d.receivedCount || 0} (${recvPct}%)</span>
             </div>
           </div>
@@ -1517,7 +1808,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     sectionGroups.style.display = showGroups ? 'block' : 'none';
 
     if (groupItems.length === 0) {
-      listGroups.innerHTML = '<div class="dm-empty-state">No group chats detected yet. Participate in group conversations on X to observe group energy!</div>';
+      listGroups.innerHTML = '<div class="dm-empty-state">No group chats detected yet. Participate in group conversations on a connected platform to observe group energy!</div>';
     } else {
       listGroups.innerHTML = groupItems.map(d => {
         const energyLevel = d.groupEnergyLevel || BondScoring.getGroupEnergyLevel(d.groupEnergyScore || 0);
@@ -1531,6 +1822,7 @@ function renderDmSubSections(allDms, filter = 'all') {
                 <span class="dm-group-icon">👥</span>
                 <div>
                   <strong class="dm-group-title">${escapeHtml(d.title || 'Group Chat')}</strong>
+                  ${platformChip(d, 'dm-group-platform')}
                   <div class="dm-group-sub">${activeMembers.length || (d.participants ? d.participants.length : 1)} active participants</div>
                 </div>
               </div>
@@ -1548,7 +1840,7 @@ function renderDmSubSections(allDms, filter = 'all') {
 
             <div class="dm-group-footer">
               <span class="dm-group-activity">${d.isDying ? '⚠️ Group is quiet / dormant' : `🔥 ${d.totalMessages || 0} messages recorded`}</span>
-              <button class="dm-open-btn" data-url="https://x.com/messages/${escapeHtml(d.convId)}">Open Group ↗</button>
+              <button class="dm-open-btn" data-url="${messageUrl(d)}">Open Group ↗</button>
             </div>
           </div>
         `;
@@ -1584,7 +1876,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     sectionMemories.style.display = showMemories ? 'block' : 'none';
 
     if (topLifetime.length === 0 && allMilestones.length === 0) {
-      listMemories.innerHTML = '<div class="dm-empty-state">💭 No chat memories recorded yet. Chat on X to build your permanent memory ledger!</div>';
+      listMemories.innerHTML = '<div class="dm-empty-state">💭 No chat memories recorded yet. Chat on a connected platform to build your permanent memory ledger!</div>';
     } else {
       let html = '';
 

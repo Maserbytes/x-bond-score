@@ -78,6 +78,36 @@ class BondUI {
   }
 
   /**
+   * Single source of truth for badge markup.
+   * `signature` lets the scanner skip re-writing identical content, which is
+   * what made Threads badges flicker on every DOM mutation after a like.
+   */
+  buildBadgeInner(scoreVal, tier, crm, user) {
+    const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
+    const trendClass = user.trend ? `trend-${user.trend}` : '';
+    const body = `
+          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
+          <span class="bond-emoji">${tier.emoji}</span>
+          <span class="bond-score-num">${scoreVal}</span>
+          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
+          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
+          ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
+        `;
+    return {
+      body,
+      html: `<span class="bond-badge-inner">${body}</span>`,
+      signature: [
+        user.isPinned ? 'pin' : '',
+        tier.id || tier.emoji || '',
+        scoreVal,
+        crm ? crm.id : '',
+        user.streakDays || 0,
+        trendSymbol
+      ].join('|')
+    };
+  }
+
+  /**
    * Injects a badge next to a user handle on tweets or profile headers.
    * Completely immune to async race duplication.
    */
@@ -146,8 +176,8 @@ class BondUI {
       const tier = BondScoring.getTier(user.currentScore);
       const scoreVal = Math.round(user.currentScore || 0);
 
-      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+      const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+      const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
       const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
 
       const badge = document.createElement('span');
@@ -157,19 +187,9 @@ class BondUI {
       badge.style.setProperty('--bond-color', tier.color);
       badge.style.setProperty('--bond-bg', tier.bg);
 
-      const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
-      const trendClass = user.trend ? `trend-${user.trend}` : '';
-
-      badge.innerHTML = `
-        <span class="bond-badge-inner">
-          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
-          <span class="bond-emoji">${tier.emoji}</span>
-          <span class="bond-score-num">${scoreVal}</span>
-          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
-          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
-          ${trendSymbol ? `<span class="bond-trend ${trendClass}">${trendSymbol}</span>` : ''}
-        </span>
-      `;
+      const rendered = this.buildBadgeInner(scoreVal, tier, crm, user);
+      badge.innerHTML = rendered.html;
+      badge.dataset.bondSig = rendered.signature;
 
       badge.addEventListener('click', (e) => {
         e.preventDefault();
@@ -253,23 +273,14 @@ class BondUI {
   }
 
   /**
-   * Immediately bumps the badge score and shows pulse animation with zero latency
+   * Gives instant feedback on an interaction.
+   * The number is intentionally left alone: guessing "+3" and then replacing it
+   * with the real recomputed score is what produced the Threads flicker.
    */
   optimisticBoost(handle, pointBoost = 4) {
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
-    const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
+    const badges = Array.from(document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`)).slice(0, 4);
     badges.forEach((b) => {
-      const scoreNumEl = b.querySelector('.bond-score-num');
-      const emojiEl = b.querySelector('.bond-emoji');
-      if (scoreNumEl) {
-        const cur = parseFloat(scoreNumEl.innerText) || 0;
-        const next = Math.min(100, Math.round(cur + pointBoost));
-        scoreNumEl.innerText = next;
-        const tier = BondScoring.getTier(next);
-        b.style.setProperty('--bond-color', tier.color);
-        b.style.setProperty('--bond-bg', tier.bg);
-        if (emojiEl) emojiEl.innerText = tier.emoji;
-      }
       b.classList.remove('bond-badge-bump');
       void b.offsetWidth;
       b.classList.add('bond-badge-bump');
@@ -296,14 +307,15 @@ class BondUI {
 
     const tier = BondScoring.getTier(user.currentScore);
     const scoreVal = Math.round(user.currentScore || 0);
-    const trendSymbol = user.trend === 'rising' ? '▲' : user.trend === 'decaying' ? '▼' : '';
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     const crm = user.crmStatusData || (typeof BondScoring !== 'undefined' && BondScoring.calculateCRMStatus ? BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0) : null);
+    const rendered = this.buildBadgeInner(scoreVal, tier, crm, user);
 
     const badges = document.querySelectorAll(`.bond-badge[data-bond-handle="${cleanHandle}"]`);
     const seenParents = new Set();
+    let changed = false;
     badges.forEach((b) => {
       if (b.parentElement) {
         if (seenParents.has(b.parentElement)) {
@@ -312,27 +324,27 @@ class BondUI {
         }
         seenParents.add(b.parentElement);
       }
-      b.style.setProperty('--bond-color', tier.color);
-      b.style.setProperty('--bond-bg', tier.bg);
-      b.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
-      const inner = b.querySelector('.bond-badge-inner');
-      if (inner) {
-        inner.innerHTML = `
-          ${user.isPinned ? `<span class="bond-pin-star" title="VIP Mutual">⭐</span>` : ''}
-          <span class="bond-emoji">${tier.emoji}</span>
-          <span class="bond-score-num">${scoreVal}</span>
-          ${crm && crm.id !== 'stranger' ? `<span class="bond-crm-pill bond-crm-${crm.id}">${crm.label}</span>` : ''}
-          ${user.streakDays > 1 ? `<span class="bond-streak-tag">🔥${user.streakDays}d</span>` : ''}
-          ${trendSymbol ? `<span class="bond-trend trend-${user.trend}">${trendSymbol}</span>` : ''}
-        `;
+      // Every DOM write on a scanned badge costs a repaint, so only touch the
+      // element when its rendered content actually differs.
+      if (b.dataset.bondSig !== rendered.signature) {
+        b.dataset.bondSig = rendered.signature;
+        b.style.setProperty('--bond-color', tier.color);
+        b.style.setProperty('--bond-bg', tier.bg);
+        b.title = `BondScore: ${scoreVal} (${tier.name}) • CRM: ${crm ? crm.label : 'Mutual'} - Click for details`;
+        const inner = b.querySelector('.bond-badge-inner');
+        if (inner) inner.innerHTML = rendered.body;
+        changed = true;
       }
-      if (shouldAnimate) {
+    });
+
+    if (shouldAnimate && changed) {
+      badges.forEach((b) => {
         b.classList.remove('bond-badge-bump');
         void b.offsetWidth;
         b.classList.add('bond-badge-bump');
         b.addEventListener('animationend', () => b.classList.remove('bond-badge-bump'), { once: true });
-      }
-    });
+      });
+    }
 
     // Also update follow relationship badge on profile header
     await this.updateProfileFollowBadge(cleanHandle, user.signals);
@@ -371,8 +383,8 @@ class BondUI {
     const scoreVal = Math.round(scoringResult.score || 0);
     const reciprocity = scoringResult.reciprocity;
 
-    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.mentionsSent || 0))) || 0;
-    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
+    const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent ?? user.stats.likes ?? 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
+    const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     const crm = scoringResult.crmStatus || user.crmStatusData || BondScoring.calculateCRMStatus(scoreVal, sSent, sRecv, user.streakDays || 0);
 
     const dmEvents = events.filter(e => e.type && e.type.startsWith('dm_'));
@@ -542,8 +554,8 @@ class BondUI {
             <div class="bond-stat-lbl">📥 Received</div>
           </div>
           <div class="bond-stat-item">
-            <div class="bond-stat-val">${(user.stats.likes || 0) + (user.stats.quotes || 0)}</div>
-            <div class="bond-stat-lbl">❤️ Likes & Quotes</div>
+            <div class="bond-stat-val">${(user.stats.likes || 0) + (user.stats.reposts || 0) + (user.stats.quotes || 0)}</div>
+            <div class="bond-stat-lbl">❤️ Likes · 🔁 Reposts</div>
           </div>
           <div class="bond-stat-item">
             <div class="bond-stat-val">${user.streakDays || 0}d</div>

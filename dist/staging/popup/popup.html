@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>BondScore for X</title>
+  <title>BondScore</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
           </svg>
         </div>
         <div>
-          <h1 class="brand-title">BondScore <span class="badge-v11">v1.3.1</span></h1>
+          <h1 class="brand-title">BondScore <span class="badge-v11">v1.4.0</span></h1>
           <div class="creator-tag">Created by <a href="https://x.com/MaserSuspended" target="_blank" class="creator-link">@MaserSuspended</a></div>
         </div>
       </div>
@@ -27,7 +27,7 @@
           <span class="theme-icon theme-icon-light" id="theme-icon-light" style="display:none;">☀️</span>
           <span class="theme-toggle-label" id="theme-toggle-label">Auto</span>
         </button>
-        <div class="header-status-dot" title="Active on X"></div>
+        <div class="header-status-dot" title="Local tracking active"></div>
       </div>
     </header>
 
@@ -87,6 +87,14 @@
           </div>
         </div>
 
+        <!-- Platform segmented capsule filter -->
+        <div class="platform-capsule-bar" data-platform-scope="leaderboard" role="tablist" aria-label="Filter contacts by platform">
+          <button class="platform-capsule active" data-platform-filter="all" role="tab" aria-selected="true">🌐 All Platforms</button>
+          <button class="platform-capsule" data-platform-filter="x" role="tab" aria-selected="false">𝕏 X</button>
+          <button class="platform-capsule" data-platform-filter="threads" role="tab" aria-selected="false">🧵 Threads</button>
+          <button class="platform-capsule" data-platform-filter="bluesky" role="tab" aria-selected="false">🦋 Bluesky</button>
+        </div>
+
         <!-- Filter Pills & Search -->
         <div class="search-filter-section">
           <div class="search-bar-wrapper">
@@ -123,10 +131,6 @@
             <div class="stat-number" id="dm-stat-total">0</div>
             <div class="stat-label">Conversations</div>
           </div>
-          <div class="stat-box" id="dm-stat-box-waiting">
-            <div class="stat-number" id="dm-stat-waiting">0</div>
-            <div class="stat-label">Waiting on You</div>
-          </div>
           <div class="stat-box">
             <div class="stat-number" id="dm-stat-speed">-</div>
             <div class="stat-label">Avg Reply Speed</div>
@@ -137,6 +141,14 @@
           </div>
         </div>
 
+        <!-- Platform segmented capsule filter -->
+        <div class="platform-capsule-bar" data-platform-scope="dms" role="tablist" aria-label="Filter conversations by platform">
+          <button class="platform-capsule active" data-platform-filter="all" role="tab" aria-selected="true">🌐 All Platforms</button>
+          <button class="platform-capsule" data-platform-filter="x" role="tab" aria-selected="false">𝕏 X</button>
+          <button class="platform-capsule" data-platform-filter="threads" role="tab" aria-selected="false">🧵 Threads</button>
+          <button class="platform-capsule" data-platform-filter="bluesky" role="tab" aria-selected="false">🦋 Bluesky</button>
+        </div>
+
         <!-- Filter Pills & Search for DMs -->
         <div class="search-filter-section">
           <div class="search-bar-wrapper">
@@ -144,23 +156,12 @@
           </div>
           <div class="filter-pills" id="dm-filter-pills">
             <button class="filter-pill active" data-dm-filter="all">All</button>
-            <button class="filter-pill" data-dm-filter="waiting">⏳ Waiting on You</button>
             <button class="filter-pill" data-dm-filter="streaks">🔥 Streaks</button>
             <button class="filter-pill" data-dm-filter="cold">🧊 Going Cold</button>
             <button class="filter-pill" data-dm-filter="closest">👑 Closest Friends</button>
             <button class="filter-pill" data-dm-filter="groups">👥 Groups</button>
             <button class="filter-pill" data-dm-filter="memories">💭 Memories</button>
           </div>
-        </div>
-
-        <!-- Section 1: ⏳ Waiting for Your Reply (Actionable) -->
-        <div class="radar-card dm-section-card" id="dm-section-waiting" style="display:none;">
-          <div class="radar-card-title dm-section-title">
-            <span>⏳ Waiting For Your Reply</span>
-            <span class="dm-count-badge" id="dm-waiting-count">0</span>
-          </div>
-          <p class="settings-hint">Inbound messages waiting on your response. Keep your reply streaks alive!</p>
-          <div class="dm-mini-list" id="dm-waiting-list"></div>
         </div>
 
         <!-- Section 2: 🧊 Who Should I Message? (Anti-Fading Smart List) -->
@@ -181,7 +182,7 @@
           </div>
           <p class="settings-hint">Private ranked leaderboard of your strongest 1:1 direct message relationships.</p>
           <div class="dm-mini-list" id="dm-closest-list">
-            <div class="dm-empty-state">No direct messages tracked yet. Chat on X to build your private bond scores!</div>
+            <div class="dm-empty-state">No direct messages tracked yet. Chat on a connected platform to build your private bond scores!</div>
           </div>
         </div>
 
@@ -205,7 +206,7 @@
           </div>
           <p class="settings-hint">Permanent memory ledger of your all-time chat exchanges and milestones ever since BondScore has been active.</p>
           <div class="dm-mini-list" id="dm-memories-list">
-            <div class="dm-empty-state">No chat milestones recorded yet. Chat on X to build your permanent memory ledger!</div>
+            <div class="dm-empty-state">No chat milestones recorded yet. Chat on a connected platform to build your permanent memory ledger!</div>
           </div>
         </div>
       </section>
@@ -217,21 +218,147 @@
             <h3>🪐 Solar System Orbit</h3>
             <p class="settings-hint">Concentric orbit rings showing your closest bonds around your gravity center.</p>
           </div>
-          <button class="orbit-download-btn" id="orbit-download-btn" title="Export high-resolution orbit card image to share on X">📸 Share Image</button>
+          <button class="orbit-download-btn" id="orbit-download-btn" title="Export high-resolution orbit card image to share">📸 Share Image</button>
         </div>
 
         <div class="orbit-canvas-container">
-          <canvas id="orbit-canvas" width="370" height="370"></canvas>
+          <canvas id="orbit-canvas" width="420" height="420"></canvas>
           <div class="orbit-legend">
-            <span class="legend-item"><span class="legend-dot core"></span> Core (80+)</span>
-            <span class="legend-item"><span class="legend-dot close"></span> Close (50-79)</span>
-            <span class="legend-item"><span class="legend-dot casual"></span> Orbit (20-49)</span>
+            <span class="legend-item"><span class="legend-dot core"></span> Core (70+)</span>
+            <span class="legend-item"><span class="legend-dot close"></span> Close (35-69)</span>
+            <span class="legend-item"><span class="legend-dot casual"></span> Orbit (1-34)</span>
           </div>
         </div>
       </section>
 
       <!-- Tab 4: Settings -->
       <section id="tab-settings" class="tab-pane">
+        <!-- Quick network switches: always visible at the top of Settings -->
+        <div class="settings-group quick-platform-settings">
+          <h3>⚡ Quick Network Switches</h3>
+          <p class="settings-hint">Turn a network on or off instantly. Detailed Timeline and DM switches are just below.</p>
+          <div class="quick-platform-row">
+            <label class="quick-platform-toggle"><input type="checkbox" id="quick-platform-x" data-quick-platform="x" checked><span>𝕏 X</span></label>
+            <label class="quick-platform-toggle"><input type="checkbox" id="quick-platform-threads" data-quick-platform="threads"><span>🧵 Threads</span></label>
+            <label class="quick-platform-toggle"><input type="checkbox" id="quick-platform-bluesky" data-quick-platform="bluesky"><span>🦋 Bluesky</span></label>
+          </div>
+        </div>
+
+        <!-- Platform Controls -->
+        <div class="settings-group platform-settings-group">
+          <h3>🌐 Platforms & Observation Scope</h3>
+          <p class="settings-hint">BondScore only runs on the networks you enable here. Each platform keeps its own isolated CRM records, and every switch is stored locally on this device.</p>
+
+          <div class="platform-card" data-platform-card="x">
+            <div class="platform-card-head">
+              <span class="platform-card-icon platform-icon-x">𝕏</span>
+              <div class="platform-card-title">
+                <strong>X (Twitter)</strong>
+                <span class="platform-card-sub">Timeline, profiles, DMs & group chats</span>
+              </div>
+              <label class="switch" title="Enable or disable all X tracking">
+                <input type="checkbox" id="platform-x-enabled" data-platform-master="x" checked>
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-sub-toggles" data-platform-subs="x">
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>Timeline Tracking</strong>
+                  <div class="range-sub">Badges, likes, replies & follow signals</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-x-timeline" data-platform-sub="x" data-feature="timeline" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>DMs & Conversations</strong>
+                  <div class="range-sub">Private metadata only — message bodies are never read</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-x-dms" data-platform-sub="x" data-feature="dms" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="platform-card" data-platform-card="threads">
+            <div class="platform-card-head">
+              <span class="platform-card-icon platform-icon-threads">🧵</span>
+              <div class="platform-card-title">
+                <strong>Threads</strong>
+                <span class="platform-card-sub">Feed engagement, profile badges & DM metadata</span>
+              </div>
+              <label class="switch" title="Enable or disable all Threads tracking">
+                <input type="checkbox" id="platform-threads-enabled" data-platform-master="threads">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-sub-toggles" data-platform-subs="threads">
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>Timeline Tracking</strong>
+                  <div class="range-sub">Badges, likes, reposts & follow signals</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-threads-timeline" data-platform-sub="threads" data-feature="timeline" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>DMs & Conversations</strong>
+                  <div class="range-sub">Private metadata only — message bodies are never read</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-threads-dms" data-platform-sub="threads" data-feature="dms" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="platform-card" data-platform-card="bluesky">
+            <div class="platform-card-head">
+              <span class="platform-card-icon platform-icon-bluesky">🦋</span>
+              <div class="platform-card-title">
+                <strong>Bluesky</strong>
+                <span class="platform-card-sub">AT Protocol feeds, follows-you detection & chat metadata</span>
+              </div>
+              <label class="switch" title="Enable or disable all Bluesky tracking">
+                <input type="checkbox" id="platform-bluesky-enabled" data-platform-master="bluesky">
+                <span class="slider round"></span>
+              </label>
+            </div>
+            <div class="platform-sub-toggles" data-platform-subs="bluesky">
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>Timeline Tracking</strong>
+                  <div class="range-sub">Badges, likes, reposts & follow signals</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-bluesky-timeline" data-platform-sub="bluesky" data-feature="timeline" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+              <div class="setting-item-toggle compact">
+                <div class="setting-toggle-label">
+                  <strong>DMs & Conversations</strong>
+                  <div class="range-sub">Private metadata only — message bodies are never read</div>
+                </div>
+                <label class="switch small">
+                  <input type="checkbox" id="platform-bluesky-dms" data-platform-sub="bluesky" data-feature="dms" checked>
+                  <span class="slider round"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="privacy-footnote">🔒 Zero backend · zero telemetry · nothing leaves this device</div>
+        </div>
+
         <!-- Appearance & Theme Selector -->
         <div class="settings-group">
           <h3>🎨 Appearance & Theme</h3>
@@ -299,6 +426,52 @@
               <span class="setting-val-badge" id="weight-like-val">2 pts</span>
             </div>
             <input type="range" id="weight-like" min="1" max="10" value="2" step="1">
+          </div>
+        </div>
+
+        <!-- Group Chat Badge Thresholds -->
+        <div class="settings-group">
+          <h3>🔥 Group Chat Badges</h3>
+          <p class="settings-hint">A group is only Active above the message threshold in the chosen window. Below it, the badge shows Inactive.</p>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-window-hours">Activity window</label>
+              <span class="setting-val-badge" id="group-window-hours-val">20 hours</span>
+            </div>
+            <input type="range" id="group-window-hours" min="2" max="72" value="20" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-active-min">🔥 Active — messages</label>
+              <span class="setting-val-badge" id="group-active-min-val">21</span>
+            </div>
+            <input type="range" id="group-active-min" min="5" max="100" value="21" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-energetic-min">⚡ Energetic — messages</label>
+              <span class="setting-val-badge" id="group-energetic-min-val">50</span>
+            </div>
+            <input type="range" id="group-energetic-min" min="10" max="200" value="50" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-hyper-window">💥 Hyperactive window</label>
+              <span class="setting-val-badge" id="group-hyper-window-val">1 hour</span>
+            </div>
+            <input type="range" id="group-hyper-window" min="1" max="6" value="1" step="1">
+          </div>
+
+          <div class="setting-item">
+            <div class="setting-label-row">
+              <label for="group-hyper-min">💥 Hyperactive — messages</label>
+              <span class="setting-val-badge" id="group-hyper-min-val">99</span>
+            </div>
+            <input type="range" id="group-hyper-min" min="25" max="300" value="99" step="1">
           </div>
         </div>
 
@@ -377,7 +550,7 @@
           <div class="radar-card-title">🌟 Top Supporters (Engage With You Most)</div>
           <p class="settings-hint">Accounts that reply to your posts and message you most often.</p>
           <div id="supporters-list" class="radar-mini-list">
-            <div class="radar-empty">No supporter data yet. Interact on X to build memory!</div>
+            <div class="radar-empty">No supporter data yet. Interact on a connected platform to build memory!</div>
           </div>
         </div>
 
@@ -453,9 +626,10 @@
     </footer>
   </div>
 
+  <script src="../core/platforms.js"></script>
   <script src="../core/storage.js"></script>
   <script src="../core/scoring.js"></script>
   <script src="../core/deep-analyzer.js"></script>
   <script src="popup.js"></script>
-</body>
+<script id="bond-diag">window.addEventListener("error",function(e){document.title="ERR: "+(e.message||"")+" @"+(e.filename||"").split("/").pop()+":"+(e.lineno||0);});window.addEventListener("unhandledrejection",function(e){var r=e.reason||{};document.title="REJ: "+(r.message||r)+"";});</script>`r`n</body>
 </html>

@@ -1,0 +1,1053 @@
+/**
+ * BondScore - Threads & Bluesky Platform Adapters (v1.4.0)
+ *
+ * Passive, metadata-only observers for the non-X networks. Each adapter:
+ *   - identifies the signed-in account from authenticated navigation only
+ *   - injects inline bond badges next to handles in feeds and profiles
+ *   - records likes, reposts and replies as relationship events
+ *   - reads DM *metadata* (participants, direction, timestamps) and never text
+ *
+ * The X adapter still lives in content.js/detector.js and is completely
+ * untouched by this file.
+ */
+
+(function () {
+  if (window.__bondAdaptersLoaded) return;
+  window.__bondAdaptersLoaded = true;
+
+  const RESERVED = new Set([
+    'home', 'explore', 'search', 'notifications', 'messages', 'settings', 'login',
+    'signup', 'activity', 'search', 'feeds', 'profile', 'hashtag', 'about', 'privacy'
+  ]);
+
+  function cleanText(el) {
+    return el ? String(el.innerText || el.textContent || '').trim() : '';
+  }
+
+  function normalizeHandle(raw) {
+    return String(raw || '')
+      .trim()
+      .replace(/^@+/, '')
+      .replace(/^https?:\/\/[^/]+\/(?:@|profile\/)?/i, '')
+      .split(/[/?#]/)[0]
+      .toLowerCase();
+  }
+
+  function platformSettings() {
+    return (window.bondStorage && window.bondStorage.settingsCache) || {};
+  }
+
+  class BasePlatformAdapter {
+    constructor(id) {
+      this.id = id;
+      this.currentUser = null;
+      this.observer = null;
+      this.scanTimer = null;
+      this.pollTimer = null;
+      this.lastScanUrl = '';
+      this.inFlight = false;
+      this.attached = false;
+      this.settingsWatcher = false;
+      this.trackedContainers = new WeakSet();
+    }
+
+    get descriptor() {
+      return (window.BondPlatforms && window.BondPlatforms.get(this.id)) || { id: this.id, name: this.id };
+    }
+
+    async boot() {
+      if (!window.bondStorage) return;
+      this.watchSettings();
+      try {
+        await window.bondStorage.init();
+      } catch (err) {
+        console.warn('[BondScore] storage init failed:', (err && err.message) || err);
+        return;
+      }
+      window.bondStorage.setActivePlatform(this.id);
+      const settings = await window.bondStorage.getSettings();
+      if (!window.BondPlatforms || !window.BondPlatforms.isEnabled(settings, this.id)) {
+        console.log(`[BondScore] ${this.id} tracking is disabled in settings.`);
+        return false;
+      }
+      await this.refreshIdentity();
+      this.attach();
+      this.startObserver();
+      setTimeout(() => this.scan(), 700);
+      return true;
+    }
+
+    /** Start or stop observation as the popup toggles are changed. */
+    watchSettings() {
+      if (this.settingsWatcher) return;
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.onChanged) return;
+      this.settingsWatcher = true;
+      chrome.storage.onChanged.addListener((changes, areaName) => {
+        if (areaName !== 'local' || !changes.settings) return;
+        const settings = changes.settings.newValue || {};
+        const enabled = !window.BondPlatforms || window.BondPlatforms.isEnabled(settings, this.id);
+        if (enabled && !this.observer) {
+          this.boot().catch(() => {});
+        } else if (!enabled) {
+          this.stopObservation();
+        }
+      });
+    }
+
+    stopObservation() {
+      if (this.observer) {
+        this.observer.disconnect();
+        this.observer = null;
+      }
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+      }
+      if (this.scanTimer) {
+        clearTimeout(this.scanTimer);
+        this.scanTimer = null;
+      }
+    }
+
+    async refreshIdentity() {
+      let identity = null;
+      try {
+        identity = this.detectIdentity();
+      } catch (e) {
+        identity = null;
+      }
+      const stored = (await window.bondStorage.getCurrentUser()) || null;
+      const detectedHandle = identity && identity.handle ? normalizeHandle(identity.handle) : null;
+      // Use the stored account as the ledger key. DOM detection is only used
+      // to know which handle is "you" for badge suppression - switching the
+      // storage account on every scan can swap the active key back and forth
+      // and make scores flicker to 0.
+      const handle = stored || detectedHandle;
+      if (!handle) return null;
+      this.currentUser = normalizeHandle(handle);
+      // The ledger account can differ from the handle shown on this network.
+      // Keep them separate so "you" badges are suppressed correctly.
+      this.selfHandle = normalizeHandle(detectedHandle || stored || handle);
+      if (!stored && detectedHandle) {
+        window.bondStorage.currentUser = this.currentUser;
+      }
+      return this.currentUser;
+    }
+
+    startObserver() {
+      if (this.observer) return;
+      const root = document.body || document.documentElement;
+      if (!root) return;
+      this.observer = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          if (m.addedNodes && m.addedNodes.length > 0) {
+            this.scheduleScan();
+            return;
+          }
+        }
+      });
+      this.observer.observe(root, { childList: true, subtree: true });
+      this.pollTimer = setInterval(() => {
+        if (location.href !== this.lastScanUrl) {
+          this.lastScanUrl = location.href;
+          // Opening a reply composer rewrites the URL to the post's permalink,
+          // so a URL change must not drop the pending reply.
+          this.scan();
+        }
+      }, 900);
+    }
+
+    scheduleScan() {
+      if (this.scanTimer) return;
+      this.scanTimer = setTimeout(() => {
+        this.scanTimer = null;
+        this.scan();
+      }, 260);
+    }
+
+    async scan() {
+      if (this.inFlight) return;
+      this.inFlight = true;
+      try {
+        if (!window.BondPlatforms || !window.BondPlatforms.isEnabled(platformSettings(), this.id)) return;
+        await this.refreshIdentity();
+        const settings = platformSettings();
+        if (settings.showBadgesOnTimeline === false) {
+          // feed badges disabled, DM metadata may still run
+        } else {
+          await this.scanFeed();
+        }
+        await this.scanProfile();
+        await this.scanNotifications();
+        if (window.BondPlatforms.isFeatureEnabled(settings, this.id, 'dms')) await this.scanDms();
+      } catch (err) {
+        const message = String((err && err.message) || err || '');
+        // Fired by Chrome on the previous content script when the extension is
+        // reloaded. Harmless, and would otherwise show as an extension error.
+        if (/Extension context invalidated/i.test(message)) {
+          this.stopObservation();
+        } else {
+          console.warn(`[BondScore] ${this.id} scan error:`, message);
+        }
+      } finally {
+        this.inFlight = false;
+      }
+    }
+
+    // ---- overridable platform hooks ---------------------------------------
+    detectIdentity() { return null; }
+    async scanFeed() {}
+    async scanProfile() {}
+    async scanDms() {}
+
+    /**
+     * Notifications are where other people's likes and replies show up. Without
+     * this, only the user's own actions are recorded and every bond looks
+     * one-sided. Only handles, action type and a post id are read - never the
+     * notification message body.
+     */
+    async scanNotifications() {
+      if (!/\/activity|notifications|interactions/.test(location.pathname)) return;
+      const rows = document.querySelectorAll('[role="listitem"], article, [data-testid*="notification" i]');
+      for (const row of rows) {
+        try {
+          const links = Array.from(row.querySelectorAll('a[href^="/@"], a[href*="threads.net/@"], a[href*="threads.com/@"], a[href*="bsky.app/profile/"]'));
+          const handles = [];
+          for (const link of links) {
+            const href = link.getAttribute('href') || '';
+            const m = href.match(/(?:^|\/)(?:@|profile\/)([A-Za-z0-9._-]{1,40})/);
+            if (!m) continue;
+            const handle = normalizeHandle(m[1]);
+            if (handle && handle !== this.selfHandle && !RESERVED.has(handle) && !handles.includes(handle)) handles.push(handle);
+          }
+          if (!handles.length) continue;
+
+          // The heading is the notification metadata ("X liked your post").
+          // Reply text lives in a separate element and is deliberately ignored.
+          const heading = row.querySelector('[role="heading"], h1, h2, h3');
+          const labelText = heading ? cleanText(heading).slice(0, 120) : '';
+          const attrText = Array.from(row.querySelectorAll('[aria-label], [title]'))
+            .map((el) => `${el.getAttribute('aria-label') || ''} ${el.getAttribute('title') || ''}`)
+            .join(' ')
+            .slice(0, 200);
+          const text = `${labelText} ${attrText}`.toLowerCase();
+
+          let type = null;
+          if (/repl|respond/.test(text)) type = 'reply_received';
+          else if (/repost|reblog/.test(text)) type = 'quote';
+          else if (/mention/.test(text)) type = 'mention';
+          else if (/like|favourite|favorite/.test(text)) type = 'like';
+          if (!type) continue;
+
+          const postLink = Array.from(row.querySelectorAll('a[href]'))
+            .map((a) => a.getAttribute('href') || '')
+            .find((href) => /\/post\/|\/profile\/[A-Za-z0-9._-]+\/post\//.test(href)) || '';
+          const noticeKey = `${this.id}_notice_${type}_${postLink || handles[0]}`;
+          for (const handle of handles) {
+            await this.record(handle, type, { direction: 'inbound', tweetId: noticeKey, isMutual: true });
+          }
+        } catch (err) {
+          // Keep scanning the remaining notifications.
+        }
+      }
+    }
+    attach() {}
+
+    // ---- shared helpers ----------------------------------------------------
+    async injectInto(container, handle) {
+      if (!container || !handle) return;
+      if (this.selfHandle && normalizeHandle(handle) === this.selfHandle) return;
+      if (container.querySelector && container.querySelector('.bond-badge')) return;
+      try {
+        const clean = normalizeHandle(handle);
+        // Only badge people with a real interaction ledger. A 0-score badge
+        // on every feed author is noise.
+        const user = await window.bondStorage.getUser(clean);
+        if (!user || !(user.currentScore > 0)) return;
+        await window.bondUI.injectBadge(container, clean, false);
+        if (this.id === 'bluesky') {
+          const placed = container.querySelector(`.bond-badge[data-bond-handle="${clean}"]`);
+          if (placed) placed.classList.add('bond-badge-compact');
+        }
+      } catch (e) {}
+    }
+
+    async record(handle, type, extra = {}) {
+      const target = normalizeHandle(handle);
+      if (!target || (this.currentUser && target === this.currentUser)) return null;
+      if (window.BondPlatforms && !window.BondPlatforms.isFeatureEnabled(platformSettings(), this.id, 'timeline')) {
+        return null;
+      }
+      const result = await window.bondStorage.recordInteraction(target, {
+        type,
+        direction: type.includes('received') ? 'inbound' : 'outbound',
+        ...extra
+      }, this.currentUser);
+      if (result && window.bondUI && window.bondUI.refreshBadgesForUser) {
+        // The pulse already played on click; this write must be silent or the
+        // badge repaints twice and visibly flickers.
+        window.bondUI.refreshBadgesForUser(target, false).catch(() => {});
+      }
+      return result;
+    }
+
+    /**
+     * Remembers which author a reply/repost action belongs to. Menus and
+     * composers render outside the post subtree, so the follow-up click has to
+     * be attributed to the post that started it.
+     */
+    holdPending(kind, handle, key, trigger = null) {
+      this.pending = { kind, handle, key, trigger, at: Date.now() };
+    }
+
+    takePending(kind, maxAgeMs = 2 * 60 * 1000) {
+      const pending = this.pending;
+      if (!pending || pending.kind !== kind) return null;
+      this.pending = null;
+      if (Date.now() - pending.at > maxAgeMs) return null;
+      return pending;
+    }
+
+    /** Composer submit controls are text buttons ("Post"/"Reply"), not icons. */
+    submitControl(target) {
+      if (!target || !target.closest) return null;
+      // A post's own action bar can read "Reply" too, so only controls outside
+      // a post card count as the composer's publish button.
+      if (target.closest('[data-pressable-container="true"], article, [data-testid^="feedItem-"], [data-testid^="postThreadItem-"]')) {
+        return null;
+      }
+      const btn = target.closest('button, [role="button"]');
+      if (!btn) return null;
+      if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return null;
+      const text = cleanText(btn).replace(/\s+/g, ' ').trim().toLowerCase();
+      return /^(post|reply|send)$/.test(text) ? btn : null;
+    }
+
+    /**
+     * The post a composer is answering: an open reply composer renders the
+     * parent post above the editor, so its author can be read straight from
+     * the DOM instead of relying on the click that opened it.
+     */
+    composerTarget(btn) {
+      // Only look inside the composer itself; the feed behind it is full of
+      // posts that have nothing to do with this reply.
+      const root = btn.closest('[role="dialog"], [data-testid="composePostView"], form');
+      if (!root) return null;
+      const host = root.querySelector(
+        '[data-pressable-container="true"], article, [data-testid^="postThreadItem-by-"], [data-testid^="feedItem-by-"]'
+      );
+      if (host && !host.contains(btn)) {
+        const author = this.authorFor(host);
+        if (author) return { handle: author.handle, key: this.postKey(host) };
+      }
+      return null;
+    }
+
+    /** Prefers the click that opened the composer, then the visible parent. */
+    confirmReply(btn) {
+      const pending = this.takePending('reply');
+      if (pending) return { handle: pending.handle, key: pending.key };
+      return this.composerTarget(btn);
+    }
+
+    /** Only a confirming menu item counts, never "Undo repost". */
+    repostMenuControl(target) {      if (!target || !target.closest) return null;
+      const el = target.closest('[role="menuitem"], [role="menuitemradio"], button, [role="button"]');
+      if (!el) return null;
+      const text = cleanText(el).replace(/\s+/g, ' ').trim().toLowerCase();
+      return /^repost( post)?$/.test(text) ? el : null;
+    }
+
+    attachGenericClickCapture() {
+      if (this.attached) return;
+      this.attached = true;
+      document.addEventListener('click', (e) => {
+        try {
+          // Each adapter may only act on its own network; otherwise a click on
+          // one site would be recorded by the other platform's ledger.
+          const current = window.BondPlatforms ? window.BondPlatforms.current() : null;
+          if (current && current.id !== this.id) return;
+          if (window.BondPlatforms) {
+            const settings = platformSettings();
+            if (!window.BondPlatforms.isEnabled(settings, this.id)) return;
+            if (!window.BondPlatforms.isFeatureEnabled(settings, this.id, 'timeline')) return;
+          }
+          this.onClick(e);
+        } catch (err) {}
+      }, true);
+    }
+
+    onClick() {}
+
+    bindProfileSignal(handle, signals) {
+      if (!handle || !window.bondStorage) return;
+      return window.bondStorage.recordRelationshipSignal(handle, signals).catch(() => {});
+    }
+
+    /** Parses a follow-state pair from visible header text. */
+    readFollowState(root) {
+      if (!root) return { theyFollowYou: null, youFollowThem: null, isBlocked: false };
+      const body = cleanText(root);
+      const isBlocked = /blocked|restricted/i.test(body);
+      const theyFollowYou = /follows you/i.test(body);
+      const followingBtn = Array.from(root.querySelectorAll('button, [role="button"]')).find((b) => {
+        const t = cleanText(b).toLowerCase();
+        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+        return t === 'following' || aria.includes('following') || t === 'unfollow';
+      });
+      const followBtn = Array.from(root.querySelectorAll('button, [role="button"]')).find((b) => {
+        const t = cleanText(b).toLowerCase();
+        const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+        return t === 'follow' || aria === 'follow' || t === 'follow back';
+      });
+      let youFollowThem = null;
+      if (followingBtn) youFollowThem = true;
+      else if (followBtn) youFollowThem = false;
+      return { theyFollowYou: theyFollowYou ? true : null, youFollowThem, isBlocked };
+    }
+
+    /** Reads only direction + timestamp from a rendered DM bubble. */
+    readBubbleMeta(bubble) {
+      const style = window.getComputedStyle ? window.getComputedStyle(bubble) : null;
+      const align = style ? (style.alignSelf || style.justifyContent || '') : '';
+      const own = /flex-end|right|end/i.test(align) ||
+        (bubble.getAttribute('data-outbound') === 'true') ||
+        !!bubble.closest('[data-outbound="true"]');
+      const timeEl = bubble.querySelector('time[datetime], time');
+      const stamp = timeEl ? (timeEl.getAttribute('datetime') || timeEl.getAttribute('title') || '') : '';
+      let ts = stamp ? Date.parse(stamp) : 0;
+      if (isNaN(ts) || ts <= 0) ts = 0;
+      return { direction: own ? 'outbound' : 'inbound', timestamp: ts };
+    }
+  }
+
+  /* ======================================================================
+     Threads
+     ====================================================================== */
+  class ThreadsAdapter extends BasePlatformAdapter {
+    constructor() {
+      super('threads');
+      this.profileLinks = 'a[href^="/@"], a[href*="threads.net/@"]';
+    }
+
+    detectIdentity() {
+      // Threads renders the signed-in avatar/profile as the last item of the
+      // primary navigation. Only authenticated chrome exposes this link.
+      const navLinks = Array.from(document.querySelectorAll('a[href^="/@"]'));
+      for (const link of navLinks) {
+        const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+        const svgTitle = cleanText(link.querySelector('svg title')).toLowerCase();
+        const isProfileNav = aria.includes('profile') || svgTitle.includes('profile');
+        if (!isProfileNav) continue;
+        const handle = normalizeHandle((link.getAttribute('href') || '').replace(/^\/@/, ''));
+        if (!handle || RESERVED.has(handle)) continue;
+        const img = link.querySelector('img');
+        return { handle, displayName: handle, avatarUrl: img ? img.src : '' };
+      }
+
+      // Fallback: the own-profile page has an edit-profile control.
+      const editBtn = document.querySelector('a[href*="/edit"], [aria-label*="Edit profile" i], button[aria-label*="Edit profile" i]');
+      if (editBtn && location.pathname.startsWith('/@')) {
+        const handle = normalizeHandle(location.pathname.replace(/^\/@/, ''));
+        if (handle && !RESERVED.has(handle)) {
+          const img = (document.querySelector('header img') || {}).src || '';
+          return { handle, displayName: handle, avatarUrl: img };
+        }
+      }
+      return null;
+    }
+
+    postContainers() {
+      const set = new Set();
+      document.querySelectorAll('article, div[data-pressable-container="true"]').forEach((el) => {
+        if (el.querySelector('a[href^="/@"]') && !el.querySelector('article')) set.add(el);
+      });
+      // Only real post containers. Scanning arbitrary divs picked up profile
+      // wrappers and tab bars, which then put badges on the sticky header and
+      // the Threads/Replies tabs instead of on posts.
+      return Array.from(set).slice(0, 60);
+    }
+
+    /** Threads tab labels are links to the same profile - never badge them. */
+    isTabLabel(text) {
+      return /^(threads|replies|media|reposts|followers|following)$/i.test(cleanText(text));
+    }
+
+    /** Nearest ancestor that looks like the profile header block. */
+    profileBlock(titleEl) {
+      let el = titleEl;
+      for (let i = 0; i < 10 && el && el !== document.body; i++) {
+        if (el.querySelector && el.querySelector('[role="button"], button') && el.querySelector('img')) return el;
+        el = el.parentElement;
+      }
+      return document.body;
+    }
+
+    authorFor(post) {
+      const links = post.querySelectorAll('a[href^="/@"]');
+      for (const link of links) {
+        const href = link.getAttribute('href') || '';
+        const handle = normalizeHandle(href.replace(/^\/@/, ''));
+        if (handle && !RESERVED.has(handle) && !href.includes('/post/') && !this.isTabLabel(link)) {
+          return { handle, displayName: cleanText(link) || handle, avatarUrl: (link.querySelector('img') || {}).src || '' };
+        }
+      }
+      return null;
+    }
+
+    async scanFeed() {
+      const settings = platformSettings();
+      if (settings.showBadgesOnTimeline === false) return;
+      for (const post of this.postContainers()) {
+        const author = this.authorFor(post);
+        if (!author) continue;
+        if (this.selfHandle && author.handle === this.selfHandle) continue;
+
+        const nameLink = Array.from(post.querySelectorAll('a[href^="/@"]'))
+          .find((link) => !this.isTabLabel(link));
+        if (!nameLink) continue;
+        // Put the badge inside the name link so it stays on the same line as
+        // the handle instead of wrapping underneath it.
+        nameLink.style.display = 'inline-flex';
+        nameLink.style.alignItems = 'center';
+        nameLink.style.whiteSpace = 'nowrap';
+        nameLink.style.gap = '4px';
+        await this.injectInto(nameLink, author.handle);
+
+        // Backfill interactions that happened before the extension was enabled:
+        // Threads exposes the current state only as <svg><title>Like/Unlike</title>.
+        for (const actionEl of post.querySelectorAll('[role="button"], button')) {
+          const state = cleanText(actionEl.querySelector('svg title, title')).toLowerCase();
+          if (/^(unlike|liked|reposted)$/.test(state)) {
+            const type = /like/.test(state) ? 'like' : 'repost';
+            await this.record(author.handle, type, { tweetId: `${this.postKey(post)}#${type}`, isMutual: false, direction: 'outbound' });
+          }
+        }
+
+        const avatar = author.avatarUrl;
+        if (avatar) {
+          const stored = await window.bondStorage.getUser(author.handle);
+          // Never create a fresh record just to store an avatar: a transient
+          // null during account re-detection would reset an existing score to 0.
+          if (stored && !stored.avatarUrl) {
+            await window.bondStorage.saveUser(author.handle, { avatarUrl: avatar, displayName: author.displayName });
+          }
+        }
+      }
+    }
+
+    async scanProfile() {
+      const match = location.pathname.match(/^\/@([A-Za-z0-9._]{1,40})\/?$/);
+      if (!match) return;
+      const handle = normalizeHandle(match[1]);
+      if (!handle || (this.selfHandle && handle === this.selfHandle)) return;
+
+      // Threads does not always render <header>/<main> on profile routes, so
+      // locate the profile block from its name heading instead.
+      const headings = Array.from(document.querySelectorAll('h1, h2'));
+      // The sticky top bar also contains an <h1> (inside a link). Prefer the
+      // real profile heading so the badge sits next to the name, not the nav.
+      const titleEl = headings.find((el) => cleanText(el) && !el.closest('a')) || null;
+      if (!titleEl) return;
+
+      const header = this.profileBlock(titleEl);
+      const avatarImg = header.querySelector('img[src*="/t51."], img');
+      const signals = this.readFollowState(header);
+      if (signals.isBlocked || signals.theyFollowYou !== null || signals.youFollowThem !== null) {
+        await this.bindProfileSignal(handle, { ...signals, displayName: cleanText(titleEl) || handle, avatarUrl: avatarImg ? avatarImg.src : '' });
+      }
+
+      // Drop badges left on the sticky header link by older builds.
+      document.querySelectorAll('.bond-badge').forEach((b) => {
+        const host = b.parentElement;
+        if (host && host.tagName === 'A' && host.querySelector('h1, h2')) b.remove();
+      });
+
+      const stored = await window.bondStorage.getUser(handle);
+      const nameRow = titleEl || header;
+      if (nameRow && stored && stored.currentScore > 0) {
+        await window.bondUI.injectBadge(nameRow, handle, true);
+      }
+      if (window.bondUI && window.bondUI.updateProfileFollowBadge) {
+        await window.bondUI.updateProfileFollowBadge(handle, stored ? stored.signals : signals);
+      }
+    }
+
+    onClick(e) {
+      const target = e.target;
+      if (!target || !target.closest) return;
+
+      // 1. Composer submit: the reply was actually published.
+      if (this.submitControl(target)) {
+        const reply = this.confirmReply(target);
+        if (reply) {
+          this.record(reply.handle, 'reply_sent', {
+            tweetId: `${reply.key}#reply`, isMutual: false, direction: 'outbound'
+          });
+        }
+        return;
+      }
+
+      // 2. A "Repost" choice in the menu that the trigger opens. The trigger
+      //    carries the very same label, so a click only confirms the repost
+      //    when it lands on a different control than the one that opened it;
+      //    otherwise it falls through and arms the pending state below.
+      const repostControl = this.repostMenuControl(target);
+      if (repostControl) {
+        const pending = this.pending;
+        if (pending && pending.kind === 'repost' && pending.trigger !== repostControl) {
+          const confirmed = this.takePending('repost');
+          if (confirmed) {
+            if (window.bondUI) window.bondUI.optimisticBoost(confirmed.handle, 3);
+            this.record(confirmed.handle, 'repost', {
+              tweetId: `${confirmed.key}#repost`, isMutual: false
+            });
+          }
+          return;
+        }
+      }
+
+      const post = target.closest('article, div[data-pressable-container="true"]') || this.findPostAncestor(target);
+      if (!post) return;
+      const author = this.authorFor(post);
+      if (!author) return;
+
+      const actionEl = target.closest('[role="button"], button');
+      const aria = (target.closest('[aria-label]')?.getAttribute('aria-label') || '').toLowerCase();
+      // Threads puts the action name in <svg><title>, not in aria-label/text.
+      const svgTitle = actionEl ? cleanText(actionEl.querySelector('svg title, title')) : '';
+      const label = `${aria} ${cleanText(actionEl)} ${svgTitle}`.trim().toLowerCase();
+
+      if (/\blike\b|\bliked\b/.test(label)) {
+        const active = (target.closest('[aria-pressed]')?.getAttribute('aria-pressed') === 'true') ||
+          /\b(unlike|liked|likes)\b/.test(label);
+        if (!active) {
+          if (window.bondUI) window.bondUI.optimisticBoost(author.handle, 3);
+          this.record(author.handle, 'like', { tweetId: `${this.postKey(post)}#like`, isMutual: false });
+        }
+      } else if (/\brepost\b|\breposted\b/.test(label)) {
+        // Threads opens a Repost / Quote menu, so hold until Repost is chosen.
+        this.holdPending('repost', author.handle, this.postKey(post), actionEl);
+      } else if (/\bcomment\b|\breply\b/.test(label)) {
+        this.holdPending('reply', author.handle, this.postKey(post), actionEl);
+      }
+    }
+
+    findPostAncestor(node) {
+      let el = node;
+      for (let i = 0; i < 8 && el; i++) {
+        if (el.querySelector && el.querySelector('a[href^="/@"]') && el.querySelector('time')) return el;
+        el = el.parentElement;
+      }
+      return null;
+    }
+
+    postKey(post) {
+      // A stable per-post id: the permalink's post id, then the timestamp,
+      // then the author handle. Falls back so it never returns a bare prefix.
+      const link = Array.from(post.querySelectorAll('a[href*="/post/"]'))
+        .map((a) => a.getAttribute('href') || '')
+        .find((h) => /\/post\/[^/?#]+/.test(h));
+      const postId = link ? (link.match(/\/post\/([^/?#]+)/) || [])[1] : '';
+      const time = post.querySelector('time[datetime]');
+      const handle = normalizeHandle((post.querySelector('a[href^="/@"]') || {}).getAttribute?.('href') || '');
+      return `threads_${postId || (time ? time.getAttribute('datetime') : '') || handle}`;
+    }
+
+    async scanDms() {
+      if (!location.pathname.startsWith('/messages') && !location.pathname.startsWith('/direct')) return;
+      await this.scanDmInbox();
+      await this.scanActiveThread();
+    }
+
+    async scanDmInbox() {
+      const rows = document.querySelectorAll('a[href^="/messages/"], div[role="listitem"] a[href*="/messages/"]');
+      for (const link of rows) {
+        const href = link.getAttribute('href') || '';
+        const convId = normalizeHandle(href.split('/messages/')[1] || '');
+        if (!convId) continue;
+        const row = link.closest('div[role="listitem"], div') || link;
+        // Metadata only: participant comes from the profile link, never from the
+        // inbox preview text (which may contain private message contents).
+        const profileLink = row.querySelector('a[href^="/@"]');
+        const participant = profileLink
+          ? normalizeHandle((profileLink.getAttribute('href') || '').replace(/^\/@/, '').split('/')[0]) || null
+          : null;
+        const unread = !!row.querySelector('[aria-label*="unread" i], [class*="unread" i]');
+        const existing = await window.bondStorage.getDmConversation(convId);
+        if (!existing) {
+          await window.bondStorage.saveDmConversation(convId, {
+            convId,
+            isGroup: false,
+            title: participant ? `@${participant}` : convId,
+            participants: participant ? [participant] : [],
+            sentCount: 0,
+            receivedCount: 0,
+            totalCount: 0,
+            waitingForUserReply: unread,
+            firstSeenTimestamp: Date.now()
+          });
+        }
+        if (window.bondUI && window.bondUI.injectDmRowBadge) {
+          await window.bondUI.injectDmRowBadge(row, convId, participant, false, { hasUnread: unread });
+        }
+      }
+    }
+
+    async scanActiveThread() {
+      const match = location.pathname.match(/\/messages\/([A-Za-z0-9_-]+)/);
+      if (!match) return;
+      const convId = normalizeHandle(match[1]);
+      const container = document.querySelector('main') || document.body;
+      const header = container.querySelector('header');
+      const handleMatch = cleanText(header).match(/@([A-Za-z0-9._]{1,40})/);
+      const targetHandle = handleMatch ? normalizeHandle(handleMatch[1]) : null;
+
+      const bubbles = Array.from(container.querySelectorAll('[data-testid*="message" i], div[dir="auto"]'))
+        .filter((el) => el.children.length <= 4)
+        .slice(-80);
+      if (bubbles.length > 0) {
+        const entries = bubbles.map((bubble, idx) => {
+          const meta = this.readBubbleMeta(bubble);
+          const timeEl = bubble.querySelector('time[datetime]');
+          return {
+            fingerprint: `${meta.direction}_${meta.timestamp || timeEl?.getAttribute('datetime') || idx}_${idx}`,
+            direction: meta.direction,
+            timestamp: meta.timestamp || Date.now() - (bubbles.length - idx) * 60000,
+            index: idx
+          };
+        });
+        await window.bondStorage.ingestMessageEntries(convId, entries);
+      }
+      if (window.bondUI && window.bondUI.injectDmHeaderPill && header) {
+        await window.bondUI.injectDmHeaderPill(header, convId, targetHandle, false);
+      }
+    }
+  }
+
+  /* ======================================================================
+     Bluesky
+     ====================================================================== */
+  class BlueskyAdapter extends BasePlatformAdapter {
+    constructor() {
+      super('bluesky');
+    }
+
+    detectIdentity() {
+      // The Bluesky web client exposes the signed-in account through the
+      // "Profile" navigation item. On a profile page the own account also has
+      // an edit-profile affordance.
+      const candidates = Array.from(document.querySelectorAll('a[href^="/profile/"]'));
+      for (const link of candidates) {
+        const aria = (link.getAttribute('aria-label') || '').toLowerCase();
+        const testid = (link.getAttribute('data-testid') || '').toLowerCase();
+        const text = cleanText(link).toLowerCase();
+        const isNav = aria === 'profile' || aria.includes('profile') && aria.includes('nav') ||
+          testid.includes('profile') && (testid.includes('tab') || testid.includes('nav')) ||
+          text === 'profile' || text === 'my profile';
+        if (!isNav) continue;
+        const handle = normalizeHandle((link.getAttribute('href') || '').replace('/profile/', ''));
+        if (handle) {
+          const img = link.querySelector('img');
+          return { handle, displayName: handle, avatarUrl: img ? img.src : '' };
+        }
+      }
+
+      const edit = document.querySelector('[data-testid="editProfileButton"], [aria-label*="Edit profile" i], button[aria-label*="Edit Profile" i]');
+      const m = location.pathname.match(/^\/profile\/([^/]+)/);
+      if (edit && m && m[1]) {
+        const handle = normalizeHandle(decodeURIComponent(m[1]));
+        return { handle, displayName: handle, avatarUrl: '' };
+      }
+      return null;
+    }
+
+    postContainers() {
+      const nodes = document.querySelectorAll(
+        '[data-testid^="feedItem-by-"], [data-testid^="postThreadItem-by-"], [data-testid^="feedItem-"], article'
+      );
+      return Array.from(nodes).filter((n) => n.querySelector('a[href^="/profile/"]')).slice(0, 60);
+    }
+
+    authorFor(post) {
+      const testid = post.getAttribute('data-testid') || '';
+      const byMatch = testid.match(/-by-([A-Za-z0-9._:-]+)$/);
+      if (byMatch && byMatch[1]) {
+        const handle = normalizeHandle(byMatch[1]);
+        if (handle) {
+          return { handle, displayName: handle, avatarUrl: (post.querySelector('img') || {}).src || '' };
+        }
+      }
+      const link = post.querySelector('a[href^="/profile/"]');
+      if (link) {
+        const handle = normalizeHandle((link.getAttribute('href') || '').replace('/profile/', ''));
+        if (handle) return { handle, displayName: cleanText(link) || handle, avatarUrl: (link.querySelector('img') || {}).src || '' };
+      }
+      return null;
+    }
+
+    async scanFeed() {
+      const settings = platformSettings();
+      if (settings.showBadgesOnTimeline === false) return;
+      for (const post of this.postContainers()) {
+        const author = this.authorFor(post);
+        if (!author) continue;
+        if (this.selfHandle && author.handle === this.selfHandle) continue;
+        const link = post.querySelector('a[href^="/profile/"]');
+        const container = link || post;
+        if (link) {
+          link.style.display = 'inline-flex';
+          link.style.alignItems = 'center';
+          link.style.whiteSpace = 'nowrap';
+          link.style.gap = '4px';
+        }
+        await this.injectInto(container, author.handle);
+
+        // Backfill already-active like/repost buttons (state lives in aria-pressed).
+        for (const btn of post.querySelectorAll('[data-testid="likeBtn"], [data-testid="repostBtn"]')) {
+          if (btn.getAttribute('aria-pressed') !== 'true') continue;
+          const type = (btn.getAttribute('data-testid') || '').includes('like') ? 'like' : 'repost';
+          await this.record(author.handle, type, { tweetId: `${this.postKey(post)}#${type}`, isMutual: false, direction: 'outbound' });
+        }
+
+        if (author.avatarUrl) {
+          const stored = await window.bondStorage.getUser(author.handle);
+          if (stored && !stored.avatarUrl) {
+            await window.bondStorage.saveUser(author.handle, { avatarUrl: author.avatarUrl, displayName: author.displayName });
+          }
+        }
+      }
+    }
+
+    async scanProfile() {
+      const match = location.pathname.match(/^\/profile\/([^/]+)/);
+      if (!match) return;
+      const handle = normalizeHandle(decodeURIComponent(match[1]));
+      if (!handle || (this.selfHandle && handle === this.selfHandle)) return;
+
+      const main = document.querySelector('main') || document.body;
+      const header = main.querySelector('[data-testid="profileScreen"]') || main;
+      const signals = this.readFollowState(header);
+
+      // Bluesky labels its relationship explicitly: "Follows you".
+      if (signals.isBlocked || signals.theyFollowYou !== null || signals.youFollowThem !== null) {
+        await this.bindProfileSignal(handle, {
+          ...signals,
+          displayName: handle,
+          avatarUrl: (header.querySelector('img') || {}).src || ''
+        });
+      }
+
+      // Never fall back to the whole profile screen: it would park the badge at
+      // the bottom of the page while the header is still a skeleton.
+      const nameEl = header.querySelector('[data-testid="profileHeaderDisplayName"], h1, h2');
+      if (!nameEl) return;
+      const stored = await window.bondStorage.getUser(handle);
+      if (stored && stored.currentScore > 0) {
+        document.querySelectorAll(`.bond-badge-profile[data-bond-handle="${handle}"]`).forEach((old) => {
+          if (!nameEl.contains(old)) old.remove();
+        });
+        await window.bondUI.injectBadge(nameEl, handle, true);
+        if (this.id === 'bluesky') {
+          const placed = nameEl.querySelector(`.bond-badge[data-bond-handle="${handle}"]`);
+          if (placed) placed.classList.add('bond-badge-compact');
+        }
+      }
+      if (window.bondUI && window.bondUI.updateProfileFollowBadge) {
+        await window.bondUI.updateProfileFollowBadge(handle, stored ? stored.signals : signals);
+      }
+    }
+
+    onClick(e) {
+      const target = e.target;
+      if (!target || !target.closest) return;
+
+      // 1. Composer submit: the reply was actually published.
+      if (this.submitControl(target)) {
+        const reply = this.confirmReply(target);
+        if (reply) {
+          this.record(reply.handle, 'reply_sent', {
+            tweetId: `${reply.key}#reply`, isMutual: false, direction: 'outbound'
+          });
+        }
+        return;
+      }
+
+      // 2. A "Repost" choice in the menu that the repost button opens. Only a
+      //    click on a different control than the one that opened it confirms;
+      //    otherwise it falls through and arms the pending state below.
+      const repostControl = this.repostMenuControl(target);
+      if (repostControl) {
+        const pending = this.pending;
+        if (pending && pending.kind === 'repost' && pending.trigger !== repostControl) {
+          const confirmed = this.takePending('repost');
+          if (confirmed) {
+            if (window.bondUI) window.bondUI.optimisticBoost(confirmed.handle, 3);
+            this.record(confirmed.handle, 'repost', {
+              tweetId: `${confirmed.key}#repost`, isMutual: false
+            });
+          }
+          return;
+        }
+      }
+
+      const post = target.closest('[data-testid^="feedItem-by-"], [data-testid^="postThreadItem-by-"], [data-testid^="feedItem-"]') ||
+        this.findPostAncestor(target);
+      if (!post) return;
+      const author = this.authorFor(post);
+      if (!author) return;
+
+      const btn = target.closest('[data-testid], [aria-label]');
+      const id = (btn && (btn.getAttribute('data-testid') || btn.getAttribute('aria-label')) || '').toLowerCase();
+
+      if (id.includes('like')) {
+        const pressed = btn.getAttribute('aria-pressed') === 'true';
+        if (!pressed) {
+          if (window.bondUI) window.bondUI.optimisticBoost(author.handle, 3);
+          this.record(author.handle, 'like', { tweetId: `${this.postKey(post)}#like`, isMutual: false });
+        }
+      } else if (id.includes('repost')) {
+        const pressed = btn.getAttribute('aria-pressed') === 'true';
+        // A repost button opens a menu first; hold until the user confirms.
+        // An already-reposted control reads "Undo repost" - never arm for that.
+        const undo = /undo|unrepost|remove/.test(`${id} ${cleanText(btn)}`.toLowerCase());
+        if (!pressed && !undo) this.holdPending('repost', author.handle, this.postKey(post), btn);
+      } else if (id.includes('reply') || id.includes('comment')) {
+        this.holdPending('reply', author.handle, this.postKey(post), btn);
+      }
+    }
+
+    findPostAncestor(node) {
+      let el = node;
+      for (let i = 0; i < 10 && el; i++) {
+        const tid = el.getAttribute && (el.getAttribute('data-testid') || '');
+        if (tid.startsWith('feedItem') || tid.startsWith('postThreadItem')) return el;
+        el = el.parentElement;
+      }
+      return null;
+    }
+
+    postKey(post) {
+      // Bluesky exposes the post URI on the item when available; otherwise use
+      // the permalink rkey, so two posts by the same author never collide.
+      const uri = post.getAttribute('data-uri') || '';
+      const link = Array.from(post.querySelectorAll('a[href*="/post/"]'))
+        .map((a) => a.getAttribute('href') || '')
+        .find((h) => /\/post\/[^/?#]+/.test(h));
+      const rkey = link ? (link.match(/\/post\/([^/?#]+)/) || [])[1] : '';
+      const testid = post.getAttribute('data-testid') || '';
+      const time = post.querySelector('time[datetime]');
+      return `bsky_${uri || rkey || testid}${time ? '_' + time.getAttribute('datetime') : ''}`;
+    }
+
+    async scanDms() {
+      if (!location.pathname.startsWith('/messages')) return;
+      await this.scanDmInbox();
+      await this.scanActiveThread();
+    }
+
+    async scanDmInbox() {
+      const links = document.querySelectorAll('a[href^="/messages/"]');
+      for (const link of links) {
+        const href = link.getAttribute('href') || '';
+        const convId = normalizeHandle(href.split('/messages/')[1] || '');
+        if (!convId) continue;
+        const row = link.closest('[role="listitem"], div') || link;
+        // Metadata only: resolve the participant from profile links instead of
+        // reading the inbox preview (which can include private message text).
+        const profileLink = row.querySelector('a[href^="/profile/"]');
+        const participant = profileLink
+          ? normalizeHandle(decodeURIComponent((profileLink.getAttribute('href') || '').replace('/profile/', '').split('/')[0])) || null
+          : null;
+        const unread = !!row.querySelector('[aria-label*="unread" i]');
+        const existing = await window.bondStorage.getDmConversation(convId);
+        if (!existing) {
+          await window.bondStorage.saveDmConversation(convId, {
+            convId,
+            isGroup: false,
+            title: participant ? `@${participant}` : convId,
+            participants: participant ? [participant] : [],
+            totalCount: 0,
+            waitingForUserReply: unread,
+            firstSeenTimestamp: Date.now()
+          });
+        }
+        if (window.bondUI && window.bondUI.injectDmRowBadge) {
+          await window.bondUI.injectDmRowBadge(row, convId, participant, false, { hasUnread: unread });
+        }
+      }
+    }
+
+    async scanActiveThread() {
+      const match = location.pathname.match(/\/messages\/([^/?#]+)/);
+      if (!match) return;
+      const convId = normalizeHandle(decodeURIComponent(match[1]));
+      const container = document.querySelector('main') || document.body;
+      const header = container.querySelector('header') || container;
+      const text = cleanText(header);
+      const handleMatch = text.match(/@([A-Za-z0-9._:-]{1,80})/);
+      const targetHandle = handleMatch ? normalizeHandle(handleMatch[1]) : null;
+
+      const bubbles = Array.from(container.querySelectorAll('[data-testid*="message" i], div[dir="auto"]'))
+        .filter((el) => el.children.length <= 4)
+        .slice(-80);
+      if (bubbles.length > 0) {
+        const entries = bubbles.map((bubble, idx) => {
+          const meta = this.readBubbleMeta(bubble);
+          return {
+            fingerprint: `${meta.direction}_${meta.timestamp || idx}_${idx}`,
+            direction: meta.direction,
+            timestamp: meta.timestamp || Date.now() - (bubbles.length - idx) * 60000,
+            index: idx
+          };
+        });
+        await window.bondStorage.ingestMessageEntries(convId, entries);
+      }
+      if (window.bondUI && window.bondUI.injectDmHeaderPill && header) {
+        await window.bondUI.injectDmHeaderPill(header, convId, targetHandle, false);
+      }
+    }
+  }
+
+  const adapters = {
+    threads: new ThreadsAdapter(),
+    bluesky: new BlueskyAdapter()
+  };
+  adapters.threads.attachGenericClickCapture();
+  adapters.bluesky.attachGenericClickCapture();
+
+  window.BondAdapters = adapters;
+
+  /** Boot the adapter for the current host, or no-op when the platform is off. */
+  window.bondBootPlatformAdapter = async function () {
+    const platform = window.BondPlatforms ? window.BondPlatforms.current() : { id: 'x' };
+    if (platform.id === 'x') return false;
+    const adapter = adapters[platform.id];
+    if (!adapter) return false;
+    return adapter.boot();
+  };
+
+  // Answer the popup's active-account probe on non-X hosts as well.
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (msg && msg.type === 'bondscore:get_active_account') {
+        const platform = window.BondPlatforms ? window.BondPlatforms.current() : { id: 'x' };
+        const adapter = adapters[platform.id];
+        sendResponse({
+          handle: (adapter && adapter.currentUser) || (window.bondStorage && window.bondStorage.currentUser) || null,
+          platform: platform.id,
+          metadata: null
+        });
+        return true;
+      }
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      window.bondBootPlatformAdapter().catch(() => {});
+    }, { once: true });
+  } else {
+    window.bondBootPlatformAdapter().catch(() => {});
+  }
+})();

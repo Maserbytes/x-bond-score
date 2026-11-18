@@ -4,6 +4,15 @@
  * Designed to easily plug in custom search/scraping methods (e.g. from Rezero Sanctuary).
  */
 
+/** Handles can arrive from DOM input, events or storage; always coerce safely. */
+function normalizeHandle(value) {
+  return String(value === null || value === undefined ? '' : value)
+    .trim()
+    .replace(/^@/, '')
+    .toLowerCase()
+    .trim();
+}
+
 class BaseDeepProvider {
   constructor(name = 'BaseProvider') {
     this.name = name;
@@ -33,8 +42,8 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
   }
 
   async analyze(currentUser, targetUser, onProgress, options = {}) {
-    const cleanCurrent = (currentUser || '').replace(/^@/, '').toLowerCase().trim();
-    const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
+    const cleanCurrent = normalizeHandle(currentUser);
+    const cleanTarget = normalizeHandle(targetUser);
 
     if (!cleanCurrent || !cleanTarget) {
       throw new Error('Both currentUser and targetUser are required for Deep Analysis');
@@ -221,7 +230,9 @@ class XSearchQueryAnalyzer extends BaseDeepProvider {
 class DeepAnalyzerManager {
   constructor() {
     this.provider = new XSearchQueryAnalyzer();
-    this.activeScans = new Set();
+    // Maps a handle to the in-flight analysis promise so duplicate requests
+    // reuse the same result instead of warning and returning null.
+    this.activeScans = new Map();
   }
 
   /**
@@ -248,13 +259,30 @@ class DeepAnalyzerManager {
    * Performs deep analysis on a specific target user.
    */
   async runAnalysis(currentUser, targetUser, onProgress = () => {}, options = {}) {
-    const cleanTarget = (targetUser || '').replace(/^@/, '').toLowerCase().trim();
-    if (this.activeScans.has(cleanTarget)) {
-      console.warn(`[BondScore] Deep analysis already in progress for @${cleanTarget}`);
-      return null;
+    const cleanTarget = normalizeHandle(targetUser);
+    if (!cleanTarget) return null;
+
+    // Defensive: an older instance may still hold a Set from a previous build.
+    if (!this.activeScans || typeof this.activeScans.has !== 'function') {
+      this.activeScans = new Map();
     }
 
-    this.activeScans.add(cleanTarget);
+    // A second click (or an automatic profile scan) while an analysis is
+    // running should wait for that same analysis, not fail with a warning.
+    if (this.activeScans.has(cleanTarget)) {
+      return await this.activeScans.get(cleanTarget);
+    }
+
+    const task = this._runAnalysisInternal(currentUser, cleanTarget, onProgress, options);
+    this.activeScans.set(cleanTarget, task);
+    try {
+      return await task;
+    } finally {
+      this.activeScans.delete(cleanTarget);
+    }
+  }
+
+  async _runAnalysisInternal(currentUser, cleanTarget, onProgress, options) {
     try {
       const events = await this.provider.analyze(currentUser, cleanTarget, onProgress, options);
 
@@ -280,14 +308,15 @@ class DeepAnalyzerManager {
         await window.bondStorage.saveUser(cleanTarget, user);
       }
 
-      onProgress({ percent: 100, stage: 'Ready!', itemsFound: events.length });
+      onProgress({ percent: 100, stage: 'Ready!', itemsFound: Array.isArray(events) ? events.length : 0 });
 
       // Notify content script UI to update badges immediately
       window.dispatchEvent(new CustomEvent('bondscore:updated', { detail: { handle: cleanTarget } }));
 
       return await window.bondStorage.getUser(cleanTarget);
-    } finally {
-      this.activeScans.delete(cleanTarget);
+    } catch (err) {
+      console.error(`[BondScore] Deep analysis failed for @${cleanTarget}:`, err);
+      return null;
     }
   }
 
@@ -296,8 +325,8 @@ class DeepAnalyzerManager {
    * and reports whether they have ever interacted via tweets, direction, and snippet history.
    */
   async lookupInteraction(handleA, handleB, onProgress = () => {}) {
-    const cleanA = (handleA || '').replace(/^@/, '').toLowerCase().trim();
-    const cleanB = (handleB || '').replace(/^@/, '').toLowerCase().trim();
+    const cleanA = normalizeHandle(handleA);
+    const cleanB = normalizeHandle(handleB);
 
     if (!cleanA || !cleanB) {
       throw new Error('Please enter two handles to check interactions.');
