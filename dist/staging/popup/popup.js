@@ -1744,51 +1744,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     });
   }
 
-  // Who Should I Message? (Anti-Fading Smart List)
-  const sectionCold = document.getElementById('dm-section-cold');
-  const listCold = document.getElementById('dm-cold-list');
-  const countCold = document.getElementById('dm-cold-count');
-  const coldItems = filtered.filter(d => !d.isGroup && (d.isCoolingCandidate === true || d.isFading === true));
-
-  if (countCold) countCold.innerText = coldItems.length;
-  if (sectionCold && listCold) {
-    const showCold = filter === 'cold' || (filter === 'all' && coldItems.length > 0);
-    sectionCold.style.display = showCold ? 'block' : 'none';
-
-    if (coldItems.length === 0) {
-      listCold.innerHTML = '<div class="dm-empty-state">🔥 All high-bond relationships are warm and active!</div>';
-    } else {
-      listCold.innerHTML = coldItems.map(d => {
-        const title = d.title || (d.participants && d.participants[0]) || d.convId;
-        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
-        const avatar = details ? details.avatarUrl : '';
-        const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
-        const days = d.daysSinceLast || Math.floor((Date.now() - (d.lastMessageTimestamp || Date.now())) / 86400000);
-
-        return `
-          <div class="dm-action-row cold-row" data-conv="${escapeHtml(d.convId)}">
-            <div class="dm-action-avatar">
-              ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
-            </div>
-            <div class="dm-action-meta">
-              <div class="dm-action-title-row">
-                <span class="dm-action-title">${escapeHtml(title)}</span>
-                ${platformChip(d)}
-                <span class="bond-rank-tag bond-rank-${rank.id}">${rank.emoji} ${rank.name}</span>
-              </div>
-              <div class="dm-action-sub">
-                <span class="dm-cold-tag">🧊 Quiet for ${days} days</span>
-                <span>• Was Bond ${Math.round(d.bondScore || 0)}</span>
-              </div>
-            </div>
-            <button class="dm-reconnect-btn" data-url="${messageUrl(d)}">Say Hi ↗</button>
-          </div>
-        `;
-      }).join('');
-    }
-  }
-
-  // 3. Closest Friends (1:1 Leaderboard)
+  // 1. Closest Friends (1:1 Leaderboard)
   const sectionClosest = document.getElementById('dm-section-closest');
   const listClosest = document.getElementById('dm-closest-list');
   const countClosest = document.getElementById('dm-closest-count');
