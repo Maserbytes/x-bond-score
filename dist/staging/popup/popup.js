@@ -522,10 +522,13 @@ function setupFilterPills() {
 }
 
 function getCRMStatusForUser(u) {
-  if (u.crmStatusData) return u.crmStatusData;
+  const doesNotFollow = !!(u.signals && u.signals.theyFollowYou === false);
+  if (u.crmStatusData && (!doesNotFollow || (u.crmStatusData.id !== 'mutuals' && u.crmStatusData.id !== 'besties'))) {
+    return u.crmStatusData;
+  }
   const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.mentionsSent || 0))) || 0;
   const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;
-  return BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0);
+  return BondScoring.calculateCRMStatus(u.currentScore || 0, sSent, sRecv, u.streakDays || 0, u.signals || {});
 }
 
 function applyFilterAndRender() {
@@ -556,9 +559,13 @@ function applyFilterAndRender() {
       return days >= 14 && ((u.currentScore || 0) > 5 || (s + r) > 0);
     });
   } else if (currentFilter === 'besties') {
-    list = list.filter(u => getCRMStatusForUser(u).id === 'besties');
+    list = list.filter(u => {
+      if (u.signals && u.signals.theyFollowYou === false) return false;
+      return getCRMStatusForUser(u).id === 'besties';
+    });
   } else if (currentFilter === 'mutuals') {
     list = list.filter(u => {
+      if (u.signals && u.signals.theyFollowYou === false) return false;
       const cId = getCRMStatusForUser(u).id;
       return cId === 'mutuals' || cId === 'besties';
     });
@@ -1867,7 +1874,12 @@ function resolveDmCardTarget(d, activeAcc) {
   let title = '';
   if (!isBadTitle) {
     title = rawTitle;
-  } else if (details && details.displayName && !isCurrentUser(details.displayName) && !/^\d+$/.test(details.displayName) && !/^you (reacted|sent)/i.test(details.displayName)) {
+  } else if (details && details.displayName
+    && !isCurrentUser(details.displayName)
+    && !/^\d+[-:]\d+$/i.test(details.displayName)
+    && !/^\d+$/.test(details.displayName)
+    && !/^you (reacted|sent|shared|liked)/i.test(details.displayName)
+    && !/^(sent|liked|reacted) a /i.test(details.displayName)) {
     title = details.displayName;
   } else if (mutualHandle) {
     title = `@${mutualHandle}`;

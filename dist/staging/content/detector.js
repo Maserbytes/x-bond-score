@@ -511,7 +511,9 @@ class InteractionDetector {
 
       // Check if there is already a dialogue/reciprocal history with this user
       const existingUser = await window.bondStorage.getUser(targetHandle);
-      const isMutual = !!(existingUser && (existingUser.stats.repliesReceived > 0 || existingUser.stats.mutualExchanges > 0));
+      const isConfirmedMutual = !!(existingUser && existingUser.signals && (existingUser.signals.isMutual || (existingUser.signals.theyFollowYou === true && existingUser.signals.youFollowThem === true)));
+      const doesNotFollow = !!(existingUser && existingUser.signals && existingUser.signals.theyFollowYou === false);
+      const isMutual = !doesNotFollow && (isConfirmedMutual || !!(existingUser && (existingUser.stats.repliesReceived > 0 || existingUser.stats.mutualExchanges > 0)));
 
       const pointBoost = isMutual ? 18 : (isThread ? 14 : 8);
       if (window.bondUI) {
@@ -651,56 +653,120 @@ class InteractionDetector {
    * Scans notification cells on /notifications to passively capture likes, reposts, and replies from others
    */
   async detectNotificationCell(cellEl) {
+    if (!this.currentUser) {
+      await this.detectCurrentUser();
+    }
+    if (!this.currentUser && window.bondStorage) {
+      this.currentUser = (await window.bondStorage.getActiveAccount()) || '';
+    }
     if (!this.currentUser) return;
+
     try {
-      const text = cellEl.innerText || '';
+      const text = (cellEl.innerText || cellEl.textContent || '').trim();
       if (!text) return;
 
       // Notification cells contain several links (post, media, profile). Only
       // single-segment /handle links identify the people who engaged with us.
       const handles = [];
       for (const link of cellEl.querySelectorAll('a[href]')) {
-        const href = link.getAttribute('href') || '';
-        const match = href.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
+        const rawHref = link.getAttribute('href') || '';
+        const cleanHref = rawHref.replace(/^https?:\/\/[^\/]+/i, '').split('?')[0].split('#')[0];
+        const match = cleanHref.match(/^\/([A-Za-z0-9_]{1,15})\/?$/);
         if (!match || !match[1]) continue;
         const handle = match[1].toLowerCase();
-        if (handle === this.currentUser) continue;
+        if (['home', 'explore', 'notifications', 'messages', 'i', 'settings', 'search', 'compose', 'intent', 'hashtag'].includes(handle)) continue;
+        if (this.currentUser && handle === this.currentUser) continue;
         if (!handles.includes(handle)) handles.push(handle);
       }
+
+      // Fallback: search @mentions in notification text if links did not resolve
+      if (handles.length === 0) {
+        const atMatches = text.matchAll(/@([A-Za-z0-9_]{1,15})\b/g);
+        for (const m of atMatches) {
+          const handle = m[1].toLowerCase();
+          if (['home', 'explore', 'notifications', 'messages', 'i', 'settings', 'search', 'compose', 'intent', 'hashtag'].includes(handle)) continue;
+          if (this.currentUser && handle === this.currentUser) continue;
+          if (!handles.includes(handle)) handles.push(handle);
+        }
+      }
+
       if (!handles.length) return;
 
+      const notifImg = cellEl.querySelector('img[src*="profile_images"], [data-testid*="Avatar"] img, img');
+      const notifAvatar = notifImg && !notifImg.src.includes('/emoji/') && !notifImg.src.includes('/badge/')
+        ? (notifImg.currentSrc || notifImg.src || '')
+        : '';
+
+      // Direct Follower Notification: "@user followed you"
+      const isFollow = /(?:^|\s)followed you/i.test(text);
+      if (isFollow) {
+        for (const handle of handles.slice(0, 4)) {
+          if (window.bondStorage && window.bondStorage.recordRelationshipSignal) {
+            await window.bondStorage.recordRelationshipSignal(handle, {
+              theyFollowYou: true,
+              displayName: handle,
+              avatarUrl: notifAvatar
+            }, this.currentUser);
+          }
+        }
+        return;
+      }
+
+      // Extract target status ID if link present
+      let statusId = '';
+      const statusLink = cellEl.querySelector('a[href*="/status/"]');
+      if (statusLink) {
+        const sHref = statusLink.getAttribute('href') || '';
+        const sm = sHref.match(/\/status\/(\d+)/);
+        if (sm) statusId = sm[1];
+      }
+
+      // Extract timestamp if <time> element present
+      let timestamp = Date.now();
+      let timestampStr = '';
+      const timeEl = cellEl.querySelector('time');
+      if (timeEl) {
+        const dt = timeEl.getAttribute('datetime');
+        if (dt) {
+          const parsed = Date.parse(dt);
+          if (!isNaN(parsed) && parsed > 0) timestamp = parsed;
+          timestampStr = dt;
+        }
+      }
+
       let type = null;
-      if (/liked your (post|reply|tweet)/i.test(text)) {
-        type = 'like';
-      } else if (/repl(y|ied|ying)|mentioned you/i.test(text)) {
+      if (/repl(y|ied|ying) to your|replied to you|replied|replying/i.test(text)) {
         type = 'reply_received';
-      } else if (/reposted your/i.test(text)) {
+      } else if (/mentioned you/i.test(text)) {
+        type = 'mention';
+      } else if (/quoted your/i.test(text)) {
         type = 'quote';
+      } else if (/reposted your|reposted/i.test(text)) {
+        type = 'repost';
+      } else if (/liked/i.test(text) || !!cellEl.querySelector('[data-testid="icon-like"], [data-testid="like"]')) {
+        type = 'like';
       }
       if (!type) return;
-      // Stable dedupe: the same notification keeps the same key even when the
-      // "and N others" count changes.
-      const notifImg = cellEl.querySelector('img[src*="profile_images"], img');
-      const notifAvatar = notifImg ? (notifImg.currentSrc || notifImg.src || '') : '';
 
       for (const handle of handles.slice(0, 4)) {
         if (notifAvatar && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
           window.bondStorage.updateUserAvatarIfMissing(handle, notifAvatar).catch(() => {});
         }
 
-        const cellId = `notif_${this.id || 'x'}_${type}_${handle}`;
+        // Granular dedupe key: includes statusId or timestamp so distinct interactions from the same user are recorded!
+        const cellId = `notif_${this.id || 'x'}_${type}_${handle}_${statusId || timestampStr || Math.floor(timestamp / 60000)}`;
         if (this.processedTweetIds.has(cellId)) continue;
         this.processedTweetIds.add(cellId);
 
         await window.bondStorage.recordInteraction(handle, {
           type,
           tweetId: cellId,
+          timestamp,
           // Never store notification/reply text - metadata only.
           textSnippet: null,
-          isMutual: true,
+          isMutual: false,
           direction: 'inbound'
         }, this.currentUser);
-
 
         if (window.bondUI) {
           window.bondUI.refreshBadgesForUser(handle, true);
@@ -776,7 +842,7 @@ class InteractionDetector {
           textSnippet: null,
           displayName,
           avatarUrl,
-          isMutual: true
+          isMutual: false
         }, this.currentUser);
 
         // Record in DM conversation store
@@ -1360,6 +1426,15 @@ class InteractionDetector {
                   if (screenName && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
                     window.bondStorage.updateUserAvatarIfMissing(screenName, avatar, name).catch(() => {});
                   }
+                }
+                // Twitter API returns verified live followed_by and following signals
+                if (screenName && window.bondStorage && window.bondStorage.recordRelationshipSignal && typeof u.followed_by === 'boolean') {
+                  window.bondStorage.recordRelationshipSignal(screenName, {
+                    theyFollowYou: !!u.followed_by,
+                    youFollowThem: !!u.following,
+                    displayName: name,
+                    avatarUrl: avatar || ''
+                  }, this.currentUser).catch(() => {});
                 }
               }
             }

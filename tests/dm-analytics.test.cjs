@@ -467,3 +467,112 @@ test('DM conversation mutual resolution: auto-repairs numeric conversation IDs a
   assert.equal(conv2.title, 'Tozo The Dev', 'Title must resolve to mutual name');
   assert.deepEqual(conv2.participants, ['tozo']);
 });
+
+test('Strict non-follower classification: non-followers (theyFollowYou === false) are NEVER tagged as Mutuals or Besties even with high engagement', () => {
+  const now = Date.now();
+  // Case A: High score (>=65) and 2-way engagement with a non-follower
+  const highEvents = [
+    { type: 'reply_received', direction: 'inbound', timestamp: now - 1000, tweetId: 'in_1' },
+    { type: 'reply_sent', direction: 'outbound', timestamp: now - 2000, tweetId: 'out_1' },
+    { type: 'reply_received', direction: 'inbound', timestamp: now - 3000, tweetId: 'in_2' },
+    { type: 'reply_sent', direction: 'outbound', timestamp: now - 4000, tweetId: 'out_2' },
+    { type: 'dm_received', direction: 'inbound', timestamp: now - 5000, tweetId: 'dm_in_1' },
+    { type: 'dm_sent', direction: 'outbound', timestamp: now - 6000, tweetId: 'dm_out_1' }
+  ];
+
+  // With confirmed mutual signals -> Besties
+  const mutualScore = BondScoring.calculateUserScore(highEvents, DEFAULT_SETTINGS, 0, 0, { theyFollowYou: true, youFollowThem: true, isMutual: true });
+  assert.equal(mutualScore.crmStatus.id, 'besties');
+
+  // With non-follower signal -> MUST BE Conversant, NEVER Mutuals or Besties
+  const nonFollowerScore = BondScoring.calculateUserScore(highEvents, DEFAULT_SETTINGS, 0, 0, { theyFollowYou: false, youFollowThem: true });
+  assert.equal(nonFollowerScore.crmStatus.id, 'conversant');
+  assert.notEqual(nonFollowerScore.crmStatus.id, 'mutuals');
+  assert.notEqual(nonFollowerScore.crmStatus.id, 'besties');
+
+  // Case B: Inbound replies only from a non-follower
+  const inboundOnly = [
+    { type: 'reply_received', direction: 'inbound', timestamp: now - 1000, tweetId: 'in_3' },
+    { type: 'like', direction: 'inbound', timestamp: now - 2000, tweetId: 'in_4' }
+  ];
+  const supporterScore = BondScoring.calculateUserScore(inboundOnly, DEFAULT_SETTINGS, 0, 0, { theyFollowYou: false });
+  assert.equal(supporterScore.crmStatus.id, 'supporter');
+  assert.notEqual(supporterScore.crmStatus.id, 'mutuals');
+});
+
+test('Notification interactions: distinct likes, replies, and reposts from /notifications center consistently increment scores and stats without collision', async () => {
+  const mockStore = {};
+  global.chrome = {
+    storage: {
+      local: {
+        get(keys, cb) {
+          if (!keys) return cb(Object.assign({}, mockStore));
+          const res = {};
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          keyList.forEach(k => { if (mockStore[k] !== undefined) res[k] = mockStore[k]; });
+          cb(res);
+        },
+        set(obj, cb) {
+          Object.assign(mockStore, obj);
+          if (cb) cb();
+        }
+      }
+    }
+  };
+
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('masertest');
+
+  const now = Date.now();
+
+  // 1. First like from notification center for @bob on tweet 1001
+  const bob1 = await storage.recordInteraction('bob', {
+    type: 'like',
+    direction: 'inbound',
+    tweetId: 'notif_x_like_bob_1001',
+    timestamp: now - 10000,
+    isMutual: false
+  }, 'masertest');
+
+  assert.ok(bob1);
+  const score1 = bob1.currentScore;
+  assert.ok(score1 > 0, `Initial score should be > 0, got ${score1}`);
+  assert.equal(bob1.stats.likesReceived, 1);
+
+  // 2. Second like from notification center for @bob on tweet 1002 (must NOT be dropped!)
+  const bob2 = await storage.recordInteraction('bob', {
+    type: 'like',
+    direction: 'inbound',
+    tweetId: 'notif_x_like_bob_1002',
+    timestamp: now - 5000,
+    isMutual: false
+  }, 'masertest');
+
+  assert.ok(bob2.currentScore > score1, `Second notification like must increment score from ${score1}, got ${bob2.currentScore}`);
+  assert.equal(bob2.stats.likesReceived, 2, 'likesReceived must increment to 2');
+
+  // 3. A reply from @bob on tweet 1003
+  const bob3 = await storage.recordInteraction('bob', {
+    type: 'reply_received',
+    direction: 'inbound',
+    tweetId: 'notif_x_reply_received_bob_1003',
+    timestamp: now - 1000,
+    isMutual: false
+  }, 'masertest');
+
+  assert.ok(bob3.currentScore > bob2.currentScore, `Reply notification must further increment score from ${bob2.currentScore}, got ${bob3.currentScore}`);
+  assert.equal(bob3.stats.repliesReceived, 1);
+
+  // 4. A repost from @bob on tweet 1004
+  const bob4 = await storage.recordInteraction('bob', {
+    type: 'repost',
+    direction: 'inbound',
+    tweetId: 'notif_x_repost_bob_1004',
+    timestamp: now,
+    isMutual: false
+  }, 'masertest');
+
+  assert.ok(bob4.currentScore > bob3.currentScore, `Repost notification must further increment score from ${bob3.currentScore}, got ${bob4.currentScore}`);
+  assert.equal(bob4.stats.repostsReceived, 1);
+});

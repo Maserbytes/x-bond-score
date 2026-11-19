@@ -242,9 +242,9 @@
           const postLink = Array.from(row.querySelectorAll('a[href]'))
             .map((a) => a.getAttribute('href') || '')
             .find((href) => /\/post\/|\/profile\/[A-Za-z0-9._-]+\/post\//.test(href)) || '';
-          const noticeKey = `${this.id}_notice_${type}_${postLink || handles[0]}`;
           for (const handle of handles) {
-            await this.record(handle, type, { direction: 'inbound', tweetId: noticeKey, isMutual: true });
+            const noticeKey = `${this.id}_notice_${type}_${handle}_${postLink || Math.floor(Date.now() / 60000)}`;
+            await this.record(handle, type, { direction: 'inbound', tweetId: noticeKey, isMutual: false });
           }
         } catch (err) {
           // Keep scanning the remaining notifications.
@@ -403,7 +403,7 @@
       let youFollowThem = null;
       if (followingBtn) youFollowThem = true;
       else if (followBtn) youFollowThem = false;
-      return { theyFollowYou: theyFollowYou ? true : null, youFollowThem, isBlocked };
+      return { theyFollowYou: theyFollowYou ? true : false, youFollowThem, isBlocked };
     }
 
     /** Reads only direction + timestamp from a rendered DM bubble. */

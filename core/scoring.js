@@ -572,7 +572,11 @@ class BondScoring {
   /**
    * Calculates score for a user given their interaction history and settings.
    */
-  static calculateUserScore(events = [], settings = {}, previousScore = 0, minBoost = 0) {
+  static calculateUserScore(events = [], settings = {}, previousScore = 0, minBoost = 0, signals = {}) {
+    if (minBoost && typeof minBoost === 'object' && !Array.isArray(minBoost)) {
+      signals = minBoost;
+      minBoost = 0;
+    }
     if (!events || events.length === 0) {
       return {
         score: 0,
@@ -777,6 +781,10 @@ class BondScoring {
     // Reciprocity Radar
     const reciprocity = this.calculateReciprocity(sentCount, receivedCount);
 
+    // Mutual classification: must have confirmed mutual follow signals, or reciprocal dialogue
+    const isConfirmedMutual = !!(signals && (signals.isMutual || (signals.theyFollowYou === true && signals.youFollowThem === true)));
+    const doesNotFollow = !!(signals && signals.theyFollowYou === false);
+
     // A reply from them is proof of a two-way conversation even when the
     // extension never observed your side of it (e.g. replies typed before it
     // was installed). Never label someone "one-sided" in that case.
@@ -784,16 +792,43 @@ class BondScoring {
       evt.direction === 'inbound' &&
       (evt.type === 'reply_received' || evt.type === 'reply_thread' || evt.type === 'mention')
     );
-    const crmStatus = hasInboundReply
-      ? {
-          id: finalScore >= 65 ? 'besties' : 'mutuals',
-          label: finalScore >= 65 ? 'Besties' : 'Mutuals',
-          emoji: finalScore >= 65 ? '💖' : '🤝',
-          desc: 'Two-way conversation with replies from both sides',
-          color: finalScore >= 65 ? '#F91880' : '#00BA7C',
-          badgeBg: finalScore >= 65 ? 'rgba(249, 24, 128, 0.18)' : 'rgba(0, 186, 124, 0.18)'
-        }
-      : this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays);
+
+    let crmStatus;
+    if (doesNotFollow) {
+      // Non-followers must NEVER be tagged as Mutuals or Besties
+      if (sentCount > 0 && receivedCount > 0) {
+        crmStatus = {
+          id: 'conversant',
+          label: 'Conversant',
+          emoji: '💬',
+          desc: 'Active two-way dialogue (does not follow you)',
+          color: '#1D9BF0',
+          badgeBg: 'rgba(29, 155, 240, 0.18)'
+        };
+      } else if (receivedCount > 0) {
+        crmStatus = {
+          id: 'supporter',
+          label: 'Supporter',
+          emoji: '🌟',
+          desc: 'Engages with your posts without following back',
+          color: '#F59E0B',
+          badgeBg: 'rgba(245, 158, 11, 0.18)'
+        };
+      } else {
+        crmStatus = this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays, signals);
+      }
+    } else if (hasInboundReply && !doesNotFollow && (isConfirmedMutual || sorted.some(e => e.isMutual && !doesNotFollow))) {
+      crmStatus = {
+        id: finalScore >= 65 ? 'besties' : 'mutuals',
+        label: finalScore >= 65 ? 'Besties' : 'Mutuals',
+        emoji: finalScore >= 65 ? '💖' : '🤝',
+        desc: 'Two-way conversation with replies from both sides',
+        color: finalScore >= 65 ? '#F91880' : '#00BA7C',
+        badgeBg: finalScore >= 65 ? 'rgba(249, 24, 128, 0.18)' : 'rgba(0, 186, 124, 0.18)'
+      };
+    } else {
+      crmStatus = this.calculateCRMStatus(finalScore, sentCount, receivedCount, streakDays, signals);
+    }
 
     // 30-Day Trend Sparkline
     const sparkline = this.generate30DaySparkline(sorted, settings, K);
@@ -862,9 +897,12 @@ class BondScoring {
    * Computes relationship status CRM classification:
    * "Besties", "Mutuals", "One-sided (You lead)", "One-sided (They lead)", or "Stranger"
    */
-  static calculateCRMStatus(score, sentCount, receivedCount, streakDays = 0) {
+  static calculateCRMStatus(score, sentCount, receivedCount, streakDays = 0, signals = {}) {
     const total = sentCount + receivedCount;
     const finalScore = Math.round(score || 0);
+
+    const isConfirmedMutual = !!(signals && (signals.isMutual || (signals.theyFollowYou === true && signals.youFollowThem === true)));
+    const doesNotFollow = !!(signals && signals.theyFollowYou === false);
 
     if (total === 0 || finalScore < 3) {
       return {
@@ -874,6 +912,40 @@ class BondScoring {
         desc: 'No meaningful interaction history yet',
         color: '#71767B',
         badgeBg: 'rgba(113, 118, 123, 0.15)'
+      };
+    }
+
+    // Non-follower handling: Strictly prevent labeling as Mutuals or Besties
+    if (doesNotFollow) {
+      if (sentCount > 0 && receivedCount > 0) {
+        return {
+          id: 'conversant',
+          label: 'Conversant',
+          emoji: '💬',
+          desc: 'Active two-way dialogue (does not follow you)',
+          color: '#1D9BF0',
+          badgeBg: 'rgba(29, 155, 240, 0.18)'
+        };
+      }
+      if (receivedCount >= 2 && sentCount === 0) {
+        return {
+          id: 'one_sided_them',
+          label: 'One-sided',
+          subLabel: 'They lead',
+          emoji: '⬅️',
+          desc: 'They engage with you, but do not follow back',
+          color: '#1D9BF0',
+          badgeBg: 'rgba(29, 155, 240, 0.18)'
+        };
+      }
+      return {
+        id: 'one_sided',
+        label: 'One-sided',
+        subLabel: 'You lead',
+        emoji: '➡️',
+        desc: 'You send likes/replies, does not follow back',
+        color: '#FF7A00',
+        badgeBg: 'rgba(255, 122, 0, 0.18)'
       };
     }
 
@@ -974,7 +1046,7 @@ class BondScoring {
    * - ⚖️ Balanced Mutuals: healthy two-way dialogue
    * - ❄️ Dormant / At Risk: a real bond that has gone quiet for 14+ days
    */
-  static classifyRelationship(score = 0, sentCount = 0, receivedCount = 0, lastInteraction = 0) {
+  static classifyRelationship(score = 0, sentCount = 0, receivedCount = 0, lastInteraction = 0, signals = {}) {
     const total = sentCount + receivedCount;
     const finalScore = Math.round(score || 0);
     const daysSince = lastInteraction
@@ -1026,11 +1098,12 @@ class BondScoring {
       };
     }
     if (sentCount > 0 && receivedCount > 0) {
+      const isMutual = !signals || signals.theyFollowYou !== false;
       return {
         id: 'balanced',
-        label: 'Balanced Mutual',
+        label: isMutual ? 'Balanced Mutual' : 'Balanced Dialogue',
         emoji: '⚖️',
-        desc: 'Healthy back-and-forth dialogue',
+        desc: isMutual ? 'Healthy back-and-forth dialogue' : 'Healthy back-and-forth conversation (does not follow back)',
         color: '#00BA7C',
         badgeBg: 'rgba(0, 186, 124, 0.18)'
       };

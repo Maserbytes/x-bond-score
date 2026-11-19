@@ -796,7 +796,7 @@ class BondStorage {
     const settings = await this.getSettings();
     const previousScore = user.currentScore || 0;
     const { score, tier, crmStatus, trend, streakDays, reciprocity, recencyBoost, twoWayMultiplier, qualityMetrics } =
-      scoringEngine.calculateUserScore(events, settings, previousScore);
+      scoringEngine.calculateUserScore(events, settings, previousScore, 0, user.signals || {});
     user.currentScore = score;
     user.tier = tier.id;
     user.crmStatus = crmStatus ? crmStatus.label : tier.crmStatus || 'Stranger';
@@ -813,7 +813,7 @@ class BondStorage {
     const sSent = (user.stats && ((user.stats.repliesSent || 0) + (user.stats.dmsSent || 0) + (user.stats.likesSent || 0) + (user.stats.quotesSent || 0) + (user.stats.repostsSent || 0) + (user.stats.mentionsSent || 0))) || 0;
     const sRecv = (user.stats && ((user.stats.repliesReceived || 0) + (user.stats.dmsReceived || 0) + (user.stats.likesReceived || 0) + (user.stats.quotesReceived || 0) + (user.stats.repostsReceived || 0) + (user.stats.mentionsReceived || 0))) || 0;
     if (typeof scoringEngine.classifyRelationship === 'function') {
-      user.relationshipClass = scoringEngine.classifyRelationship(score, sSent, sRecv, user.lastInteraction);
+      user.relationshipClass = scoringEngine.classifyRelationship(score, sSent, sRecv, user.lastInteraction, user.signals || {});
     }
 
     await this.saveUser(handle, user, account, platform);
@@ -1549,7 +1549,12 @@ class BondStorage {
         } else {
           let mutual = updated.participants && updated.participants[0];
           const det = mutual && updated.participantDetails && updated.participantDetails[mutual];
-          if (det && det.displayName && !/^\d+$/.test(det.displayName)) {
+          const isCleanDetName = det && det.displayName
+            && !/^\d+[-:]\d+$/i.test(det.displayName)
+            && !/^\d+$/.test(det.displayName)
+            && !/^you (reacted|sent|shared|liked)/i.test(det.displayName)
+            && !/^(sent|liked|reacted) a /i.test(det.displayName);
+          if (isCleanDetName) {
             updated.title = det.displayName;
           } else if (mutual) {
             updated.title = `@${mutual}`;
@@ -1792,7 +1797,7 @@ class BondStorage {
                 if (fromUsers && fromUsers.displayName) {
                   value.title = fromUsers.displayName;
                   changed = true;
-                } else if (fromDetails && fromDetails.displayName && !/^\d+$/.test(fromDetails.displayName) && !/^you (reacted|sent)/i.test(fromDetails.displayName)) {
+                } else if (fromDetails && fromDetails.displayName && !/^\d+[-:]\d+$/i.test(fromDetails.displayName) && !/^\d+$/.test(fromDetails.displayName) && !/^you (reacted|sent|shared|liked)/i.test(fromDetails.displayName) && !/^(sent|liked|reacted) a /i.test(fromDetails.displayName)) {
                   value.title = fromDetails.displayName;
                   changed = true;
                 } else if (mutualHandle) {
