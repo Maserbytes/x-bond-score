@@ -740,7 +740,7 @@ class InteractionDetector {
       // 2. Check current URL if it has /messages/<id>-<handle>
       if (!targetHandle && location.pathname.startsWith('/messages/')) {
         const urlMatch = location.pathname.match(/\/messages\/\d+-([A-Za-z0-9_]+)/i);
-        if (urlMatch && urlMatch[1]) {
+        if (urlMatch && urlMatch[1] && !/^\d+$/.test(urlMatch[1])) {
           targetHandle = urlMatch[1].toLowerCase();
         }
       }
@@ -971,16 +971,54 @@ class InteractionDetector {
           const isGroup = convId.startsWith('g') || /^\d+$/.test(convId);
 
           // Privacy: the inbox row preview can contain message text, so it is
-          // never read. The conversation id already encodes the participant.
+          // never read.
           let participantHandle = null;
           if (!isGroup && convId.includes('-')) {
-            participantHandle = convId.split('-')[1].toLowerCase();
+            const candidate = convId.split('-')[1].toLowerCase();
+            if (!/^\d+$/.test(candidate) && (!this.currentUser || candidate !== this.currentUser.toLowerCase())) {
+              participantHandle = candidate;
+            }
           }
 
-          const img = el.querySelector('img[src*="profile_images"], img');
-          const avatarUrl = img ? (img.currentSrc || img.src || '') : '';
-          const nameEl = el.querySelector('div[dir="ltr"] span, span');
-          const displayName = nameEl ? nameEl.innerText.trim() : (participantHandle || convId);
+          const rawLines = (el.innerText || el.textContent || '').split('\n').map(s => s.trim()).filter(Boolean);
+          const isJunkText = (line) => {
+            if (!line) return true;
+            if (/^(now|just now|\d+[smhdw]|yesterday|·|\.|\u00b7)$/i.test(line)) return true;
+            if (/^you (reacted|sent|shared|liked)/i.test(line)) return true;
+            if (/^(sent|liked|reacted) a /i.test(line)) return true;
+            if (/^(you|them):/i.test(line)) return true;
+            if (/^(⚡|🔥|🧊|👑|👏|💬|🤝|💫|❤️)/.test(line)) return true;
+            if (/^\d+[-:]\d+$/i.test(line) || /^\d+$/.test(line)) return true;
+            return false;
+          };
+
+          const validLines = rawLines.filter(l => !isJunkText(l));
+          if (!participantHandle) {
+            const hMatch = (el.innerText || '').match(/@([A-Za-z0-9_]+)/);
+            if (hMatch && (!this.currentUser || hMatch[1].toLowerCase() !== this.currentUser.toLowerCase())) {
+              participantHandle = hMatch[1].toLowerCase();
+            } else {
+              const linkEl = el.querySelector('a[href^="/"]:not([href*="/messages"]):not([href*="/i/chat"]):not([href*="/home"]):not([href*="/notifications"])');
+              if (linkEl) {
+                const m = (linkEl.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]+)$/);
+                if (m && (!this.currentUser || m[1].toLowerCase() !== this.currentUser.toLowerCase())) {
+                  participantHandle = m[1].toLowerCase();
+                }
+              }
+            }
+          }
+
+          let displayName = '';
+          if (validLines.length > 0) {
+            const firstClean = validLines.find(l => !l.startsWith('@') && (!this.currentUser || l.toLowerCase() !== this.currentUser.toLowerCase()));
+            if (firstClean) displayName = firstClean;
+          }
+          if (!displayName) {
+            displayName = participantHandle ? `@${participantHandle}` : (isGroup ? 'Group chat' : 'Chat Mutual');
+          }
+
+          const img = el.querySelector('img[src*="profile_images"], [data-testid*="Avatar"] img, img');
+          const avatarUrl = img && !img.src.includes('/emoji/') && !img.src.includes('/badge/') ? (img.currentSrc || img.src || '') : '';
 
           const hasUnread = !!el.querySelector('[data-testid="unread-badge"], [aria-label*="unread" i]');
 
@@ -1289,7 +1327,9 @@ class InteractionDetector {
       if (csrfToken && (location.hostname.includes('x.com') || location.hostname.includes('twitter.com'))) {
         for (let i = 0; i < missing.length; i += 100) {
           const chunk = missing.slice(i, i + 100);
-          const url = `https://x.com/i/api/1.1/users/lookup.json?screen_name=${encodeURIComponent(chunk.join(','))}`;
+          const isNumeric = chunk.every(id => /^\d+$/.test(id));
+          const queryParam = isNumeric ? `user_id=${encodeURIComponent(chunk.join(','))}` : `screen_name=${encodeURIComponent(chunk.join(','))}`;
+          const url = `https://x.com/i/api/1.1/users/lookup.json?${queryParam}`;
           const res = await fetch(url, {
             headers: {
               'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
@@ -1305,11 +1345,13 @@ class InteractionDetector {
             if (Array.isArray(users)) {
               for (const u of users) {
                 const screenName = (u.screen_name || '').toLowerCase().trim();
+                const uid = String(u.id_str || u.id || '');
                 const avatar = u.profile_image_url_https || u.profile_image_url || '';
                 const name = u.name || screenName;
-                if (screenName && avatar) {
-                  results[screenName] = { avatarUrl: avatar, displayName: name };
-                  if (window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+                if (avatar) {
+                  if (screenName) results[screenName] = { avatarUrl: avatar, displayName: name, handle: screenName };
+                  if (uid) results[uid] = { avatarUrl: avatar, displayName: name, handle: screenName };
+                  if (screenName && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
                     window.bondStorage.updateUserAvatarIfMissing(screenName, avatar, name).catch(() => {});
                   }
                 }

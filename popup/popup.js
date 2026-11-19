@@ -437,6 +437,23 @@ async function resolveMissingAvatarsForList(handles) {
                 ${pin ? pin.outerHTML : ''}
               `;
             });
+
+            const dmWraps = document.querySelectorAll(`.dm-action-avatar[data-avatar-handle="${h}"]`);
+            dmWraps.forEach((wrap) => {
+              wrap.innerHTML = `
+                <img src="${escapeHtml(data.avatarUrl)}" alt="${escapeHtml(data.displayName || h)}" onerror="this.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+                <div class="dm-avatar-fallback" style="display:none;">${escapeHtml(h.charAt(0).toUpperCase())}</div>
+              `;
+            });
+
+            if (data.displayName) {
+              const nameRows = document.querySelectorAll(`.dm-closest-card[data-handle="${h}"] .dm-closest-name`);
+              nameRows.forEach((el) => {
+                if (el.innerText.startsWith('@') || el.innerText === 'Chat Mutual') {
+                  el.innerText = data.displayName;
+                }
+              });
+            }
           }
         }
       });
@@ -1730,7 +1747,86 @@ async function renderDmsTab() {
   renderDmSubSections(scopedDms, currentDmFilter);
 }
 
+/**
+ * Resolves the mutual's clean display title, real avatar, and handle for a DM card.
+ * Never leaks the signed-in user's own avatar or handle, and never displays raw numeric snowflake IDs.
+ */
+function resolveDmCardTarget(d, activeAcc) {
+  const currentHandle = (activeAcc || currentUsername || '').toLowerCase().replace(/^@/, '');
+
+  // 1. Filter out current user and pure numeric IDs from participants
+  const rawParticipants = Array.isArray(d.participants) ? d.participants : [];
+  const cleanParticipants = rawParticipants.filter(p => {
+    const s = String(p).toLowerCase().replace(/^@/, '');
+    return s && s !== currentHandle && s !== 'you' && !/^\d+$/.test(s);
+  });
+
+  let mutualHandle = cleanParticipants[0] || '';
+  let details = null;
+
+  // 2. Look in participantDetails for a non-current-user, non-numeric entry
+  if (d.participantDetails && typeof d.participantDetails === 'object') {
+    for (const [k, det] of Object.entries(d.participantDetails)) {
+      const cleanK = String(k).toLowerCase().replace(/^@/, '');
+      if (cleanK && cleanK !== currentHandle && cleanK !== 'you') {
+        if (!mutualHandle && !/^\d+$/.test(cleanK)) mutualHandle = cleanK;
+        if (det && (det.avatarUrl || det.displayName)) {
+          details = det;
+          if (!mutualHandle && det.handle) mutualHandle = det.handle.toLowerCase().replace(/^@/, '');
+          break;
+        }
+      }
+    }
+  }
+
+  if (!details && mutualHandle && d.participantDetails) {
+    details = d.participantDetails[mutualHandle] || d.participantDetails[`@${mutualHandle}`];
+  }
+
+  // 3. Fallback: check cachedUsers
+  if (!details && mutualHandle && Array.isArray(cachedUsers)) {
+    const u = cachedUsers.find(x => (x.handle || '').toLowerCase().replace(/^@/, '') === mutualHandle);
+    if (u) {
+      details = {
+        displayName: u.displayName || u.handle,
+        avatarUrl: u.avatarUrl || ''
+      };
+    }
+  }
+
+  // 4. Avatar: must NOT be current user's avatar
+  let avatar = (details && details.avatarUrl) || '';
+  if (currentAvatarUrl && avatar === currentAvatarUrl) {
+    avatar = '';
+  }
+
+  // 5. Title: must NOT be numeric convId, reaction snippet, or current user
+  let rawTitle = (d.title || '').trim();
+  const isBadTitle = !rawTitle
+    || /^\d+[-:]\d+$/i.test(rawTitle)
+    || /^\d+$/.test(rawTitle)
+    || /^you (reacted|sent|shared|liked)/i.test(rawTitle)
+    || /^(sent|liked|reacted) a /i.test(rawTitle)
+    || rawTitle.toLowerCase() === currentHandle
+    || (rawTitle === 'Group chat' && !d.isGroup);
+
+  let title = '';
+  if (!isBadTitle) {
+    title = rawTitle;
+  } else if (details && details.displayName && !/^\d+$/.test(details.displayName) && !/^you (reacted|sent)/i.test(details.displayName)) {
+    title = details.displayName;
+  } else if (mutualHandle) {
+    title = `@${mutualHandle}`;
+  } else {
+    title = d.isGroup ? 'Group chat' : 'Chat Mutual';
+  }
+
+  return { title, avatar, mutualHandle };
+}
+
 function renderDmSubSections(allDms, filter = 'all') {
+  const activeAcc = (currentUsername && currentUsername !== 'you') ? currentUsername : null;
+  const missingDmAvatars = [];
   const searchInput = document.getElementById('dm-search-input');
   const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
 
@@ -1761,20 +1857,25 @@ function renderDmSubSections(allDms, filter = 'all') {
       listClosest.innerHTML = '<div class="dm-empty-state">No direct messages tracked yet. Chat on a connected platform to build your private bond scores!</div>';
     } else {
       listClosest.innerHTML = closestItems.map((d, idx) => {
-        const title = d.title || (d.participants && d.participants[0]) || d.convId;
-        const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
-        const avatar = details ? details.avatarUrl : '';
+        const target = resolveDmCardTarget(d, activeAcc);
+        const title = target.title;
+        const avatar = target.avatar;
+        const mutualHandle = target.mutualHandle;
+        if (!avatar && mutualHandle) {
+          missingDmAvatars.push(mutualHandle);
+        }
+
         const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
         const score = Math.round(d.bondScore || 0);
         const sentPct = d.sentPercent ?? (d.totalCount > 0 ? Math.round((d.sentCount / d.totalCount) * 100) : 50);
         const recvPct = 100 - sentPct;
 
         return `
-          <div class="dm-closest-card" data-conv="${escapeHtml(d.convId)}">
+          <div class="dm-closest-card" data-conv="${escapeHtml(d.convId)}" data-handle="${escapeHtml(mutualHandle)}">
             <div class="dm-closest-top">
               <div class="dm-closest-user">
                 <span class="dm-closest-rank-num">#${idx + 1}</span>
-                <div class="dm-action-avatar">
+                <div class="dm-action-avatar" data-avatar-handle="${escapeHtml(mutualHandle)}">
                   ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
                 </div>
                 <div class="dm-closest-names">
@@ -1818,12 +1919,13 @@ function renderDmSubSections(allDms, filter = 'all') {
 
   const allMilestones = [];
   filtered.forEach(d => {
+    const target = resolveDmCardTarget(d, activeAcc);
     if (Array.isArray(d.memories)) {
       d.memories.forEach(m => {
         allMilestones.push({
           ...m,
           convId: d.convId,
-          convTitle: d.title || (d.participants && d.participants[0]) || d.convId
+          convTitle: target.title
         });
       });
     }
@@ -1849,14 +1951,16 @@ function renderDmSubSections(allDms, filter = 'all') {
           <div class="dm-memory-subhead">🌟 All-Time Chat Champions (Lifetime Volume)</div>
           <div class="dm-champions-grid">
             ${topLifetime.slice(0, 3).map((d) => {
-              const title = d.title || (d.participants && d.participants[0]) || d.convId;
-              const details = d.participantDetails && d.participants && d.participantDetails[d.participants[0]];
-              const avatar = details ? details.avatarUrl : '';
+              const target = resolveDmCardTarget(d, activeAcc);
+              const title = target.title;
+              const avatar = target.avatar;
+              const mutualHandle = target.mutualHandle;
+              if (!avatar && mutualHandle) missingDmAvatars.push(mutualHandle);
               const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);
               const lifetime = d.lifetimeTotal || d.totalCount || 0;
               return `
-                <div class="dm-champion-card" data-conv="${escapeHtml(d.convId)}">
-                  <div class="dm-action-avatar">
+                <div class="dm-champion-card" data-conv="${escapeHtml(d.convId)}" data-handle="${escapeHtml(mutualHandle)}">
+                  <div class="dm-action-avatar" data-avatar-handle="${escapeHtml(mutualHandle)}">
                     ${avatar ? `<img src="${escapeHtml(avatar)}" alt="${escapeHtml(title)}">` : `<div class="dm-avatar-fallback">${escapeHtml(title.charAt(0).toUpperCase())}</div>`}
                   </div>
                   <div class="dm-champ-info">
@@ -1907,4 +2011,8 @@ function renderDmSubSections(allDms, filter = 'all') {
       }
     });
   });
+
+  if (missingDmAvatars.length > 0) {
+    resolveMissingAvatarsForList(missingDmAvatars);
+  }
 }

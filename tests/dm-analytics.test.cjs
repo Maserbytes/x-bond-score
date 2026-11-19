@@ -361,3 +361,79 @@ test('Chat Memories & Lifetime History: retains permanent memories and never res
   assert.ok(metricsAfter2Days.bondScore >= 20, `Score after 2 days should remain strong, got ${metricsAfter2Days.bondScore}`);
   assert.notEqual(metricsAfter2Days.rank.id, null);
 });
+
+test('DM conversation mutual resolution: auto-repairs numeric conversation IDs and preview snippets, purges self from participants', async () => {
+  const mockStore = {};
+  global.chrome = {
+    storage: {
+      local: {
+        get(keys, cb) {
+          if (!keys) return cb(Object.assign({}, mockStore));
+          const res = {};
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          keyList.forEach(k => { if (mockStore[k] !== undefined) res[k] = mockStore[k]; });
+          cb(res);
+        },
+        set(obj, cb) {
+          Object.assign(mockStore, obj);
+          if (cb) cb();
+        }
+      }
+    }
+  };
+
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('masersuspended');
+
+  // 1. Seed known mutual user in storage
+  await storage.saveUser('greyratclips', {
+    handle: 'greyratclips',
+    displayName: 'Greyrat',
+    avatarUrl: 'https://pbs.twimg.com/profile_images/greyrat.jpg'
+  }, 'masersuspended');
+
+  // 2. Save a corrupted conversation where title is a raw numeric snowflake ID and participants includes masersuspended
+  await storage.saveDmConversation('1834259027947311104-1884130058983378944', {
+    title: '1834259027947311104-1884130058983378944',
+    participants: ['masersuspended', 'greyratclips'],
+    participantDetails: {
+      masersuspended: { handle: 'masersuspended', displayName: 'Maser', avatarUrl: 'https://pbs.twimg.com/maser.jpg' },
+      greyratclips: { handle: 'greyratclips', displayName: 'Greyrat', avatarUrl: 'https://pbs.twimg.com/profile_images/greyrat.jpg' }
+    },
+    sentCount: 2,
+    receivedCount: 2,
+    totalCount: 4,
+    bondScore: 35
+  }, 'masersuspended');
+
+  // 3. Save a conversation where title is a reaction snippet like 'You reacted 😲 to "I know i mess...'
+  await storage.saveDmConversation('tozoconv', {
+    title: 'You reacted 😲 to "I know i mess...',
+    participants: ['masersuspended', 'tozo'],
+    participantDetails: {
+      tozo: { handle: 'tozo', displayName: 'Tozo The Dev', avatarUrl: 'https://pbs.twimg.com/tozo.jpg' }
+    },
+    sentCount: 1,
+    receivedCount: 1,
+    totalCount: 2,
+    bondScore: 20
+  }, 'masersuspended');
+
+  // 4. Retrieve all DM conversations: getAllDmConversations must auto-repair both
+  const allConvs = await storage.getAllDmConversations('masersuspended');
+  assert.equal(allConvs.length, 2);
+
+  const conv1 = allConvs.find(c => c.convId === '1834259027947311104-1884130058983378944');
+  assert.ok(conv1);
+  assert.notEqual(conv1.title, '1834259027947311104-1884130058983378944', 'Raw numeric title must be repaired');
+  assert.equal(conv1.title, 'Greyrat', 'Title must resolve to mutual display name');
+  assert.ok(!conv1.participants.includes('masersuspended'), 'Signed-in user must be purged from 1:1 participants');
+  assert.deepEqual(conv1.participants, ['greyratclips']);
+
+  const conv2 = allConvs.find(c => c.convId === 'tozoconv');
+  assert.ok(conv2);
+  assert.notEqual(conv2.title, 'You reacted 😲 to "I know i mess...', 'Reaction preview snippet must be repaired');
+  assert.equal(conv2.title, 'Tozo The Dev', 'Title must resolve to mutual name');
+  assert.deepEqual(conv2.participants, ['tozo']);
+});

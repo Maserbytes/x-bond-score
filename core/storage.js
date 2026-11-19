@@ -1526,6 +1526,36 @@ class BondStorage {
     if (updated.isGroup) {
       updated.waitingForUserReply = false;
       updated.waitingSinceTimestamp = null;
+    } else {
+      const activeClean = (activeAccount || '').toLowerCase().replace(/^@/, '');
+      if (Array.isArray(updated.participants)) {
+        updated.participants = updated.participants.filter(p => {
+          const s = String(p).toLowerCase().replace(/^@/, '');
+          return s && s !== activeClean && s !== 'you' && !/^\d+$/.test(s);
+        });
+      }
+      const newTitle = (convData && convData.title) || '';
+      const isBadNewTitle = !newTitle
+        || /^\d+[-:]\d+$/i.test(newTitle)
+        || /^\d+$/.test(newTitle)
+        || /^you (reacted|sent|shared|liked)/i.test(newTitle)
+        || /^(sent|liked|reacted) a /i.test(newTitle)
+        || newTitle.toLowerCase() === activeClean
+        || (newTitle === 'Group chat' && !updated.isGroup);
+
+      if (isBadNewTitle) {
+        if (existing.title && existing.title !== cleanId && !/^\d+[-:]\d+$/i.test(existing.title) && !/^you (reacted|sent)/i.test(existing.title)) {
+          updated.title = existing.title;
+        } else {
+          let mutual = updated.participants && updated.participants[0];
+          const det = mutual && updated.participantDetails && updated.participantDetails[mutual];
+          if (det && det.displayName && !/^\d+$/.test(det.displayName)) {
+            updated.title = det.displayName;
+          } else if (mutual) {
+            updated.title = `@${mutual}`;
+          }
+        }
+      }
     }
 
     // Group energy reads totalMessages + recent windows. Keep both derived from
@@ -1686,6 +1716,110 @@ class BondStorage {
             }
           }
 
+          // Auto-repair corrupted titles, numeric participant IDs, and mutual details
+          const knownUsers = new Map();
+          for (const [k, v] of Object.entries(allData)) {
+            if (k.includes(':user:') && v && v.handle) {
+              const h = v.handle.toLowerCase().trim().replace(/^@/, '');
+              if (h && (!targetAccount || h !== targetAccount)) {
+                knownUsers.set(h, {
+                  handle: h,
+                  displayName: v.displayName || v.handle,
+                  avatarUrl: v.avatarUrl || ''
+                });
+              }
+            }
+          }
+
+          const targetClean = (targetAccount || '').toLowerCase().replace(/^@/, '');
+          const updatesToPersist = {};
+
+          for (const value of convs) {
+            if (!value.isGroup) {
+              let changed = false;
+
+              // 1. Sanitize participants: filter out current user and pure numeric IDs
+              if (Array.isArray(value.participants)) {
+                const filteredP = value.participants.filter(p => {
+                  const s = String(p).toLowerCase().replace(/^@/, '');
+                  return s && s !== targetClean && s !== 'you' && !/^\d+$/.test(s);
+                });
+                if (filteredP.length !== value.participants.length) {
+                  value.participants = filteredP;
+                  changed = true;
+                }
+              } else {
+                value.participants = [];
+              }
+
+              // 2. Resolve mutual handle from participantDetails or knownUsers
+              let mutualHandle = value.participants[0] || '';
+              if (!mutualHandle && value.participantDetails && typeof value.participantDetails === 'object') {
+                for (const [k, det] of Object.entries(value.participantDetails)) {
+                  const s = String(k).toLowerCase().replace(/^@/, '');
+                  if (s && s !== targetClean && s !== 'you' && !/^\d+$/.test(s)) {
+                    mutualHandle = s;
+                    break;
+                  }
+                }
+                if (mutualHandle) {
+                  value.participants = [mutualHandle];
+                  changed = true;
+                }
+              }
+
+              // 3. Auto-repair title if corrupted (numeric convId, reaction snippet, or current user)
+              const rawTitle = (value.title || '').trim();
+              const isBadTitle = !rawTitle
+                || rawTitle === value.convId
+                || /^\d+[-:]\d+$/i.test(rawTitle)
+                || /^\d+$/.test(rawTitle)
+                || /^you (reacted|sent|shared|liked)/i.test(rawTitle)
+                || /^(sent|liked|reacted) a /i.test(rawTitle)
+                || rawTitle.toLowerCase() === targetClean
+                || (rawTitle === 'Group chat' && !value.isGroup);
+
+              if (isBadTitle) {
+                const fromUsers = mutualHandle && knownUsers.get(mutualHandle);
+                const fromDetails = mutualHandle && value.participantDetails && value.participantDetails[mutualHandle];
+                if (fromUsers && fromUsers.displayName) {
+                  value.title = fromUsers.displayName;
+                  changed = true;
+                } else if (fromDetails && fromDetails.displayName && !/^\d+$/.test(fromDetails.displayName) && !/^you (reacted|sent)/i.test(fromDetails.displayName)) {
+                  value.title = fromDetails.displayName;
+                  changed = true;
+                } else if (mutualHandle) {
+                  value.title = `@${mutualHandle}`;
+                  changed = true;
+                }
+              }
+
+              // 4. Auto-repair avatar in participantDetails
+              if (mutualHandle) {
+                if (!value.participantDetails) value.participantDetails = {};
+                const prevDet = value.participantDetails[mutualHandle] || {};
+                const userObj = knownUsers.get(mutualHandle);
+                if ((!prevDet.avatarUrl || prevDet.avatarUrl === '') && userObj && userObj.avatarUrl) {
+                  value.participantDetails[mutualHandle] = {
+                    handle: mutualHandle,
+                    displayName: prevDet.displayName || userObj.displayName || mutualHandle,
+                    avatarUrl: userObj.avatarUrl
+                  };
+                  changed = true;
+                }
+              }
+
+              if (changed && value.convId) {
+                const k = this._dmKey(value.convId, targetAccount, value.platform || 'x');
+                updatesToPersist[k] = value;
+              }
+            }
+          }
+
+          if (Object.keys(updatesToPersist).length > 0) {
+            this._setRaw(updatesToPersist).catch(() => {});
+          }
+
           // Recalculate metrics on retrieved items
           for (const value of convs) {
             if (scoringEngine) {
@@ -1747,6 +1881,15 @@ class BondStorage {
             }
           } catch (e) {}
         }
+        const targetCleanLs = (targetAccount || '').toLowerCase().replace(/^@/, '');
+        for (const value of convs) {
+          if (!value.isGroup && Array.isArray(value.participants)) {
+            value.participants = value.participants.filter(p => {
+              const s = String(p).toLowerCase().replace(/^@/, '');
+              return s && s !== targetCleanLs && s !== 'you' && !/^\d+$/.test(s);
+            });
+          }
+        }
         convs.sort((a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0));
         resolve(convs);
       }
@@ -1771,7 +1914,7 @@ class BondStorage {
       convId: cleanConvId,
       isGroup: cleanConvId.startsWith('g') || /^\d+$/.test(cleanConvId),
       title: cleanConvId,
-      participants: [cleanConvId],
+      participants: (!/^\d+[-:]\d+$/i.test(cleanConvId) && !/^\d+$/.test(cleanConvId) && !cleanConvId.startsWith('g')) ? [cleanConvId] : [],
       participantDetails: {},
       sentCount: 0,
       receivedCount: 0,

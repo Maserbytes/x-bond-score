@@ -263,6 +263,16 @@
       if (this._inboxApiSynced && (Date.now() - this._inboxApiSynced < 60000)) return;
       this._inboxApiSynced = Date.now();
       try {
+        if (!currentUser) {
+          currentUser = (window.interactionDetector && window.interactionDetector.currentUser)
+            || (window.bondStorage && window.bondStorage.currentUser)
+            || '';
+          if (!currentUser && window.bondStorage && window.bondStorage.getCurrentUser) {
+            currentUser = (await window.bondStorage.getCurrentUser()) || '';
+          }
+        }
+        const curUserClean = (currentUser || '').toLowerCase().replace(/^@/, '');
+
         const match = document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/);
         const csrfToken = match ? match[1] : null;
         if (!csrfToken) return;
@@ -307,12 +317,12 @@
             const timestamp = Number(msg.time) || Date.now();
             const senderUid = String(msg.sender_id || '');
             const senderHandle = userMap[senderUid] || null;
-            const isOutbound = currentUser && senderHandle === currentUser;
+            const isOutbound = curUserClean && senderHandle === curUserClean;
 
             convEntries[cid].push({
               fingerprint: `api_${cid}_${msg.id || timestamp}`,
               direction: isOutbound ? 'outbound' : 'inbound',
-              senderHandle: senderHandle !== currentUser ? senderHandle : null,
+              senderHandle: senderHandle !== curUserClean ? senderHandle : null,
               timestamp,
               index: convEntries[cid].length
             });
@@ -323,7 +333,6 @@
           for (const [cid, c] of Object.entries(state.conversations)) {
             const cleanId = String(cid).toLowerCase().trim();
             const isGroup = c.type === 'GROUP_DM' || cleanId.startsWith('g');
-            const title = c.name || '';
             const participants = [];
             const participantDetails = {};
 
@@ -331,26 +340,47 @@
               for (const p of c.participants) {
                 const pUid = String(p.user_id || '');
                 const pH = userMap[pUid];
-                if (pH && pH !== currentUser) {
-                  participants.push(pH);
-                  if (state.users && state.users[pUid]) {
-                    const uObj = state.users[pUid];
-                    participantDetails[pH] = {
-                      handle: pH,
-                      displayName: uObj.name || pH,
-                      avatarUrl: uObj.profile_image_url_https || ''
-                    };
+                if (pH) {
+                  const cleanPH = pH.toLowerCase().replace(/^@/, '');
+                  if (!curUserClean || cleanPH !== curUserClean) {
+                    participants.push(cleanPH);
+                    if (state.users && state.users[pUid]) {
+                      const uObj = state.users[pUid];
+                      participantDetails[cleanPH] = {
+                        handle: cleanPH,
+                        displayName: uObj.name || cleanPH,
+                        avatarUrl: uObj.profile_image_url_https || uObj.profile_image_url || ''
+                      };
+                    }
                   }
                 }
               }
             }
 
             const existing = await window.bondStorage.getDmConversation(cleanId, false, currentUser);
+
+            let resolvedTitle = c.name || '';
+            if (!isGroup) {
+              const mutual = participants[0];
+              const det = mutual && participantDetails[mutual];
+              if (det && det.displayName && !/^\d+$/.test(det.displayName)) {
+                resolvedTitle = det.displayName;
+              } else if (mutual) {
+                resolvedTitle = `@${mutual}`;
+              } else if (existing && existing.title && !/^\d+[-:]\d+$/i.test(existing.title) && !/^you (reacted|sent)/i.test(existing.title)) {
+                resolvedTitle = existing.title;
+              } else {
+                resolvedTitle = 'Chat Mutual';
+              }
+            } else {
+              resolvedTitle = resolvedTitle || (existing && existing.title) || 'Group chat';
+            }
+
             await window.bondStorage.saveDmConversation(cleanId, {
               convId: cleanId,
               isGroup,
-              title: title || (existing && existing.title) || (isGroup ? 'Group chat' : cleanId),
-              participants: participants.length > 0 ? participants : (existing ? existing.participants : []),
+              title: resolvedTitle,
+              participants: participants.length > 0 ? participants : (existing && Array.isArray(existing.participants) ? existing.participants.filter(p => p !== curUserClean && !/^\d+$/.test(p)) : []),
               participantDetails: Object.assign({}, (existing && existing.participantDetails) || {}, participantDetails),
               surface: 'xchat'
             }, currentUser).catch(() => {});
@@ -384,24 +414,63 @@
           const convId = canonicalConversationId(raw);
           const isGroup = convId.startsWith('g');
 
-          const img = row.querySelector('img');
+          const img = row.querySelector('img[src*="profile_images"], [data-testid*="Avatar"] img, img');
           const alt = img && img.alt ? img.alt.trim() : '';
-          const rowAvatar = img && /^https?:/i.test(img.src || '') ? img.src : '';
+          const rowAvatar = img && /^https?:/i.test(img.src || '') && !img.src.includes('/emoji/') && !img.src.includes('/badge/') ? img.src : '';
 
-          // Extract title or participant handle from conversation row
-          const titleSpan = row.querySelector('span, [dir="ltr"]');
-          const rowText = (titleSpan ? titleSpan.innerText : row.innerText) || '';
-          const cleanText = rowText.split('\n')[0].trim();
-          const rowTitle = (/^user avatar$/i.test(alt) ? '' : alt) || cleanText || (isGroup ? 'Group chat' : convId);
+          // Parse text lines from row, rejecting timestamps, reaction snippets, and status text
+          const rawLines = (row.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+          const isJunkText = (line) => {
+            if (!line) return true;
+            if (/^(now|just now|\d+[smhdw]|yesterday|·|\.|\u00b7)$/i.test(line)) return true;
+            if (/^you (reacted|sent|shared|liked)/i.test(line)) return true;
+            if (/^(sent|liked|reacted) a /i.test(line)) return true;
+            if (/^(you|them):/i.test(line)) return true;
+            if (/^(⚡|🔥|🧊|👑|👏|💬|🤝|💫|❤️)/.test(line)) return true;
+            if (/^(bond rank|group vitality|inbound|outbound)/i.test(line)) return true;
+            if (/^\d+[-:]\d+$/i.test(line) || /^\d+$/.test(line)) return true;
+            return false;
+          };
+
+          const validLines = rawLines.filter(l => !isJunkText(l));
 
           let participantHandle = null;
-          if (!isGroup) {
-            const handleMatch = (row.innerText || '').match(/@([A-Za-z0-9_]+)/);
-            if (handleMatch) {
-              participantHandle = handleMatch[1].toLowerCase();
-            } else if (alt && !alt.includes(' ') && !/^user avatar$/i.test(alt)) {
-              participantHandle = alt.toLowerCase();
+          let rowDisplayName = '';
+
+          // Extract handle from @mention in row or from profile link
+          const handleMatch = (row.innerText || '').match(/@([A-Za-z0-9_]+)/);
+          if (handleMatch && (!currentUser || handleMatch[1].toLowerCase() !== currentUser.toLowerCase())) {
+            participantHandle = handleMatch[1].toLowerCase();
+          } else {
+            const profileLink = row.querySelector('a[href^="/"]:not([href*="/messages"]):not([href*="/i/chat"]):not([href*="/home"]):not([href*="/notifications"])');
+            if (profileLink) {
+              const hrefMatch = (profileLink.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]+)$/);
+              if (hrefMatch && (!currentUser || hrefMatch[1].toLowerCase() !== currentUser.toLowerCase())) {
+                participantHandle = hrefMatch[1].toLowerCase();
+              }
             }
+          }
+
+          if (!participantHandle && alt && !alt.includes(' ') && !/^user avatar$/i.test(alt) && (!currentUser || alt.toLowerCase() !== currentUser.toLowerCase())) {
+            participantHandle = alt.toLowerCase();
+          }
+
+          if (validLines.length > 0) {
+            const firstClean = validLines.find(l => !l.startsWith('@') && (!currentUser || l.toLowerCase() !== currentUser.toLowerCase()));
+            if (firstClean) rowDisplayName = firstClean;
+          }
+
+          let rowTitle = '';
+          if (isGroup) {
+            rowTitle = rowDisplayName || 'Group chat';
+          } else if (rowDisplayName) {
+            rowTitle = rowDisplayName;
+          } else if (participantHandle) {
+            rowTitle = `@${participantHandle}`;
+          } else if (alt && !/^user avatar$/i.test(alt)) {
+            rowTitle = alt;
+          } else {
+            rowTitle = 'Chat Mutual';
           }
 
           const activity = this._extractRowActivity(row);
@@ -499,9 +568,16 @@
             await window.bondStorage.saveDmConversation(convId, existing, currentUser).catch(() => {});
           } else {
             let changed = false;
-            if (rowTitle && (!existing.title || existing.title === convId || existing.title === 'Group chat')) {
+            if (rowTitle && (!existing.title || existing.title === convId || existing.title === 'Group chat' || /^\d+[-:]\d+$/i.test(existing.title) || /^you (reacted|sent)/i.test(existing.title))) {
               existing.title = rowTitle;
               changed = true;
+            }
+            if (participantHandle && !existing.isGroup) {
+              if (!Array.isArray(existing.participants)) existing.participants = [];
+              if (!existing.participants.includes(participantHandle)) {
+                existing.participants.push(participantHandle);
+                changed = true;
+              }
             }
             if (participantHandle && rowAvatar) {
               if (!existing.participantDetails) existing.participantDetails = {};
@@ -575,15 +651,17 @@
       let targetName = '';
       if (!isGroup && header) {
         for (const link of header.querySelectorAll('a[href]')) {
-          const m = (link.getAttribute('href') || '').match(/(?:x|twitter)\.com\/([A-Za-z0-9_]+)/i);
-          if (m && m[1]) {
+          const href = link.getAttribute('href') || '';
+          const m = href.match(/(?:(?:x|twitter)\.com)?\/([A-Za-z0-9_]+)$/i);
+          if (m && m[1] && !['messages', 'i', 'home', 'explore', 'notifications'].includes(m[1].toLowerCase())) {
             const handle = m[1].toLowerCase();
-            if (!currentUser || handle !== currentUser) {
+            const curUserClean = (currentUser || '').toLowerCase().replace(/^@/, '');
+            if (!curUserClean || handle !== curUserClean) {
               targetHandle = handle;
-              const img = link.querySelector('img');
+              const img = link.querySelector('img[src*="profile_images"], img');
               if (img && /^https?:/i.test(img.src || '')) targetAvatar = img.src;
               const text = String(link.innerText || '').trim();
-              if (text && text.length <= 80) targetName = text;
+              if (text && text.length <= 80 && !text.startsWith('@')) targetName = text;
               break;
             }
           }
@@ -660,16 +738,21 @@
         const hasNew = !existing || entries.some((entry) => !known.has(entry.fingerprint));
 
         if (hasNew) {
+          const curUserClean = (currentUser || '').toLowerCase().replace(/^@/, '');
           const participants = existing && Array.isArray(existing.participants)
-            ? existing.participants.slice()
+            ? existing.participants.filter(p => p !== curUserClean && !/^\d+$/.test(p))
             : [];
-          if (targetHandle && !participants.includes(targetHandle)) participants.push(targetHandle);
-          senders.forEach((handle) => {
-            if (!participants.includes(handle)) participants.push(handle);
-          });
+          if (targetHandle && !participants.includes(targetHandle) && targetHandle !== curUserClean) participants.push(targetHandle);
+          if (isGroup) {
+            senders.forEach((handle) => {
+              if (!participants.includes(handle) && handle !== curUserClean) participants.push(handle);
+            });
+          }
 
-          const title = (existing && existing.title)
-            || (targetHandle ? `@${targetHandle}` : (isGroup ? this._groupTitle(convId) : convId));
+          let title = targetName || (targetHandle ? `@${targetHandle}` : (isGroup ? this._groupTitle(convId) : 'Chat Mutual'));
+          if (existing && existing.title && !/^\d+[-:]\d+$/i.test(existing.title) && !/^you (reacted|sent)/i.test(existing.title) && existing.title !== curUserClean) {
+            title = targetName || existing.title;
+          }
 
           const details = Object.assign({}, (existing && existing.participantDetails) || {});
           if (targetHandle) {
