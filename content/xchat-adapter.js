@@ -75,6 +75,9 @@
         subtree: true
       });
 
+      // Fetch official inbox bootstrap state in background if cookies are accessible
+      this.syncInboxFromApi().catch(() => {});
+
       // XChat mounts lazily and can be recreated on soft navigation. A light
       // poll makes sure we re-bind without depending on a specific mutation.
       this.interval = setInterval(() => {
@@ -194,6 +197,178 @@
       }
     }
 
+    _extractRowActivity(rowElement) {
+      const fullText = (rowElement && (rowElement.innerText || rowElement.textContent) || '').trim();
+      let timestampStr = '';
+      let ageMinutes = 999999;
+
+      const timeEl = rowElement ? rowElement.querySelector('time') : null;
+      if (timeEl) {
+        const dt = timeEl.getAttribute('datetime');
+        if (dt) {
+          const parsed = Date.parse(dt);
+          if (!isNaN(parsed) && parsed > 0) {
+            ageMinutes = Math.max(0, (Date.now() - parsed) / 60000);
+          }
+        }
+        timestampStr = (timeEl.innerText || timeEl.textContent || '').trim();
+      }
+
+      if (!timestampStr) {
+        const lines = fullText.split('\n').map(s => s.trim()).filter(Boolean);
+        for (const line of lines) {
+          if (/^(now|just now|\d+[smhdw])$/i.test(line)) {
+            timestampStr = line;
+            break;
+          }
+          if (/yesterday/i.test(line)) {
+            timestampStr = 'yesterday';
+            break;
+          }
+        }
+      }
+
+      if (timestampStr) {
+        const clean = timestampStr.toLowerCase();
+        if (clean === 'now' || clean === 'just now') {
+          ageMinutes = 0.5;
+        } else if (clean === 'yesterday') {
+          ageMinutes = 1440;
+        } else {
+          const match = clean.match(/^(\d+)([smhdw])$/);
+          if (match) {
+            const val = parseInt(match[1], 10);
+            const unit = match[2];
+            if (unit === 's') ageMinutes = val / 60;
+            else if (unit === 'm') ageMinutes = val;
+            else if (unit === 'h') ageMinutes = val * 60;
+            else if (unit === 'd') ageMinutes = val * 1440;
+            else if (unit === 'w') ageMinutes = val * 10080;
+          }
+        }
+      }
+
+      const hasUnread = !!(rowElement && rowElement.querySelector(
+        '[data-testid="unread-badge"], [aria-label*="unread" i], [style*="background-color: rgb(29, 155, 240)"]'
+      ));
+
+      return {
+        timestampStr,
+        ageMinutes: isNaN(ageMinutes) ? 120 : ageMinutes,
+        hasUnread
+      };
+    }
+
+    async syncInboxFromApi(currentUser) {
+      if (this._inboxApiSynced && (Date.now() - this._inboxApiSynced < 60000)) return;
+      this._inboxApiSynced = Date.now();
+      try {
+        const match = document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/);
+        const csrfToken = match ? match[1] : null;
+        if (!csrfToken) return;
+
+        const url = 'https://x.com/i/api/1.1/dm/inbox_initial_state.json';
+        const res = await fetch(url, {
+          headers: {
+            'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+            'x-csrf-token': csrfToken,
+            'x-twitter-active-user': 'yes',
+            'x-twitter-auth-type': 'OAuth2Session'
+          },
+          credentials: 'include'
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const state = data && (data.inbox_initial_state || data);
+        if (!state) return;
+
+        const userMap = {};
+        if (state.users && typeof state.users === 'object') {
+          for (const [uid, u] of Object.entries(state.users)) {
+            if (u && u.screen_name) {
+              const sn = u.screen_name.toLowerCase().trim();
+              userMap[uid] = sn;
+              const av = u.profile_image_url_https || u.profile_image_url || '';
+              if (av && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+                window.bondStorage.updateUserAvatarIfMissing(sn, av, u.name).catch(() => {});
+              }
+            }
+          }
+        }
+
+        const convEntries = {};
+        if (Array.isArray(state.entries)) {
+          for (const item of state.entries) {
+            const msg = item.message || item.welcome_message || item;
+            if (!msg || !msg.conversation_id) continue;
+            const cid = String(msg.conversation_id).toLowerCase().trim();
+            if (!convEntries[cid]) convEntries[cid] = [];
+
+            const timestamp = Number(msg.time) || Date.now();
+            const senderUid = String(msg.sender_id || '');
+            const senderHandle = userMap[senderUid] || null;
+            const isOutbound = currentUser && senderHandle === currentUser;
+
+            convEntries[cid].push({
+              fingerprint: `api_${cid}_${msg.id || timestamp}`,
+              direction: isOutbound ? 'outbound' : 'inbound',
+              senderHandle: senderHandle !== currentUser ? senderHandle : null,
+              timestamp,
+              index: convEntries[cid].length
+            });
+          }
+        }
+
+        if (state.conversations && typeof state.conversations === 'object') {
+          for (const [cid, c] of Object.entries(state.conversations)) {
+            const cleanId = String(cid).toLowerCase().trim();
+            const isGroup = c.type === 'GROUP_DM' || cleanId.startsWith('g');
+            const title = c.name || '';
+            const participants = [];
+            const participantDetails = {};
+
+            if (Array.isArray(c.participants)) {
+              for (const p of c.participants) {
+                const pUid = String(p.user_id || '');
+                const pH = userMap[pUid];
+                if (pH && pH !== currentUser) {
+                  participants.push(pH);
+                  if (state.users && state.users[pUid]) {
+                    const uObj = state.users[pUid];
+                    participantDetails[pH] = {
+                      handle: pH,
+                      displayName: uObj.name || pH,
+                      avatarUrl: uObj.profile_image_url_https || ''
+                    };
+                  }
+                }
+              }
+            }
+
+            const existing = await window.bondStorage.getDmConversation(cleanId, false, currentUser);
+            await window.bondStorage.saveDmConversation(cleanId, {
+              convId: cleanId,
+              isGroup,
+              title: title || (existing && existing.title) || (isGroup ? 'Group chat' : cleanId),
+              participants: participants.length > 0 ? participants : (existing ? existing.participants : []),
+              participantDetails: Object.assign({}, (existing && existing.participantDetails) || {}, participantDetails),
+              surface: 'xchat'
+            }, currentUser).catch(() => {});
+
+            const entries = convEntries[cleanId];
+            if (entries && entries.length > 0) {
+              await window.bondStorage.ingestMessageEntries(cleanId, entries, currentUser).catch(() => {});
+            }
+          }
+        }
+
+        this.lastInboxScan = 0;
+        this._scheduleScan();
+      } catch (err) {
+        // Safe progressive enhancement
+      }
+    }
+
     async _scanInbox(currentUser) {
       const now = Date.now();
       if (now - this.lastInboxScan < 1000) return;
@@ -206,7 +381,7 @@
         try {
           const raw = (row.getAttribute('data-testid') || '').slice(CONVERSATION_PREFIX.length);
           if (!raw) continue;
-          const convId = raw.toLowerCase();
+          const convId = canonicalConversationId(raw);
           const isGroup = convId.startsWith('g');
 
           const img = row.querySelector('img');
@@ -229,6 +404,72 @@
             }
           }
 
+          const activity = this._extractRowActivity(row);
+
+          let baselineRecent20h = 10;
+          let baselineRecent1h = 0;
+          let baselineTotal = 15;
+          let baselineEnergyScore = 45;
+
+          if (isGroup) {
+            if (activity.ageMinutes <= 5) {
+              baselineRecent20h = 35;
+              baselineRecent1h = 15;
+              baselineTotal = 40;
+              baselineEnergyScore = 69;
+            } else if (activity.ageMinutes <= 60) {
+              baselineRecent20h = 26;
+              baselineRecent1h = 5;
+              baselineTotal = 30;
+              baselineEnergyScore = 63;
+            } else if (activity.ageMinutes <= 180) {
+              baselineRecent20h = 21;
+              baselineRecent1h = 0;
+              baselineTotal = 22;
+              baselineEnergyScore = 60;
+            } else if (activity.ageMinutes <= 1200) {
+              baselineRecent20h = 12;
+              baselineRecent1h = 0;
+              baselineTotal = 15;
+              baselineEnergyScore = 45;
+            } else {
+              baselineRecent20h = 3;
+              baselineRecent1h = 0;
+              baselineTotal = 5;
+              baselineEnergyScore = 20;
+            }
+          }
+
+          let baselineSent = 1;
+          let baselineReceived = 1;
+          let baselineBondScore = 15;
+
+          if (!isGroup) {
+            if (participantHandle && window.bondStorage) {
+              const publicUser = await window.bondStorage.getUser(participantHandle, false, currentUser);
+              if (publicUser && (publicUser.currentScore || 0) > 0) {
+                baselineBondScore = Math.max(25, Math.round(publicUser.currentScore * 0.8));
+                baselineSent = Math.max(2, Math.round(baselineBondScore / 8));
+                baselineReceived = baselineSent;
+              }
+            }
+            if (baselineBondScore <= 15) {
+              if (activity.ageMinutes <= 60) {
+                baselineBondScore = 35;
+                baselineSent = 4;
+                baselineReceived = 4;
+              } else if (activity.ageMinutes <= 180) {
+                baselineBondScore = 28;
+                baselineSent = 3;
+                baselineReceived = 3;
+              } else if (activity.ageMinutes <= 1440) {
+                baselineBondScore = 22;
+                baselineSent = 2;
+                baselineReceived = 2;
+              }
+            }
+          }
+
           let existing = await window.bondStorage.getDmConversation(convId, false, currentUser);
           if (!existing) {
             existing = {
@@ -239,17 +480,21 @@
               participantDetails: participantHandle ? {
                 [participantHandle]: { displayName: rowTitle, avatarUrl: rowAvatar }
               } : {},
-              sentCount: 0,
-              receivedCount: 0,
-              totalCount: 0,
-              lifetimeSent: 0,
-              lifetimeReceived: 0,
-              lifetimeTotal: 0,
+              sentCount: isGroup ? 0 : baselineSent,
+              receivedCount: isGroup ? 0 : baselineReceived,
+              totalCount: isGroup ? 0 : (baselineSent + baselineReceived),
+              lifetimeSent: isGroup ? 0 : baselineSent,
+              lifetimeReceived: isGroup ? 0 : baselineReceived,
+              lifetimeTotal: isGroup ? baselineTotal : (baselineSent + baselineReceived),
+              totalMessages: isGroup ? baselineTotal : (baselineSent + baselineReceived),
+              recentMessages20h: isGroup ? baselineRecent20h : 0,
+              recentMessages1h: isGroup ? baselineRecent1h : 0,
+              groupEnergyScore: isGroup ? baselineEnergyScore : undefined,
+              bondScore: !isGroup ? baselineBondScore : undefined,
               firstSeenTimestamp: Date.now(),
-              lastMessageTimestamp: Date.now(),
+              lastMessageTimestamp: Date.now() - Math.min(Date.now(), Math.round(activity.ageMinutes * 60000)),
               surface: 'xchat',
-              groupEnergyScore: isGroup ? 10 : undefined,
-              bondScore: !isGroup ? 10 : undefined
+              waitingForUserReply: activity.hasUnread
             };
             await window.bondStorage.saveDmConversation(convId, existing, currentUser).catch(() => {});
           } else {
@@ -269,6 +514,23 @@
                 changed = true;
               }
             }
+            if (isGroup && (!existing.groupEnergyScore || existing.groupEnergyScore <= 0)) {
+              existing.recentMessages20h = baselineRecent20h;
+              existing.recentMessages1h = baselineRecent1h;
+              existing.totalMessages = baselineTotal;
+              existing.groupEnergyScore = baselineEnergyScore;
+              changed = true;
+            } else if (!isGroup && (!existing.bondScore || existing.bondScore <= 0)) {
+              existing.sentCount = Math.max(existing.sentCount || 0, baselineSent);
+              existing.receivedCount = Math.max(existing.receivedCount || 0, baselineReceived);
+              existing.totalCount = existing.sentCount + existing.receivedCount;
+              existing.bondScore = baselineBondScore;
+              changed = true;
+            }
+            if (activity.hasUnread !== existing.waitingForUserReply && !isGroup) {
+              existing.waitingForUserReply = activity.hasUnread;
+              changed = true;
+            }
             if (changed) {
               await window.bondStorage.saveDmConversation(convId, existing, currentUser).catch(() => {});
             }
@@ -282,7 +544,9 @@
             await window.bondUI.injectDmRowBadge(row, convId, participantHandle, isGroup, {
               displayName: existing.title || rowTitle || '',
               avatarUrl: rowAvatar || (existing.participantDetails && participantHandle && existing.participantDetails[participantHandle]?.avatarUrl) || '',
-              hasUnread: false
+              hasUnread: activity.hasUnread,
+              ageMinutes: activity.ageMinutes,
+              timestampStr: activity.timestampStr
             });
           }
         } catch (e) {

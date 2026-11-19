@@ -988,6 +988,86 @@ class InteractionDetector {
             window.bondStorage.updateUserAvatarIfMissing(participantHandle, avatarUrl, displayName).catch(() => {});
           }
 
+          // Extract activity recency from timestamp text in row
+          const rowText = (el.innerText || el.textContent || '').trim();
+          let ageMinutes = 120;
+          let timestampStr = '';
+          const timeEl = el.querySelector('time');
+          if (timeEl) {
+            const dt = timeEl.getAttribute('datetime');
+            if (dt) {
+              const parsed = Date.parse(dt);
+              if (!isNaN(parsed) && parsed > 0) ageMinutes = Math.max(0, (Date.now() - parsed) / 60000);
+            }
+            timestampStr = (timeEl.innerText || timeEl.textContent || '').trim();
+          }
+          if (!timestampStr) {
+            const lines = rowText.split('\n').map(s => s.trim()).filter(Boolean);
+            for (const line of lines) {
+              if (/^(now|just now|\d+[smhdw])$/i.test(line)) {
+                timestampStr = line;
+                break;
+              }
+              if (/yesterday/i.test(line)) {
+                timestampStr = 'yesterday';
+                break;
+              }
+            }
+          }
+          if (timestampStr) {
+            const clean = timestampStr.toLowerCase();
+            if (clean === 'now' || clean === 'just now') ageMinutes = 0.5;
+            else if (clean === 'yesterday') ageMinutes = 1440;
+            else {
+              const m = clean.match(/^(\d+)([smhdw])$/);
+              if (m) {
+                const v = parseInt(m[1], 10);
+                if (m[2] === 's') ageMinutes = v / 60;
+                else if (m[2] === 'm') ageMinutes = v;
+                else if (m[2] === 'h') ageMinutes = v * 60;
+                else if (m[2] === 'd') ageMinutes = v * 1440;
+                else if (m[2] === 'w') ageMinutes = v * 10080;
+              }
+            }
+          }
+
+          let baselineRecent20h = 10;
+          let baselineRecent1h = 0;
+          let baselineTotal = 15;
+          let baselineEnergyScore = 45;
+          if (isGroup) {
+            if (ageMinutes <= 5) {
+              baselineRecent20h = 35; baselineRecent1h = 15; baselineTotal = 40; baselineEnergyScore = 69;
+            } else if (ageMinutes <= 60) {
+              baselineRecent20h = 26; baselineRecent1h = 5; baselineTotal = 30; baselineEnergyScore = 63;
+            } else if (ageMinutes <= 180) {
+              baselineRecent20h = 21; baselineRecent1h = 0; baselineTotal = 22; baselineEnergyScore = 60;
+            } else if (ageMinutes <= 1200) {
+              baselineRecent20h = 12; baselineRecent1h = 0; baselineTotal = 15; baselineEnergyScore = 45;
+            } else {
+              baselineRecent20h = 3; baselineRecent1h = 0; baselineTotal = 5; baselineEnergyScore = 20;
+            }
+          }
+
+          let baselineSent = 1;
+          let baselineReceived = 1;
+          let baselineBondScore = 15;
+          if (!isGroup) {
+            if (participantHandle && window.bondStorage) {
+              const publicUser = await window.bondStorage.getUser(participantHandle, false, this.currentUser);
+              if (publicUser && (publicUser.currentScore || 0) > 0) {
+                baselineBondScore = Math.max(25, Math.round(publicUser.currentScore * 0.8));
+                baselineSent = Math.max(2, Math.round(baselineBondScore / 8));
+                baselineReceived = baselineSent;
+              }
+            }
+            if (baselineBondScore <= 15) {
+              if (ageMinutes <= 60) { baselineBondScore = 35; baselineSent = 4; baselineReceived = 4; }
+              else if (ageMinutes <= 180) { baselineBondScore = 28; baselineSent = 3; baselineReceived = 3; }
+              else if (ageMinutes <= 1440) { baselineBondScore = 22; baselineSent = 2; baselineReceived = 2; }
+            }
+          }
+
           // Auto-register conversation in storage if not already present so it never shows 0 on refresh
           if (window.bondStorage) {
             const existing = await window.bondStorage.getDmConversation(convId, false, this.currentUser);
@@ -1000,20 +1080,23 @@ class InteractionDetector {
                 participantDetails: participantHandle ? {
                   [participantHandle]: { displayName, avatarUrl }
                 } : {},
-                sentCount: 0,
-                receivedCount: 0,
-                totalCount: 0,
-                lifetimeSent: 0,
-                lifetimeReceived: 0,
-                lifetimeTotal: 0,
+                sentCount: isGroup ? 0 : baselineSent,
+                receivedCount: isGroup ? 0 : baselineReceived,
+                totalCount: isGroup ? 0 : (baselineSent + baselineReceived),
+                lifetimeSent: isGroup ? 0 : baselineSent,
+                lifetimeReceived: isGroup ? 0 : baselineReceived,
+                lifetimeTotal: isGroup ? baselineTotal : (baselineSent + baselineReceived),
+                totalMessages: isGroup ? baselineTotal : (baselineSent + baselineReceived),
+                recentMessages20h: isGroup ? baselineRecent20h : 0,
+                recentMessages1h: isGroup ? baselineRecent1h : 0,
+                groupEnergyScore: isGroup ? baselineEnergyScore : undefined,
+                bondScore: !isGroup ? baselineBondScore : undefined,
                 firstSeenTimestamp: Date.now(),
-                lastMessageTimestamp: Date.now(),
+                lastMessageTimestamp: Date.now() - Math.min(Date.now(), Math.round(ageMinutes * 60000)),
                 waitingForUserReply: hasUnread,
-                surface: location.pathname.startsWith('/i/chat') ? 'xchat' : 'messages',
-                groupEnergyScore: isGroup ? 10 : undefined,
-                bondScore: !isGroup ? 10 : undefined
+                surface: location.pathname.startsWith('/i/chat') ? 'xchat' : 'messages'
               }, this.currentUser);
-            } else if (displayName || avatarUrl || hasUnread !== existing.waitingForUserReply) {
+            } else if (displayName || avatarUrl || hasUnread !== existing.waitingForUserReply || (isGroup && (!existing.groupEnergyScore || existing.groupEnergyScore <= 0))) {
               let changed = false;
               if (participantHandle) {
                 if (!existing.participantDetails) existing.participantDetails = {};
@@ -1027,6 +1110,19 @@ class InteractionDetector {
                 existing.waitingForUserReply = hasUnread;
                 changed = true;
               }
+              if (isGroup && (!existing.groupEnergyScore || existing.groupEnergyScore <= 0)) {
+                existing.recentMessages20h = baselineRecent20h;
+                existing.recentMessages1h = baselineRecent1h;
+                existing.totalMessages = baselineTotal;
+                existing.groupEnergyScore = baselineEnergyScore;
+                changed = true;
+              } else if (!isGroup && (!existing.bondScore || existing.bondScore <= 0)) {
+                existing.sentCount = Math.max(existing.sentCount || 0, baselineSent);
+                existing.receivedCount = Math.max(existing.receivedCount || 0, baselineReceived);
+                existing.totalCount = existing.sentCount + existing.receivedCount;
+                existing.bondScore = baselineBondScore;
+                changed = true;
+              }
               if (changed) {
                 await window.bondStorage.saveDmConversation(convId, existing, this.currentUser);
               }
@@ -1034,7 +1130,13 @@ class InteractionDetector {
           }
 
           if (window.bondUI && window.bondUI.injectDmRowBadge) {
-            await window.bondUI.injectDmRowBadge(el, convId, participantHandle, isGroup, { displayName, avatarUrl, hasUnread });
+            await window.bondUI.injectDmRowBadge(el, convId, participantHandle, isGroup, {
+              displayName,
+              avatarUrl,
+              hasUnread,
+              ageMinutes,
+              timestampStr
+            });
           }
         } catch (err) {
           // continue

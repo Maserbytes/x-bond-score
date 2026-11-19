@@ -1532,29 +1532,57 @@ class BondStorage {
     // metadata-only timestamps so group chats produce a real score.
     const timeline = Array.isArray(updated.messageTimeline) ? updated.messageTimeline : [];
     const nowTs = Date.now();
-    updated.totalMessages = Math.max(updated.lifetimeTotal || 0, updated.totalCount || 0, timeline.length);
+    updated.totalMessages = Math.max(
+      updated.lifetimeTotal || 0,
+      updated.totalCount || 0,
+      timeline.length,
+      convData.totalMessages || 0,
+      existing.totalMessages || 0
+    );
     updated.recentMessages3d = timeline.filter((t) => nowTs - t <= 3 * 86400000).length;
     updated.recentMessages7d = timeline.filter((t) => nowTs - t <= 7 * 86400000).length;
     const settings = await this.getSettings();
     const groupCfg = settings.groupActivity || {};
     const windowMs = (groupCfg.windowHours || 20) * 3600000;
     const hyperMs = (groupCfg.hyperactiveWindowHours || 1) * 3600000;
-    updated.recentMessages20h = timeline.filter((t) => nowTs - t <= windowMs).length;
-    updated.recentMessages1h = timeline.filter((t) => nowTs - t <= hyperMs).length;
+
+    if (timeline.length > 0) {
+      updated.recentMessages20h = timeline.filter((t) => nowTs - t <= windowMs).length;
+      updated.recentMessages1h = timeline.filter((t) => nowTs - t <= hyperMs).length;
+    } else {
+      updated.recentMessages20h = Math.max(
+        convData.recentMessages20h || 0,
+        existing.recentMessages20h || 0,
+        convData.recent20h || 0,
+        existing.recent20h || 0
+      );
+      updated.recentMessages1h = Math.max(
+        convData.recentMessages1h || 0,
+        existing.recentMessages1h || 0,
+        convData.recent1h || 0,
+        existing.recent1h || 0
+      );
+    }
 
     // Calculate metrics using scoring engine
     const scoringEngine = this._getScoringEngine();
     if (scoringEngine) {
       if (updated.isGroup) {
         const energy = scoringEngine.calculateGroupEnergy(updated, settings);
-        updated.groupEnergyScore = energy.energyScore;
-        updated.groupEnergyLevel = energy.energyLevel;
-        updated.isDying = energy.isDying;
+        const candidateScore = Math.max(energy.energyScore, convData.groupEnergyScore || 0, existing.groupEnergyScore || 0);
+        updated.groupEnergyScore = candidateScore;
+        updated.groupEnergyLevel = (scoringEngine.getGroupEnergyLevel && candidateScore > 0)
+          ? scoringEngine.getGroupEnergyLevel(candidateScore)
+          : energy.energyLevel;
+        updated.isDying = candidateScore < 60;
         updated.energyMetrics = energy;
       } else {
         const metrics = scoringEngine.calculateDmMetrics(updated, settings);
-        updated.bondScore = metrics.bondScore;
-        updated.rank = metrics.rank;
+        const candidateScore = Math.max(metrics.bondScore, convData.bondScore || 0, existing.bondScore || 0);
+        updated.bondScore = candidateScore;
+        updated.rank = (scoringEngine.getDmRank && candidateScore > 0)
+          ? scoringEngine.getDmRank(candidateScore)
+          : metrics.rank;
         updated.nextRank = metrics.nextRank;
         updated.pointsToNext = metrics.pointsToNext;
         updated.progressToNextPct = metrics.progressToNextPct;

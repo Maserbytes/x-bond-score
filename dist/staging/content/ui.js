@@ -819,22 +819,41 @@ class BondUI {
 
     let badgeHtml = '';
     if (conv.isGroup) {
-      const energyLevel = conv.groupEnergyLevel || (typeof BondScoring !== 'undefined' ? BondScoring.getGroupEnergyLevel(conv.groupEnergyScore || 0) : null);
-      const score = Math.round(conv.groupEnergyScore || 0);
+      let score = Math.round(conv.groupEnergyScore || 0);
+      if (score <= 0) {
+        const age = metadata && metadata.ageMinutes !== undefined ? metadata.ageMinutes : 999999;
+        if (age <= 5) score = 69;
+        else if (age <= 60) score = 63;
+        else if (age <= 180) score = 60;
+        else if (age <= 1200) score = 45;
+        else score = 20;
+      }
+      const energyLevel = (typeof BondScoring !== 'undefined' && BondScoring.getGroupEnergyLevel)
+        ? BondScoring.getGroupEnergyLevel(score)
+        : conv.groupEnergyLevel || { id: 'active', name: 'Active', emoji: '🔥' };
       badgeHtml = `
-        <span class="bond-energy-tag bond-energy-${energyLevel ? energyLevel.id : 'chill'}">
+        <span class="bond-energy-tag bond-energy-${energyLevel ? energyLevel.id : 'active'}">
           <span class="bond-dm-emoji">${energyLevel ? energyLevel.emoji : '⚡'}</span>
           <span class="bond-dm-label">${energyLevel ? energyLevel.name : 'Energy'}</span>
           <span class="bond-dm-score">${score}</span>
         </span>
       `;
     } else {
-      const rank = conv.rank || (typeof BondScoring !== 'undefined' ? BondScoring.getDmRank(conv.bondScore || 0) : null);
-      const score = Math.round(conv.bondScore || 0);
+      let score = Math.round(conv.bondScore || 0);
+      if (score <= 0) {
+        const age = metadata && metadata.ageMinutes !== undefined ? metadata.ageMinutes : 999999;
+        if (age <= 60) score = 35;
+        else if (age <= 180) score = 28;
+        else if (age <= 1440) score = 22;
+        else score = 15;
+      }
+      const rank = (typeof BondScoring !== 'undefined' && BondScoring.getDmRank)
+        ? BondScoring.getDmRank(score)
+        : conv.rank || { id: 'friend', shortLabel: 'Friend', emoji: '🤝' };
       badgeHtml = `
-        <span class="bond-rank-tag bond-rank-${rank ? rank.id : 'acquaintance'}">
+        <span class="bond-rank-tag bond-rank-${rank ? rank.id : 'friend'}">
           <span class="bond-dm-emoji">${rank ? rank.emoji : '👋'}</span>
-          <span class="bond-dm-label">${rank ? rank.shortLabel : 'Acquaintance'}</span>
+          <span class="bond-dm-label">${rank ? rank.shortLabel : 'Friend'}</span>
           <span class="bond-dm-score">${score}</span>
         </span>
         ${conv.dailyStreak > 1 ? `<span class="bond-status-pill bond-streak-pill" title="Daily Streak">🔥${conv.dailyStreak}d</span>` : ''}

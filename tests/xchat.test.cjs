@@ -219,4 +219,51 @@ test('XChat _scanInbox injects badges and registers conversations on first load 
   const savedConv = await storage.getDmConversation('g2119410785122472214', false, 'tester', 'x');
   assert.ok(savedConv, 'Conversation should be automatically registered in storage');
   assert.equal(savedConv.isGroup, true);
+  assert.ok(savedConv.groupEnergyScore > 0, 'Group energy score should be > 0 even before click');
+});
+
+test('XChat _scanInbox assigns non-zero baseline score to active 1:1 conversation without user click', async () => {
+  installChromeMock();
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('tester');
+  global.window.bondStorage = storage;
+
+  let injectedScore = null;
+  global.window.bondUI = {
+    injectDmRowBadge: async (row, convId, participantHandle, isGroup, metadata) => {
+      const conv = await storage.getDmConversation(convId);
+      injectedScore = conv ? conv.bondScore : null;
+    }
+  };
+
+  const adapter = global.window.bondXChat;
+  adapter.enabled = true;
+
+  const mockRow = {
+    getAttribute(name) {
+      if (name === 'data-testid') return 'dm-conversation-item-1834259027947311104-2114698745178886144';
+      return null;
+    },
+    querySelector(selector) {
+      if (selector === 'img') return { src: 'https://pbs.twimg.com/profile_images/tozo.jpg', alt: 'tozo' };
+      if (selector.includes('span')) return { innerText: 'tozo' };
+      return null;
+    },
+    innerText: 'tozo\n2h\nSent a post'
+  };
+
+  adapter.shadow = {
+    querySelectorAll(selector) {
+      if (selector.includes('dm-conversation-item-')) return [mockRow];
+      return [];
+    }
+  };
+  adapter.lastInboxScan = 0;
+
+  await adapter._scanInbox('tester');
+
+  const conv = await storage.getDmConversation('1834259027947311104:2114698745178886144', false, 'tester', 'x');
+  assert.ok(conv, '1:1 conversation should be registered');
+  assert.ok(conv.bondScore > 0, '1:1 DM bond score must be > 0 before user clicks');
 });
