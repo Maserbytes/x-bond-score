@@ -158,6 +158,7 @@
             <button class="filter-pill active" data-dm-filter="all">All</button>
             <button class="filter-pill" data-dm-filter="streaks">🔥 Streaks</button>
             <button class="filter-pill" data-dm-filter="closest">👑 Closest Friends</button>
+            <button class="filter-pill" data-dm-filter="groups">🚀 Most Active GCs</button>
             <button class="filter-pill" data-dm-filter="memories">💭 Memories</button>
           </div>
         </div>
@@ -174,7 +175,19 @@
           </div>
         </div>
 
-        <!-- Section 2: 💭 Chat Memories & Milestones (Lifetime History) -->
+        <!-- Section 2: 🚀 Most Active GCs (Group Chat Leaderboard) -->
+        <div class="radar-card dm-section-card" id="dm-section-groups">
+          <div class="radar-card-title dm-section-title">
+            <span>🚀 Most Active GCs</span>
+            <span class="dm-count-badge" id="dm-groups-count">0</span>
+          </div>
+          <p class="settings-hint">Ranked list of your most active group chats based on message volume and live conversation activity.</p>
+          <div class="dm-mini-list" id="dm-groups-list">
+            <div class="dm-empty-state">No active group chats detected yet. Participate in group conversations on X to rank your most active GCs!</div>
+          </div>
+        </div>
+
+        <!-- Section 3: 💭 Chat Memories & Milestones (Lifetime History) -->
         <div class="radar-card dm-section-card" id="dm-section-memories">
           <div class="radar-card-title dm-section-title">
             <span>💭 Chat Memories & Milestones</span>

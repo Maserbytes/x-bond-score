@@ -1982,7 +1982,84 @@ function renderDmSubSections(allDms, filter = 'all') {
     }
   }
 
-  // 4. Chat Memories & Milestones (Lifetime Log)
+  // 2. 🚀 Most Active GCs (Group Chat Leaderboard)
+  const sectionGroups = document.getElementById('dm-section-groups');
+  const listGroups = document.getElementById('dm-groups-list');
+  const countGroups = document.getElementById('dm-groups-count');
+
+  const groupItems = filtered.filter(d => d.isGroup === true);
+  groupItems.sort((a, b) => {
+    const scoreDiff = (b.groupEnergyScore || 0) - (a.groupEnergyScore || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const msgDiff = (b.totalMessages || b.lifetimeTotal || 0) - (a.totalMessages || a.lifetimeTotal || 0);
+    if (msgDiff !== 0) return msgDiff;
+    return (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0);
+  });
+
+  if (countGroups) countGroups.innerText = groupItems.length;
+  if (sectionGroups && listGroups) {
+    const showGroups = filter === 'groups' || (filter === 'all' && groupItems.length > 0);
+    sectionGroups.style.display = showGroups ? 'block' : 'none';
+
+    if (groupItems.length === 0) {
+      listGroups.innerHTML = '<div class="dm-empty-state">No active group chats detected yet. Participate in group conversations on X to rank your most active GCs!</div>';
+    } else {
+      listGroups.innerHTML = groupItems.map((d, idx) => {
+        const energyLevel = d.groupEnergyLevel || (BondScoring.getGroupEnergyLevel ? BondScoring.getGroupEnergyLevel(d.groupEnergyScore || 0) : { id: 'active', name: 'Active', emoji: '✨', color: '#00BA7C', bg: 'rgba(0,186,124,0.18)' });
+        const score = Math.round(d.groupEnergyScore || 0);
+        const totalMsgs = d.totalMessages || d.lifetimeTotal || (d.sentCount + d.receivedCount) || 0;
+        const recent20h = d.recentMessages20h || 0;
+        const recent1h = d.recentMessages1h || 0;
+        const activeMembers = (d.energyMetrics && d.energyMetrics.activeMembers) || [];
+        const memberCount = activeMembers.length || (Array.isArray(d.participants) ? d.participants.length : 1);
+        const groupTitle = d.title || 'Group chat';
+
+        return `
+          <div class="dm-group-card" data-conv="${escapeHtml(d.convId)}">
+            <div class="dm-group-header">
+              <div class="dm-group-info">
+                <span class="dm-closest-rank-num">#${idx + 1}</span>
+                <span class="dm-group-icon">👥</span>
+                <div>
+                  <div class="dm-closest-name-row">
+                    <strong class="dm-group-title">${escapeHtml(groupTitle)}</strong>
+                    ${platformChip(d, 'dm-group-platform')}
+                  </div>
+                  <div class="dm-group-sub">👥 ${memberCount} participant${memberCount === 1 ? '' : 's'} • 💬 ${totalMsgs} message${totalMsgs === 1 ? '' : 's'}</div>
+                </div>
+              </div>
+              <div class="bond-energy-tag bond-energy-${energyLevel.id}" style="color: ${energyLevel.color}; border: 1px solid ${energyLevel.color}40; background: ${energyLevel.bg}">
+                ${energyLevel.emoji} ${energyLevel.name} ${score}
+              </div>
+            </div>
+
+            <!-- Velocity & Activity Metrics -->
+            <div class="dm-closest-metrics-row" style="margin-top: 4px;">
+              ${recent1h > 0 ? `<span class="dm-streak-chip">🚀 ${recent1h} in past 1h</span>` : ''}
+              ${recent20h > 0 ? `<span>⚡ ${recent20h} in past 20h</span>` : '<span>⚡ Steady tempo</span>'}
+              <span>${d.isDying ? '⚠️ Cooling down' : '🔥 Vibrant'}</span>
+            </div>
+
+            ${activeMembers.length > 0 ? `
+              <!-- Active Member Chips -->
+              <div class="dm-group-chips">
+                ${activeMembers.slice(0, 4).map(m => `
+                  <span class="dm-member-chip">@${escapeHtml(m.handle)} (${m.share}%)</span>
+                `).join('')}
+              </div>
+            ` : ''}
+
+            <div class="dm-group-footer">
+              <span class="dm-group-activity">Total Volume: <strong>${totalMsgs} msgs</strong></span>
+              <button class="dm-open-btn" data-url="${messageUrl(d)}">Open Group ↗</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 3. Chat Memories & Milestones (Lifetime Log)
   const sectionMemories = document.getElementById('dm-section-memories');
   const listMemories = document.getElementById('dm-memories-list');
   const countMemories = document.getElementById('dm-memories-count');

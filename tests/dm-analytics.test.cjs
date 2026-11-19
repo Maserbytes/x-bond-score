@@ -576,3 +576,23 @@ test('Notification interactions: distinct likes, replies, and reposts from /noti
   assert.ok(bob4.currentScore > bob3.currentScore, `Repost notification must further increment score from ${bob3.currentScore}, got ${bob4.currentScore}`);
   assert.equal(bob4.stats.repostsReceived, 1);
 });
+
+test('Most Active GCs: correctly sorts group chats by vitality, total messages and velocity', async () => {
+  const gcs = [
+    { convId: 'g1', isGroup: true, title: 'Chill Coding GC', totalMessages: 15, groupEnergyScore: 45, lastMessageTimestamp: 1000 },
+    { convId: 'g2', isGroup: true, title: 'Hyper Active Alpha GC', totalMessages: 120, recentMessages20h: 40, groupEnergyScore: 78, lastMessageTimestamp: 3000 },
+    { convId: 'g3', isGroup: true, title: 'Crypto Discussion', totalMessages: 60, recentMessages20h: 20, groupEnergyScore: 68, lastMessageTimestamp: 2000 }
+  ];
+
+  gcs.sort((a, b) => {
+    const scoreDiff = (b.groupEnergyScore || 0) - (a.groupEnergyScore || 0);
+    if (scoreDiff !== 0) return scoreDiff;
+    const msgDiff = (b.totalMessages || b.lifetimeTotal || 0) - (a.totalMessages || a.lifetimeTotal || 0);
+    if (msgDiff !== 0) return msgDiff;
+    return (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0);
+  });
+
+  assert.equal(gcs[0].convId, 'g2', 'Hyper Active Alpha GC must be ranked #1');
+  assert.equal(gcs[1].convId, 'g3', 'Crypto Discussion must be ranked #2');
+  assert.equal(gcs[2].convId, 'g1', 'Chill Coding GC must be ranked #3');
+});

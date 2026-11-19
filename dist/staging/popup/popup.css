@@ -1934,6 +1934,63 @@ input[type="range"] {
   font-weight: 600;
 }
 
+/* Bond Energy Tags for Group Chats in Popup */
+.bond-energy-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.bond-energy-hyperactive {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.40);
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.30);
+}
+
+.bond-energy-energetic,
+.bond-energy-buzzing {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(16, 185, 129, 0.40);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.25);
+}
+
+.bond-energy-active {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+}
+
+.bond-energy-steady {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.bond-energy-chill {
+  color: #fb923c;
+  background: rgba(249, 115, 22, 0.16);
+  border: 1px solid rgba(249, 115, 22, 0.35);
+}
+
+.bond-energy-dying,
+.bond-energy-cooling,
+.bond-energy-inactive {
+  color: #94a3b8;
+  background: rgba(100, 116, 139, 0.14);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+}
+
+.dm-group-activity {
+  font-weight: 600;
+}
+
 /* Settings Toggle Switch */
 .setting-item-toggle {
   display: flex;
