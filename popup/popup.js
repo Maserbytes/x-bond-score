@@ -1798,7 +1798,7 @@ function renderDmSubSections(allDms, filter = 'all') {
 
   if (countClosest) countClosest.innerText = closestItems.length;
   if (sectionClosest && listClosest) {
-    const showClosest = filter !== 'groups' && filter !== 'cold';
+    const showClosest = filter === 'all' || filter === 'closest' || filter === 'streaks';
     sectionClosest.style.display = showClosest ? 'block' : 'none';
 
     if (closestItems.length === 0) {
@@ -1855,60 +1855,7 @@ function renderDmSubSections(allDms, filter = 'all') {
     }
   }
 
-  // 4. Group Chats
-  const sectionGroups = document.getElementById('dm-section-groups');
-  const listGroups = document.getElementById('dm-groups-list');
-  const countGroups = document.getElementById('dm-groups-count');
-  const groupItems = filtered.filter(d => d.isGroup === true);
-  groupItems.sort((a, b) => (b.groupEnergyScore || 0) - (a.groupEnergyScore || 0));
-
-  if (countGroups) countGroups.innerText = groupItems.length;
-  if (sectionGroups && listGroups) {
-    const showGroups = filter === 'groups' || (filter === 'all' && groupItems.length > 0);
-    sectionGroups.style.display = showGroups ? 'block' : 'none';
-
-    if (groupItems.length === 0) {
-      listGroups.innerHTML = '<div class="dm-empty-state">No group chats detected yet. Participate in group conversations on a connected platform to observe group energy!</div>';
-    } else {
-      listGroups.innerHTML = groupItems.map(d => {
-        const energyLevel = d.groupEnergyLevel || BondScoring.getGroupEnergyLevel(d.groupEnergyScore || 0);
-        const score = Math.round(d.groupEnergyScore || 0);
-        const activeMembers = (d.energyMetrics && d.energyMetrics.activeMembers) || [];
-
-        return `
-          <div class="dm-group-card" data-conv="${escapeHtml(d.convId)}">
-            <div class="dm-group-header">
-              <div class="dm-group-info">
-                <span class="dm-group-icon">👥</span>
-                <div>
-                  <strong class="dm-group-title">${escapeHtml(d.title || 'Group Chat')}</strong>
-                  ${platformChip(d, 'dm-group-platform')}
-                  <div class="dm-group-sub">${activeMembers.length || (d.participants ? d.participants.length : 1)} active participants</div>
-                </div>
-              </div>
-              <div class="bond-energy-tag bond-energy-${energyLevel.id}">
-                ${energyLevel.emoji} ${energyLevel.name} ${score}
-              </div>
-            </div>
-
-            <!-- Active Member Chips -->
-            <div class="dm-group-chips">
-              ${activeMembers.slice(0, 4).map(m => `
-                <span class="dm-member-chip">@${escapeHtml(m.handle)} (${m.share}%)</span>
-              `).join('')}
-            </div>
-
-            <div class="dm-group-footer">
-              <span class="dm-group-activity">${d.isDying ? '⚠️ Group is quiet / dormant' : `🔥 ${d.totalMessages || 0} messages recorded`}</span>
-              <button class="dm-open-btn" data-url="${messageUrl(d)}">Open Group ↗</button>
-            </div>
-          </div>
-        `;
-      }).join('');
-    }
-  }
-
-  // 5. Chat Memories & Milestones (Lifetime Log)
+  // 4. Chat Memories & Milestones (Lifetime Log)
   const sectionMemories = document.getElementById('dm-section-memories');
   const listMemories = document.getElementById('dm-memories-list');
   const countMemories = document.getElementById('dm-memories-count');
