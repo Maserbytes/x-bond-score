@@ -822,11 +822,14 @@ class BondUI {
       let score = Math.round(conv.groupEnergyScore || 0);
       if (score <= 0) {
         const age = metadata && metadata.ageMinutes !== undefined ? metadata.ageMinutes : 999999;
-        if (age <= 5) score = 69;
-        else if (age <= 60) score = 63;
-        else if (age <= 180) score = 60;
-        else if (age <= 1200) score = 45;
-        else score = 20;
+        if (age <= 5) score = 76;
+        else if (age <= 30) score = 71;
+        else if (age <= 60) score = 67;
+        else if (age <= 120) score = 64;
+        else if (age <= 240) score = 62;
+        else if (age <= 720) score = 48;
+        else if (age <= 1440) score = 32;
+        else score = 18;
       }
       const energyLevel = (typeof BondScoring !== 'undefined' && BondScoring.getGroupEnergyLevel)
         ? BondScoring.getGroupEnergyLevel(score)

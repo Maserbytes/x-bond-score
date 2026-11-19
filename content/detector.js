@@ -1075,15 +1075,21 @@ class InteractionDetector {
           let baselineEnergyScore = 45;
           if (isGroup) {
             if (ageMinutes <= 5) {
-              baselineRecent20h = 35; baselineRecent1h = 15; baselineTotal = 40; baselineEnergyScore = 69;
+              baselineRecent20h = 40; baselineRecent1h = 15; baselineTotal = 75; baselineEnergyScore = 76;
+            } else if (ageMinutes <= 30) {
+              baselineRecent20h = 32; baselineRecent1h = 8; baselineTotal = 50; baselineEnergyScore = 71;
             } else if (ageMinutes <= 60) {
-              baselineRecent20h = 26; baselineRecent1h = 5; baselineTotal = 30; baselineEnergyScore = 63;
-            } else if (ageMinutes <= 180) {
-              baselineRecent20h = 21; baselineRecent1h = 0; baselineTotal = 22; baselineEnergyScore = 60;
-            } else if (ageMinutes <= 1200) {
-              baselineRecent20h = 12; baselineRecent1h = 0; baselineTotal = 15; baselineEnergyScore = 45;
+              baselineRecent20h = 28; baselineRecent1h = 4; baselineTotal = 38; baselineEnergyScore = 67;
+            } else if (ageMinutes <= 120) {
+              baselineRecent20h = 25; baselineRecent1h = 1; baselineTotal = 30; baselineEnergyScore = 64;
+            } else if (ageMinutes <= 240) {
+              baselineRecent20h = 22; baselineRecent1h = 0; baselineTotal = 24; baselineEnergyScore = 62;
+            } else if (ageMinutes <= 720) {
+              baselineRecent20h = 14; baselineRecent1h = 0; baselineTotal = 16; baselineEnergyScore = 48;
+            } else if (ageMinutes <= 1440) {
+              baselineRecent20h = 8; baselineRecent1h = 0; baselineTotal = 10; baselineEnergyScore = 32;
             } else {
-              baselineRecent20h = 3; baselineRecent1h = 0; baselineTotal = 5; baselineEnergyScore = 20;
+              baselineRecent20h = 3; baselineRecent1h = 0; baselineTotal = 5; baselineEnergyScore = 18;
             }
           }
 

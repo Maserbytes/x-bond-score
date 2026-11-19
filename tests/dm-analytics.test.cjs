@@ -130,6 +130,36 @@ test('GroupEnergyLevels and calculateGroupEnergy measure group chat vitality', (
   assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 50, recentMessages1h: 5 })).energyLevel.id, 'energetic');
   assert.equal(BondScoring.calculateGroupEnergy(Object.assign({}, base, { recentMessages20h: 60, recentMessages1h: 99 })).energyLevel.id, 'hyperactive');
 
+  // Active group chats with different message counts must have distinct scores scaling with volume sent
+  const group25Msgs = BondScoring.calculateGroupEnergy({
+    totalMessages: 25,
+    recentMessages20h: 21,
+    recentMessages1h: 0,
+    lastMessageTimestamp: now - 1000 * 60 * 120, // 2h ago
+    memberMessageCounts: { a: 15, b: 10 }
+  });
+  const group150Msgs = BondScoring.calculateGroupEnergy({
+    totalMessages: 150,
+    recentMessages20h: 28,
+    recentMessages1h: 3,
+    lastMessageTimestamp: now - 1000 * 60 * 20, // 20m ago
+    memberMessageCounts: { a: 70, b: 50, c: 30 }
+  });
+  const group600Msgs = BondScoring.calculateGroupEnergy({
+    totalMessages: 600,
+    recentMessages20h: 42,
+    recentMessages1h: 6,
+    lastMessageTimestamp: now - 1000 * 60 * 5, // 5m ago
+    memberMessageCounts: { a: 300, b: 200, c: 100 }
+  });
+
+  assert.equal(group25Msgs.energyLevel.id, 'active');
+  assert.equal(group150Msgs.energyLevel.id, 'active');
+  assert.equal(group600Msgs.energyLevel.id, 'active');
+  assert.ok(group25Msgs.energyScore >= 60 && group25Msgs.energyScore < group150Msgs.energyScore, 'higher message volume must raise active GC score');
+  assert.ok(group150Msgs.energyScore < group600Msgs.energyScore, 'higher message volume and velocity must scale GC score higher');
+  assert.ok(new Set([group25Msgs.energyScore, group150Msgs.energyScore, group600Msgs.energyScore]).size === 3, 'all active group chats must have distinct scores');
+
   // Thresholds are configurable through settings.
   const custom = BondScoring.calculateGroupEnergy(
     Object.assign({}, base, { recentMessages20h: 12, recentMessages1h: 1 }),

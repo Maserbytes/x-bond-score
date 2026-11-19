@@ -438,7 +438,7 @@ async function resolveMissingAvatarsForList(handles) {
               `;
             });
 
-            const dmWraps = document.querySelectorAll(`.dm-action-avatar[data-avatar-handle="${h}"]`);
+            const dmWraps = document.querySelectorAll(`.dm-action-avatar[data-avatar-handle="${h}"], .dm-closest-card[data-conv*="${h}"] .dm-action-avatar`);
             dmWraps.forEach((wrap) => {
               wrap.innerHTML = `
                 <img src="${escapeHtml(data.avatarUrl)}" alt="${escapeHtml(data.displayName || h)}" onerror="this.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';">
@@ -447,9 +447,9 @@ async function resolveMissingAvatarsForList(handles) {
             });
 
             if (data.displayName) {
-              const nameRows = document.querySelectorAll(`.dm-closest-card[data-handle="${h}"] .dm-closest-name`);
+              const nameRows = document.querySelectorAll(`.dm-closest-card[data-handle="${h}"] .dm-closest-name, .dm-closest-card[data-conv*="${h}"] .dm-closest-name`);
               nameRows.forEach((el) => {
-                if (el.innerText.startsWith('@') || el.innerText === 'Chat Mutual') {
+                if (el.innerText.startsWith('@') || el.innerText === 'Chat Mutual' || /^\d+[-:]\d+$/.test(el.innerText)) {
                   el.innerText = data.displayName;
                 }
               });
@@ -1754,25 +1754,56 @@ async function renderDmsTab() {
 function resolveDmCardTarget(d, activeAcc) {
   const currentHandle = (activeAcc || currentUsername || '').toLowerCase().replace(/^@/, '');
 
+  // Find current user's numeric ID from cachedUsers if available
+  let currentUserId = '';
+  if (Array.isArray(cachedUsers)) {
+    const selfObj = cachedUsers.find(u => (u.handle || '').toLowerCase().replace(/^@/, '') === currentHandle);
+    if (selfObj && (selfObj.id || selfObj.userId || selfObj.restId)) {
+      currentUserId = String(selfObj.id || selfObj.userId || selfObj.restId);
+    }
+  }
+
+  const isCurrentUser = (val, det) => {
+    if (!val && !det) return false;
+    const s = String(val || '').toLowerCase().replace(/^@/, '');
+    if (s && (s === currentHandle || s === 'you' || (currentUserId && s === currentUserId))) return true;
+    if (det) {
+      const h = String(det.handle || '').toLowerCase().replace(/^@/, '');
+      if (h && (h === currentHandle || h === 'you')) return true;
+      if (det.avatarUrl && currentAvatarUrl && det.avatarUrl === currentAvatarUrl) return true;
+    }
+    return false;
+  };
+
   // 1. Filter out current user and pure numeric IDs from participants
   const rawParticipants = Array.isArray(d.participants) ? d.participants : [];
-  const cleanParticipants = rawParticipants.filter(p => {
+  let cleanParticipants = rawParticipants.filter(p => {
     const s = String(p).toLowerCase().replace(/^@/, '');
-    return s && s !== currentHandle && s !== 'you' && !/^\d+$/.test(s);
+    return s && !isCurrentUser(s) && !/^\d+$/.test(s);
   });
 
   let mutualHandle = cleanParticipants[0] || '';
   let details = null;
 
-  // 2. Look in participantDetails for a non-current-user, non-numeric entry
+  // 2. Look in participantDetails for a non-current-user entry
   if (d.participantDetails && typeof d.participantDetails === 'object') {
     for (const [k, det] of Object.entries(d.participantDetails)) {
+      if (isCurrentUser(k, det)) continue; // Strictly ignore signed-in user's record
+      
+      const detH = (det && det.handle ? String(det.handle) : '').toLowerCase().replace(/^@/, '');
       const cleanK = String(k).toLowerCase().replace(/^@/, '');
-      if (cleanK && cleanK !== currentHandle && cleanK !== 'you') {
-        if (!mutualHandle && !/^\d+$/.test(cleanK)) mutualHandle = cleanK;
-        if (det && (det.avatarUrl || det.displayName)) {
+      const candidateHandle = (detH && !isCurrentUser(detH) && !/^\d+$/.test(detH))
+        ? detH
+        : (!/^\d+$/.test(cleanK) && !isCurrentUser(cleanK) ? cleanK : '');
+
+      if (!mutualHandle && candidateHandle) {
+        mutualHandle = candidateHandle;
+      }
+
+      if (det && (det.avatarUrl || det.displayName)) {
+        if (!det.avatarUrl || !currentAvatarUrl || det.avatarUrl !== currentAvatarUrl) {
           details = det;
-          if (!mutualHandle && det.handle) mutualHandle = det.handle.toLowerCase().replace(/^@/, '');
+          if (!mutualHandle && candidateHandle) mutualHandle = candidateHandle;
           break;
         }
       }
@@ -1780,10 +1811,13 @@ function resolveDmCardTarget(d, activeAcc) {
   }
 
   if (!details && mutualHandle && d.participantDetails) {
-    details = d.participantDetails[mutualHandle] || d.participantDetails[`@${mutualHandle}`];
+    const candidateDet = d.participantDetails[mutualHandle] || d.participantDetails[`@${mutualHandle}`];
+    if (candidateDet && !isCurrentUser(mutualHandle, candidateDet)) {
+      details = candidateDet;
+    }
   }
 
-  // 3. Fallback: check cachedUsers
+  // 3. Fallback: check cachedUsers by mutualHandle
   if (!details && mutualHandle && Array.isArray(cachedUsers)) {
     const u = cachedUsers.find(x => (x.handle || '').toLowerCase().replace(/^@/, '') === mutualHandle);
     if (u) {
@@ -1794,26 +1828,46 @@ function resolveDmCardTarget(d, activeAcc) {
     }
   }
 
-  // 4. Avatar: must NOT be current user's avatar
+  // 4. Fallback: if mutualHandle is still missing, try resolving from numeric snowflake convId
+  if (!mutualHandle && d.convId && /^\d+[-:]\d+$/.test(d.convId) && Array.isArray(cachedUsers)) {
+    const parts = d.convId.split(/[-:]/);
+    for (const part of parts) {
+      if (currentUserId && part === currentUserId) continue;
+      const matched = cachedUsers.find(x => String(x.id || x.userId || x.restId || '') === part);
+      if (matched) {
+        mutualHandle = (matched.handle || '').toLowerCase().replace(/^@/, '');
+        if (!details) {
+          details = {
+            displayName: matched.displayName || matched.handle,
+            avatarUrl: matched.avatarUrl || ''
+          };
+        }
+        break;
+      }
+    }
+  }
+
+  // 5. Avatar: must NOT be current user's avatar
   let avatar = (details && details.avatarUrl) || '';
   if (currentAvatarUrl && avatar === currentAvatarUrl) {
     avatar = '';
   }
 
-  // 5. Title: must NOT be numeric convId, reaction snippet, or current user
+  // 6. Title: must NOT be numeric convId, reaction snippet, or current user
   let rawTitle = (d.title || '').trim();
   const isBadTitle = !rawTitle
+    || rawTitle === d.convId
     || /^\d+[-:]\d+$/i.test(rawTitle)
     || /^\d+$/.test(rawTitle)
     || /^you (reacted|sent|shared|liked)/i.test(rawTitle)
     || /^(sent|liked|reacted) a /i.test(rawTitle)
-    || rawTitle.toLowerCase() === currentHandle
+    || isCurrentUser(rawTitle)
     || (rawTitle === 'Group chat' && !d.isGroup);
 
   let title = '';
   if (!isBadTitle) {
     title = rawTitle;
-  } else if (details && details.displayName && !/^\d+$/.test(details.displayName) && !/^you (reacted|sent)/i.test(details.displayName)) {
+  } else if (details && details.displayName && !isCurrentUser(details.displayName) && !/^\d+$/.test(details.displayName) && !/^you (reacted|sent)/i.test(details.displayName)) {
     title = details.displayName;
   } else if (mutualHandle) {
     title = `@${mutualHandle}`;
@@ -1863,6 +1917,10 @@ function renderDmSubSections(allDms, filter = 'all') {
         const mutualHandle = target.mutualHandle;
         if (!avatar && mutualHandle) {
           missingDmAvatars.push(mutualHandle);
+        } else if (!avatar && d.convId && /^\d+[-:]\d+$/.test(d.convId)) {
+          d.convId.split(/[-:]/).forEach(part => {
+            if (/^\d{15,}$/.test(part)) missingDmAvatars.push(part);
+          });
         }
 
         const rank = d.rank || BondScoring.getDmRank(d.bondScore || 0);

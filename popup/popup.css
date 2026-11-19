@@ -709,7 +709,8 @@ body {
   pointer-events: none;
 }
 
-#mutual-search-input {
+#mutual-search-input,
+#dm-search-input {
   width: 100%;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
@@ -722,11 +723,13 @@ body {
   font-family: inherit;
 }
 
-#mutual-search-input::placeholder {
+#mutual-search-input::placeholder,
+#dm-search-input::placeholder {
   color: var(--text-tertiary);
 }
 
-#mutual-search-input:focus {
+#mutual-search-input:focus,
+#dm-search-input:focus {
   border-color: var(--input-focus);
   box-shadow: 0 0 0 3px var(--input-focus-glow);
 }

@@ -462,18 +462,45 @@ class BondScoring {
     const activeSpan = Math.max(1, cfg.energeticMin - cfg.activeMin);
     let energyLevel;
     let energyScore;
+
+    // Total messages volume contribution (0 to 6 points)
+    // Directly scales group vitality according to how many messages were sent
+    let totalVolumeBonus = 0;
+    if (totalMessages >= 1000) totalVolumeBonus = 6;
+    else if (totalMessages >= 500) totalVolumeBonus = 5;
+    else if (totalMessages >= 250) totalVolumeBonus = 4;
+    else if (totalMessages >= 100) totalVolumeBonus = 3;
+    else if (totalMessages >= 50) totalVolumeBonus = 2;
+    else if (totalMessages >= 25) totalVolumeBonus = 1;
+
+    // Recency bonus: last message freshness (0 to 3 points)
+    let recencyBonus = 0;
+    if (daysSince <= 0.05) recencyBonus = 3; // within ~1.2 hours
+    else if (daysSince <= 0.15) recencyBonus = 2; // within ~3.6 hours
+    else if (daysSince <= 0.4) recencyBonus = 1; // within ~9.6 hours
+
+    // Member diversity bonus (0 to 2 points)
+    const memberBonus = Math.min(2, Math.max(0, activeMembers.length - 1));
+
     if (recent1h >= cfg.hyperactiveMin) {
       energyLevel = GroupEnergyLevels.HYPERACTIVE;
-      // 95-100, scaling with volume beyond the hyperactive threshold.
-      energyScore = clamp(95 + Math.round(((recent1h - cfg.hyperactiveMin) / cfg.hyperactiveMin) * 5), 95, 100);
+      // 95-100, scaling with volume beyond the hyperactive threshold and total volume
+      const burstScale = Math.min(4, Math.round(((recent1h - cfg.hyperactiveMin) / cfg.hyperactiveMin) * 4));
+      const volExtra = totalMessages >= 500 ? 1 : 0;
+      energyScore = clamp(95 + burstScale + volExtra, 95, 100);
     } else if (recent20h >= cfg.energeticMin) {
       energyLevel = GroupEnergyLevels.ENERGETIC;
-      // 80-94, scaling from the Energetic threshold up to Hyperactive.
-      energyScore = clamp(80 + Math.round(((recent20h - cfg.energeticMin) / activeSpan) * 14), 80, 94);
+      // 80-94, scaling from the Energetic threshold up to Hyperactive
+      const velocityScale = Math.round(((recent20h - cfg.energeticMin) / activeSpan) * 8);
+      const volumeScale = Math.min(4, Math.round(totalVolumeBonus * 0.7));
+      const burstScale = Math.min(2, Math.floor(recent1h / 6));
+      energyScore = clamp(80 + velocityScale + volumeScale + burstScale, 80, 94);
     } else if (recent20h >= cfg.activeMin) {
       energyLevel = GroupEnergyLevels.ACTIVE;
-      // 60-79, scaling from the Active threshold up to Energetic.
-      energyScore = clamp(60 + Math.round(((recent20h - cfg.activeMin) / activeSpan) * 19), 60, 79);
+      // 60-79, scaling dynamically with recent messages, total messages sent, recency, and member diversity
+      const velocityScale = Math.round(((recent20h - cfg.activeMin) / activeSpan) * 8);
+      const burstBonus = recent1h >= 5 ? 2 : (recent1h >= 2 ? 1 : 0);
+      energyScore = clamp(60 + velocityScale + totalVolumeBonus + recencyBonus + burstBonus + memberBonus, 60, 79);
     } else {
       energyLevel = GroupEnergyLevels.DYING;
       energyScore = clamp(Math.round((recent20h / Math.max(1, cfg.activeMin)) * 19), 0, 19);

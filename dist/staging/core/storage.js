@@ -1599,7 +1599,10 @@ class BondStorage {
     if (scoringEngine) {
       if (updated.isGroup) {
         const energy = scoringEngine.calculateGroupEnergy(updated, settings);
-        const candidateScore = Math.max(energy.energyScore, convData.groupEnergyScore || 0, existing.groupEnergyScore || 0);
+        const hasRealData = timeline.length > 0 || (convData && convData.totalMessages > 0) || (convData && convData.recentMessages20h > 0);
+        const candidateScore = hasRealData
+          ? energy.energyScore
+          : (convData.groupEnergyScore || energy.energyScore || existing.groupEnergyScore || 0);
         updated.groupEnergyScore = candidateScore;
         updated.groupEnergyLevel = (scoringEngine.getGroupEnergyLevel && candidateScore > 0)
           ? scoringEngine.getGroupEnergyLevel(candidateScore)
@@ -1757,8 +1760,12 @@ class BondStorage {
               if (!mutualHandle && value.participantDetails && typeof value.participantDetails === 'object') {
                 for (const [k, det] of Object.entries(value.participantDetails)) {
                   const s = String(k).toLowerCase().replace(/^@/, '');
-                  if (s && s !== targetClean && s !== 'you' && !/^\d+$/.test(s)) {
-                    mutualHandle = s;
+                  const detH = (det && det.handle ? String(det.handle) : '').toLowerCase().replace(/^@/, '');
+                  const candidate = (detH && detH !== targetClean && detH !== 'you' && !/^\d+$/.test(detH))
+                    ? detH
+                    : (s && s !== targetClean && s !== 'you' && !/^\d+$/.test(s) ? s : '');
+                  if (candidate) {
+                    mutualHandle = candidate;
                     break;
                   }
                 }

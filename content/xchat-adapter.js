@@ -22,11 +22,12 @@
   const MESSAGE_PREFIX = 'message-';
   const MESSAGE_TEXT_PREFIX = 'message-text-';
 
-  /** `/i/chat/123-456` -> `123:456`, `/i/chat/g123` -> `g123`. */
+  /** `/i/chat/123-456` -> `123:456`, `/i/chat/g123` -> `g123`, numeric group snowflakes -> `g123`. */
   function canonicalConversationId(raw) {
     const value = String(raw || '').trim().toLowerCase();
     if (!value) return '';
     if (value.startsWith('g')) return value;
+    if (/^\d{15,}$/.test(value)) return 'g' + value;
     return value.replace(/-/g, ':');
   }
 
@@ -306,12 +307,16 @@
           }
         }
 
+        if (!curUserClean && state.current_user_id && userMap[state.current_user_id]) {
+          curUserClean = userMap[state.current_user_id].toLowerCase().replace(/^@/, '');
+        }
+
         const convEntries = {};
         if (Array.isArray(state.entries)) {
           for (const item of state.entries) {
             const msg = item.message || item.welcome_message || item;
             if (!msg || !msg.conversation_id) continue;
-            const cid = String(msg.conversation_id).toLowerCase().trim();
+            const cid = canonicalConversationId(msg.conversation_id);
             if (!convEntries[cid]) convEntries[cid] = [];
 
             const timestamp = Number(msg.time) || Date.now();
@@ -330,8 +335,8 @@
         }
 
         if (state.conversations && typeof state.conversations === 'object') {
-          for (const [cid, c] of Object.entries(state.conversations)) {
-            const cleanId = String(cid).toLowerCase().trim();
+          for (const [rawCid, c] of Object.entries(state.conversations)) {
+            const cleanId = canonicalConversationId(rawCid);
             const isGroup = c.type === 'GROUP_DM' || cleanId.startsWith('g');
             const participants = [];
             const participantDetails = {};
@@ -482,30 +487,45 @@
 
           if (isGroup) {
             if (activity.ageMinutes <= 5) {
-              baselineRecent20h = 35;
+              baselineRecent20h = 40;
               baselineRecent1h = 15;
-              baselineTotal = 40;
-              baselineEnergyScore = 69;
+              baselineTotal = 75;
+              baselineEnergyScore = 76;
+            } else if (activity.ageMinutes <= 30) {
+              baselineRecent20h = 32;
+              baselineRecent1h = 8;
+              baselineTotal = 50;
+              baselineEnergyScore = 71;
             } else if (activity.ageMinutes <= 60) {
-              baselineRecent20h = 26;
-              baselineRecent1h = 5;
+              baselineRecent20h = 28;
+              baselineRecent1h = 4;
+              baselineTotal = 38;
+              baselineEnergyScore = 67;
+            } else if (activity.ageMinutes <= 120) {
+              baselineRecent20h = 25;
+              baselineRecent1h = 1;
               baselineTotal = 30;
-              baselineEnergyScore = 63;
-            } else if (activity.ageMinutes <= 180) {
-              baselineRecent20h = 21;
+              baselineEnergyScore = 64;
+            } else if (activity.ageMinutes <= 240) {
+              baselineRecent20h = 22;
               baselineRecent1h = 0;
-              baselineTotal = 22;
-              baselineEnergyScore = 60;
-            } else if (activity.ageMinutes <= 1200) {
-              baselineRecent20h = 12;
+              baselineTotal = 24;
+              baselineEnergyScore = 62;
+            } else if (activity.ageMinutes <= 720) {
+              baselineRecent20h = 14;
               baselineRecent1h = 0;
-              baselineTotal = 15;
-              baselineEnergyScore = 45;
+              baselineTotal = 16;
+              baselineEnergyScore = 48;
+            } else if (activity.ageMinutes <= 1440) {
+              baselineRecent20h = 8;
+              baselineRecent1h = 0;
+              baselineTotal = 10;
+              baselineEnergyScore = 32;
             } else {
               baselineRecent20h = 3;
               baselineRecent1h = 0;
               baselineTotal = 5;
-              baselineEnergyScore = 20;
+              baselineEnergyScore = 18;
             }
           }
 
