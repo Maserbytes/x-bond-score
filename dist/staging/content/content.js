@@ -203,7 +203,7 @@
     observer.observe(root, { childList: true, subtree: true });
   }
 
-  // Listen for popup inquiries for active tab account
+  // Listen for popup inquiries for active tab account & avatar batch resolution
   if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg && msg.type === 'bondscore:get_active_account') {
@@ -213,6 +213,16 @@
           metadata: info || null
         });
         return true;
+      }
+      if (msg && msg.type === 'bondscore:resolve_missing_avatars') {
+        if (window.interactionDetector && window.interactionDetector.resolveMissingAvatars) {
+          window.interactionDetector.resolveMissingAvatars(msg.handles).then((results) => {
+            sendResponse({ results });
+          }).catch(() => {
+            sendResponse({ results: {} });
+          });
+          return true;
+        }
       }
     });
   }
@@ -230,6 +240,19 @@
   setInterval(() => {
     window.interactionDetector.checkAccountSwitch();
   }, 2000);
+
+  // Dedicated active inbox poller on /messages and /i/chat to inject badges immediately on list load
+  setInterval(() => {
+    if (dmsOn && (location.pathname.startsWith('/messages') || location.pathname.startsWith('/i/chat') || document.querySelector('[data-testid="DMDrawer"]'))) {
+      if (window.interactionDetector) {
+        window.interactionDetector.scanDmInbox().catch(() => {});
+        window.interactionDetector.scanActiveDmThread().catch(() => {});
+      }
+      if (window.bondXChat && window.bondXChat.enabled) {
+        window.bondXChat.scan().catch(() => {});
+      }
+    }
+  }, 1000);
 
   // Initial scan
   setTimeout(scanDom, 600);

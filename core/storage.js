@@ -641,6 +641,37 @@ class BondStorage {
     return updated;
   }
 
+  /**
+   * Updates a user's avatarUrl and displayName if previously missing or empty.
+   * Persists immediately to storage without clobbering existing interaction stats.
+   */
+  async updateUserAvatarIfMissing(handle, avatarUrl, displayName = null, platform = null) {
+    if (!handle || !avatarUrl) return false;
+    const cleanHandle = String(handle).replace(/^@/, '').toLowerCase().trim();
+    if (!cleanHandle) return false;
+
+    const activeAccount = (this.currentUser || '').toLowerCase().trim();
+    const platformId = platform ? this._platformFor(platform) : this._platformFor('x');
+    const user = await this.getUser(cleanHandle, false, activeAccount, platformId);
+    if (!user) return false;
+
+    let changed = false;
+    if (!user.avatarUrl || user.avatarUrl !== avatarUrl) {
+      user.avatarUrl = avatarUrl;
+      changed = true;
+    }
+    if (displayName && (!user.displayName || user.displayName === user.handle)) {
+      user.displayName = displayName;
+      changed = true;
+    }
+
+    if (changed) {
+      await this.saveUser(cleanHandle, user, activeAccount, platformId);
+      return true;
+    }
+    return false;
+  }
+
   async getEvents(handle, account = null, platform = null) {
     if (!handle) return [];
     const cleanHandle = handle.replace(/^@/, '').toLowerCase().trim();
@@ -1085,6 +1116,21 @@ class BondStorage {
             }
           }
 
+          // Collect any avatars and display names cached in DM / group conversation metadata
+          const dmAvatars = new Map();
+          for (const [key, value] of Object.entries(allData)) {
+            if (key.includes(':dm:') && value && value.participantDetails && typeof value.participantDetails === 'object') {
+              for (const [h, details] of Object.entries(value.participantDetails)) {
+                if (details && details.avatarUrl) {
+                  dmAvatars.set(h.toLowerCase().trim(), {
+                    avatarUrl: details.avatarUrl,
+                    displayName: details.displayName || null
+                  });
+                }
+              }
+            }
+          }
+
           const users = [];
           const seen = new Set();
           for (const [key, value] of Object.entries(allData)) {
@@ -1106,6 +1152,16 @@ class BondStorage {
               if (h && (!targetAccount || h !== targetAccount) && !seen.has(identity)) {
                 seen.add(identity);
                 value.platform = value.platform || keyPlatform;
+
+                // Backfill missing avatarUrl from known DM / group participants
+                if ((!value.avatarUrl || value.avatarUrl === '') && dmAvatars.has(h)) {
+                  const matched = dmAvatars.get(h);
+                  value.avatarUrl = matched.avatarUrl;
+                  if ((!value.displayName || value.displayName === value.handle) && matched.displayName) {
+                    value.displayName = matched.displayName;
+                  }
+                  this.saveUser(h, value, targetAccount, keyPlatform).catch(() => {});
+                }
                 if (!value.crmStatusData && typeof BondScoring !== 'undefined') {
                   const sSent = (value.stats && ((value.stats.repliesSent || 0) + (value.stats.dmsSent || 0) + (value.stats.likesSent ?? value.stats.likes ?? 0) + (value.stats.quotesSent || 0) + (value.stats.repostsSent || 0) + (value.stats.mentionsSent || 0))) || 0;
                   const sRecv = (value.stats && ((value.stats.repliesReceived || 0) + (value.stats.dmsReceived || 0) + (value.stats.likesReceived || 0) + (value.stats.quotesReceived || 0) + (value.stats.repostsReceived || 0) + (value.stats.mentionsReceived || 0))) || 0;
@@ -1148,6 +1204,25 @@ class BondStorage {
 
         const users = [];
         const seen = new Set();
+        const dmAvatars = new Map();
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.includes(':dm:')) {
+            try {
+              const dm = JSON.parse(localStorage.getItem(k));
+              if (dm && dm.participantDetails && typeof dm.participantDetails === 'object') {
+                for (const [h, details] of Object.entries(dm.participantDetails)) {
+                  if (details && details.avatarUrl) {
+                    dmAvatars.set(h.toLowerCase().trim(), {
+                      avatarUrl: details.avatarUrl,
+                      displayName: details.displayName || null
+                    });
+                  }
+                }
+              }
+            } catch (e) {}
+          }
+        }
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
           let isMatch = false;
@@ -1170,6 +1245,14 @@ class BondStorage {
               if (h && (!targetAccount || h !== targetAccount) && !seen.has(identity)) {
                 seen.add(identity);
                 u.platform = u.platform || keyPlatform;
+                if ((!u.avatarUrl || u.avatarUrl === '') && dmAvatars.has(h)) {
+                  const matched = dmAvatars.get(h);
+                  u.avatarUrl = matched.avatarUrl;
+                  if ((!u.displayName || u.displayName === u.handle) && matched.displayName) {
+                    u.displayName = matched.displayName;
+                  }
+                  this.saveUser(h, u, targetAccount, keyPlatform).catch(() => {});
+                }
                 if (!u.crmStatusData && typeof BondScoring !== 'undefined') {
                   const sSent = (u.stats && ((u.stats.repliesSent || 0) + (u.stats.dmsSent || 0) + (u.stats.likesSent ?? u.stats.likes ?? 0) + (u.stats.quotesSent || 0) + (u.stats.repostsSent || 0) + (u.stats.mentionsSent || 0))) || 0;
                   const sRecv = (u.stats && ((u.stats.repliesReceived || 0) + (u.stats.dmsReceived || 0) + (u.stats.likesReceived || 0) + (u.stats.quotesReceived || 0) + (u.stats.repostsReceived || 0) + (u.stats.mentionsReceived || 0))) || 0;

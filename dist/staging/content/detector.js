@@ -579,6 +579,10 @@ class InteractionDetector {
       // Avatar
       const avatarUrl = this.getAvatarUrlForHandle(handle, tweetEl);
 
+      if (avatarUrl && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+        window.bondStorage.updateUserAvatarIfMissing(handle, avatarUrl, displayName).catch(() => {});
+      }
+
       return { handle, displayName, avatarUrl };
     } catch (e) {
       return null;
@@ -676,7 +680,14 @@ class InteractionDetector {
       if (!type) return;
       // Stable dedupe: the same notification keeps the same key even when the
       // "and N others" count changes.
+      const notifImg = cellEl.querySelector('img[src*="profile_images"], img');
+      const notifAvatar = notifImg ? (notifImg.currentSrc || notifImg.src || '') : '';
+
       for (const handle of handles.slice(0, 4)) {
+        if (notifAvatar && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+          window.bondStorage.updateUserAvatarIfMissing(handle, notifAvatar).catch(() => {});
+        }
+
         const cellId = `notif_${this.id || 'x'}_${type}_${handle}`;
         if (this.processedTweetIds.has(cellId)) continue;
         this.processedTweetIds.add(cellId);
@@ -932,19 +943,32 @@ class InteractionDetector {
       const settings = window.bondStorage && window.bondStorage.settingsCache;
       if (settings && settings.trackDirectMessages === false) return;
 
-      const convElements = document.querySelectorAll('[data-testid="conversation"]');
+      let convElements = document.querySelectorAll(
+        '[data-testid="conversation"], ' +
+        '[aria-label*="Timeline: Messages" i] [data-testid="cellInnerDiv"], ' +
+        '[aria-label*="Timeline: Conversations" i] [data-testid="cellInnerDiv"], ' +
+        '[data-testid="DMDrawer"] [data-testid="cellInnerDiv"], ' +
+        'nav[aria-label*="Messages" i] [data-testid="cellInnerDiv"]'
+      );
+      if (!convElements || convElements.length === 0) {
+        const links = document.querySelectorAll('a[href*="/i/chat/"], a[href*="/messages/"]');
+        if (links.length > 0) {
+          convElements = Array.from(links).map(l => l.closest('[data-testid="cellInnerDiv"]') || l.parentElement || l);
+        }
+      }
       if (!convElements || convElements.length === 0) return;
 
       for (const el of convElements) {
         try {
-          const link = el.querySelector('a[href^="/messages/"]') || el.closest('a[href^="/messages/"]');
-          const href = link ? link.getAttribute('href') : '';
-          const match = href.match(/\/messages\/([A-Za-z0-9_-]+)/);
-          const convId = match ? match[1].toLowerCase() : null;
-          if (!convId) continue;
+          const link = el.querySelector('a[href*="/messages/"], a[href*="/i/chat/"]') || el.closest('a[href*="/messages/"], a[href*="/i/chat/"]');
+          const href = link ? (link.getAttribute('href') || '') : '';
+          const match = href.match(/(?:\/messages\/|\/i\/chat\/)([A-Za-z0-9_-]+)/i);
+          const rawConvId = match ? match[1] : null;
+          if (!rawConvId) continue;
+          const convId = rawConvId.toLowerCase();
 
-          // Check if group (numeric ID or multiple members)
-          const isGroup = /^\d+$/.test(convId);
+          // Check if group (starts with 'g' or numeric ID or multiple members)
+          const isGroup = convId.startsWith('g') || /^\d+$/.test(convId);
 
           // Privacy: the inbox row preview can contain message text, so it is
           // never read. The conversation id already encodes the participant.
@@ -960,6 +984,10 @@ class InteractionDetector {
 
           const hasUnread = !!el.querySelector('[data-testid="unread-badge"], [aria-label*="unread" i]');
 
+          if (participantHandle && avatarUrl && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+            window.bondStorage.updateUserAvatarIfMissing(participantHandle, avatarUrl, displayName).catch(() => {});
+          }
+
           // Auto-register conversation in storage if not already present so it never shows 0 on refresh
           if (window.bondStorage) {
             const existing = await window.bondStorage.getDmConversation(convId, false, this.currentUser);
@@ -967,20 +995,23 @@ class InteractionDetector {
               await window.bondStorage.saveDmConversation(convId, {
                 convId,
                 isGroup,
-                title: displayName || (participantHandle ? `@${participantHandle}` : convId),
+                title: displayName || (participantHandle ? `@${participantHandle}` : (isGroup ? 'Group chat' : convId)),
                 participants: participantHandle ? [participantHandle] : [],
                 participantDetails: participantHandle ? {
                   [participantHandle]: { displayName, avatarUrl }
                 } : {},
-                sentCount: 1,
-                receivedCount: 1,
-                totalCount: 2,
-                lifetimeSent: 1,
-                lifetimeReceived: 1,
-                lifetimeTotal: 2,
+                sentCount: 0,
+                receivedCount: 0,
+                totalCount: 0,
+                lifetimeSent: 0,
+                lifetimeReceived: 0,
+                lifetimeTotal: 0,
                 firstSeenTimestamp: Date.now(),
                 lastMessageTimestamp: Date.now(),
-                waitingForUserReply: hasUnread
+                waitingForUserReply: hasUnread,
+                surface: location.pathname.startsWith('/i/chat') ? 'xchat' : 'messages',
+                groupEnergyScore: isGroup ? 10 : undefined,
+                bondScore: !isGroup ? 10 : undefined
               }, this.currentUser);
             } else if (displayName || avatarUrl || hasUnread !== existing.waitingForUserReply) {
               let changed = false;
@@ -1030,7 +1061,7 @@ class InteractionDetector {
 
       let convId = null;
       let targetHandle = null;
-      const urlMatch = location.pathname.match(/\/messages\/([A-Za-z0-9_-]+)/i);
+      const urlMatch = location.pathname.match(/(?:\/messages\/|\/i\/chat\/)([A-Za-z0-9_-]+)/i);
       if (urlMatch && urlMatch[1]) {
         convId = urlMatch[1].toLowerCase();
         if (convId.includes('-')) {
@@ -1038,7 +1069,7 @@ class InteractionDetector {
         }
       }
 
-      const isGroup = convId ? /^\d+$/.test(convId) : false;
+      const isGroup = convId ? (convId.startsWith('g') || /^\d+$/.test(convId)) : false;
 
       if (!targetHandle && !isGroup) {
         const headerLinks = header.querySelectorAll('a[href^="/"]');
@@ -1065,12 +1096,26 @@ class InteractionDetector {
         const parsedEntries = [];
         for (let idx = 0; idx < messageEntries.length; idx++) {
           const entry = messageEntries[idx];
-          const hasAvatar = !!entry.querySelector('img[src*="profile_images"]');
+          const avatarImg = entry.querySelector('img[src*="profile_images"]');
+          const hasAvatar = !!avatarImg;
           const isOutbound = !hasAvatar && (
             !!entry.querySelector('[class*="r-18u37iz"], [style*="background-color: rgb(29, 155, 240)"]') ||
             !!entry.querySelector('div[style*="align-items: flex-end"]') ||
             entry.closest('div[style*="align-items: flex-end"]') !== null
           );
+
+          let senderHandle = null;
+          let senderAvatar = avatarImg ? (avatarImg.currentSrc || avatarImg.src || '') : '';
+          const senderLink = entry.querySelector('a[href^="/"]');
+          if (senderLink) {
+            const m = (senderLink.getAttribute('href') || '').match(/^\/([A-Za-z0-9_]+)$/);
+            if (m && m[1] && !['messages', 'home', 'explore', 'notifications', 'i'].includes(m[1].toLowerCase())) {
+              senderHandle = m[1].toLowerCase();
+            }
+          }
+          if (senderHandle && senderAvatar && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+            window.bondStorage.updateUserAvatarIfMissing(senderHandle, senderAvatar).catch(() => {});
+          }
 
           // Privacy: message text is never read. Only timestamp and direction
           // are needed for conversation analytics.
@@ -1087,6 +1132,7 @@ class InteractionDetector {
           parsedEntries.push({
             fingerprint: fp,
             direction: isOutbound ? 'outbound' : 'inbound',
+            senderHandle,
             timestamp,
             index: idx
           });
@@ -1103,6 +1149,78 @@ class InteractionDetector {
     } catch (e) {
       // ignore
     }
+  }
+
+  _getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)ct0=([^;]+)/);
+    return match ? match[1] : null;
+  }
+
+  /**
+   * Resolves avatars for missing handles from on-page DOM and X internal API.
+   * Persists resolved avatars to CRM storage and returns a map of results.
+   */
+  async resolveMissingAvatars(handles = []) {
+    if (!Array.isArray(handles) || handles.length === 0) return {};
+    const results = {};
+    const cleanHandles = [...new Set(handles.map(h => String(h || '').replace(/^@/, '').toLowerCase().trim()).filter(Boolean))];
+    const missing = [];
+
+    // 1. First check on-page DOM for any matching avatar containers or images
+    for (const h of cleanHandles) {
+      const domAvatar = this.getAvatarUrlForHandle(h);
+      if (domAvatar) {
+        results[h] = { avatarUrl: domAvatar };
+        if (window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+          window.bondStorage.updateUserAvatarIfMissing(h, domAvatar).catch(() => {});
+        }
+      } else {
+        missing.push(h);
+      }
+    }
+
+    if (missing.length === 0) return results;
+
+    // 2. Query X's internal authenticated user lookup API if on x.com
+    try {
+      const csrfToken = this._getCsrfToken();
+      if (csrfToken && (location.hostname.includes('x.com') || location.hostname.includes('twitter.com'))) {
+        for (let i = 0; i < missing.length; i += 100) {
+          const chunk = missing.slice(i, i + 100);
+          const url = `https://x.com/i/api/1.1/users/lookup.json?screen_name=${encodeURIComponent(chunk.join(','))}`;
+          const res = await fetch(url, {
+            headers: {
+              'authorization': 'Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA',
+              'x-csrf-token': csrfToken,
+              'x-twitter-active-user': 'yes',
+              'x-twitter-auth-type': 'OAuth2Session'
+            },
+            credentials: 'include'
+          });
+
+          if (res.ok) {
+            const users = await res.json();
+            if (Array.isArray(users)) {
+              for (const u of users) {
+                const screenName = (u.screen_name || '').toLowerCase().trim();
+                const avatar = u.profile_image_url_https || u.profile_image_url || '';
+                const name = u.name || screenName;
+                if (screenName && avatar) {
+                  results[screenName] = { avatarUrl: avatar, displayName: name };
+                  if (window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+                    window.bondStorage.updateUserAvatarIfMissing(screenName, avatar, name).catch(() => {});
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[BondScore] Avatar batch lookup error:', err);
+    }
+
+    return results;
   }
 }
 

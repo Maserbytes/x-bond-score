@@ -196,7 +196,7 @@
 
     async _scanInbox(currentUser) {
       const now = Date.now();
-      if (now - this.lastInboxScan < 1500) return;
+      if (now - this.lastInboxScan < 1000) return;
       this.lastInboxScan = now;
 
       const rows = this.shadow.querySelectorAll(`[data-testid^="${CONVERSATION_PREFIX}"]`);
@@ -209,19 +209,79 @@
           const convId = raw.toLowerCase();
           const isGroup = convId.startsWith('g');
 
-          // Only enrich conversations we already track. A list row alone does
-          // not prove that any message was exchanged, so no fake counts.
-          const existing = await window.bondStorage.getDmConversation(convId, false, currentUser);
-          if (!existing) continue;
-
           const img = row.querySelector('img');
           const alt = img && img.alt ? img.alt.trim() : '';
-          const title = /^user avatar$/i.test(alt) ? '' : alt;
+          const rowAvatar = img && /^https?:/i.test(img.src || '') ? img.src : '';
+
+          // Extract title or participant handle from conversation row
+          const titleSpan = row.querySelector('span, [dir="ltr"]');
+          const rowText = (titleSpan ? titleSpan.innerText : row.innerText) || '';
+          const cleanText = rowText.split('\n')[0].trim();
+          const rowTitle = (/^user avatar$/i.test(alt) ? '' : alt) || cleanText || (isGroup ? 'Group chat' : convId);
+
+          let participantHandle = null;
+          if (!isGroup) {
+            const handleMatch = (row.innerText || '').match(/@([A-Za-z0-9_]+)/);
+            if (handleMatch) {
+              participantHandle = handleMatch[1].toLowerCase();
+            } else if (alt && !alt.includes(' ') && !/^user avatar$/i.test(alt)) {
+              participantHandle = alt.toLowerCase();
+            }
+          }
+
+          let existing = await window.bondStorage.getDmConversation(convId, false, currentUser);
+          if (!existing) {
+            existing = {
+              convId,
+              isGroup,
+              title: rowTitle,
+              participants: participantHandle ? [participantHandle] : [],
+              participantDetails: participantHandle ? {
+                [participantHandle]: { displayName: rowTitle, avatarUrl: rowAvatar }
+              } : {},
+              sentCount: 0,
+              receivedCount: 0,
+              totalCount: 0,
+              lifetimeSent: 0,
+              lifetimeReceived: 0,
+              lifetimeTotal: 0,
+              firstSeenTimestamp: Date.now(),
+              lastMessageTimestamp: Date.now(),
+              surface: 'xchat',
+              groupEnergyScore: isGroup ? 10 : undefined,
+              bondScore: !isGroup ? 10 : undefined
+            };
+            await window.bondStorage.saveDmConversation(convId, existing, currentUser).catch(() => {});
+          } else {
+            let changed = false;
+            if (rowTitle && (!existing.title || existing.title === convId || existing.title === 'Group chat')) {
+              existing.title = rowTitle;
+              changed = true;
+            }
+            if (participantHandle && rowAvatar) {
+              if (!existing.participantDetails) existing.participantDetails = {};
+              const prev = existing.participantDetails[participantHandle];
+              if (!prev || !prev.avatarUrl) {
+                existing.participantDetails[participantHandle] = {
+                  displayName: rowTitle || participantHandle,
+                  avatarUrl: rowAvatar
+                };
+                changed = true;
+              }
+            }
+            if (changed) {
+              await window.bondStorage.saveDmConversation(convId, existing, currentUser).catch(() => {});
+            }
+          }
+
+          if (participantHandle && rowAvatar && window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+            window.bondStorage.updateUserAvatarIfMissing(participantHandle, rowAvatar, rowTitle).catch(() => {});
+          }
 
           if (window.bondUI && window.bondUI.injectDmRowBadge) {
-            await window.bondUI.injectDmRowBadge(row, convId, null, isGroup, {
-              displayName: existing.title || title || '',
-              avatarUrl: img && /^https?:/i.test(img.src || '') ? img.src : '',
+            await window.bondUI.injectDmRowBadge(row, convId, participantHandle, isGroup, {
+              displayName: existing.title || rowTitle || '',
+              avatarUrl: rowAvatar || (existing.participantDetails && participantHandle && existing.participantDetails[participantHandle]?.avatarUrl) || '',
               hasUnread: false
             });
           }
@@ -289,6 +349,8 @@
           const uid = testid.slice(MESSAGE_PREFIX.length) || String(entries.length);
           const direction = outbound ? 'outbound' : 'inbound';
           let senderHandle = null;
+          let senderAvatar = '';
+          let senderName = '';
 
           if (inbound) {
             const link = row.querySelector('a[href*="x.com/"], a[href*="twitter.com/"]');
@@ -297,6 +359,15 @@
               senderHandle = m[1].toLowerCase();
               if (!currentUser || senderHandle !== currentUser) senders.add(senderHandle);
             }
+            const senderImg = row.querySelector('img[src*="profile_images"], img');
+            if (senderImg && /^https?:/i.test(senderImg.src || '')) {
+              senderAvatar = senderImg.src;
+            }
+            const nameEl = row.querySelector('span, [dir="ltr"]');
+            if (nameEl && nameEl.innerText) {
+              const txt = nameEl.innerText.trim();
+              if (txt && txt.length <= 60 && !txt.includes('\n')) senderName = txt;
+            }
           }
 
           latestDirection = direction;
@@ -304,6 +375,8 @@
             fingerprint: `xchat_${convId}_${direction}_${uid}`,
             direction,
             senderHandle,
+            senderAvatar,
+            senderName,
             timestamp: 0,
             index: entries.length
           });
@@ -341,6 +414,23 @@
               displayName: targetName || targetHandle,
               avatarUrl: targetAvatar || (details[targetHandle] && details[targetHandle].avatarUrl) || ''
             };
+          }
+
+          // Populate participant details and avatars from observed message entries
+          for (const entry of entries) {
+            if (entry.senderHandle && entry.senderAvatar) {
+              const prev = details[entry.senderHandle];
+              if (!prev || !prev.avatarUrl) {
+                details[entry.senderHandle] = {
+                  handle: entry.senderHandle,
+                  displayName: entry.senderName || (prev && prev.displayName) || entry.senderHandle,
+                  avatarUrl: entry.senderAvatar
+                };
+              }
+              if (window.bondStorage && window.bondStorage.updateUserAvatarIfMissing) {
+                window.bondStorage.updateUserAvatarIfMissing(entry.senderHandle, entry.senderAvatar, entry.senderName).catch(() => {});
+              }
+            }
           }
 
           await window.bondStorage.saveDmConversation(convId, {

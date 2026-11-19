@@ -109,3 +109,114 @@ test('XChat 1:1 ingestion scores messages and stays metadata-only', async () => 
   assert.ok(conv.bondScore > 0, '1:1 DM should produce a bond score');
   assert.equal(JSON.stringify(store).includes(secret), false, 'message body must never be persisted');
 });
+
+test('Storage backfills missing avatars from DM participant details during getAllUsers', async () => {
+  installChromeMock();
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('tester');
+  storage.setActivePlatform('x');
+
+  // 1. Create a user with empty avatar (e.g. from an initial GC membership)
+  await storage.saveUser('shadowborn', {
+    handle: 'shadowborn',
+    displayName: 'Shadowborn',
+    avatarUrl: '',
+    currentScore: 45
+  }, 'tester', 'x');
+
+  // 2. Save a DM conversation that contains Shadowborn's avatar in participantDetails
+  await storage.saveDmConversation('g2119410785122472214', {
+    isGroup: true,
+    title: 'Shadowborn GC',
+    participants: ['shadowborn'],
+    participantDetails: {
+      shadowborn: {
+        handle: 'shadowborn',
+        displayName: 'Shadowborn The Fake Leaker',
+        avatarUrl: 'https://pbs.twimg.com/profile_images/shadowborn_test.jpg'
+      }
+    }
+  }, 'tester');
+
+  // 3. Call getAllUsers and verify avatarUrl is automatically backfilled
+  const users = await storage.getAllUsers('tester', 'x');
+  const shadow = users.find((u) => u.handle === 'shadowborn');
+  assert.ok(shadow, 'shadowborn should be in users list');
+  assert.equal(shadow.avatarUrl, 'https://pbs.twimg.com/profile_images/shadowborn_test.jpg');
+});
+
+test('updateUserAvatarIfMissing updates avatar and display name when previously empty', async () => {
+  installChromeMock();
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('tester');
+  storage.setActivePlatform('x');
+
+  await storage.saveUser('friendofbeako', {
+    handle: 'friendofbeako',
+    displayName: 'friendofbeako',
+    avatarUrl: '',
+    currentScore: 30
+  }, 'tester', 'x');
+
+  const updated = await storage.updateUserAvatarIfMissing(
+    'friendofbeako',
+    'https://pbs.twimg.com/profile_images/beako.jpg',
+    'Beako Best Girl',
+    'x'
+  );
+  assert.equal(updated, true);
+
+  const user = await storage.getUser('friendofbeako', false, 'tester', 'x');
+  assert.equal(user.avatarUrl, 'https://pbs.twimg.com/profile_images/beako.jpg');
+  assert.equal(user.displayName, 'Beako Best Girl');
+});
+
+test('XChat _scanInbox injects badges and registers conversations on first load without user click', async () => {
+  installChromeMock();
+  const storage = new BondStorage();
+  await storage.init();
+  await storage.switchAccount('tester');
+  global.window.bondStorage = storage;
+
+  let injectedBadgeConvId = null;
+  global.window.bondUI = {
+    injectDmRowBadge: async (row, convId, participantHandle, isGroup, metadata) => {
+      injectedBadgeConvId = convId;
+    }
+  };
+
+  const adapter = global.window.bondXChat;
+  adapter.enabled = true;
+
+  // Mock shadow root with an unclicked conversation row
+  const mockRow = {
+    getAttribute(name) {
+      if (name === 'data-testid') return 'dm-conversation-item-g2119410785122472214';
+      return null;
+    },
+    querySelector(selector) {
+      if (selector === 'img') return { src: 'https://pbs.twimg.com/profile_images/gc.jpg', alt: 'Kurisu Rats' };
+      if (selector.includes('span')) return { innerText: 'kurisu experiment rats' };
+      return null;
+    },
+    innerText: 'kurisu experiment rats\nTanhero: Sent a GIF'
+  };
+
+  adapter.shadow = {
+    querySelectorAll(selector) {
+      if (selector.includes('dm-conversation-item-')) return [mockRow];
+      return [];
+    }
+  };
+  adapter.lastInboxScan = 0;
+
+  await adapter._scanInbox('tester');
+
+  assert.equal(injectedBadgeConvId, 'g2119410785122472214', 'Row badge should be injected without waiting for a click');
+
+  const savedConv = await storage.getDmConversation('g2119410785122472214', false, 'tester', 'x');
+  assert.ok(savedConv, 'Conversation should be automatically registered in storage');
+  assert.equal(savedConv.isGroup, true);
+});

@@ -852,7 +852,7 @@ class BondUI {
         this.openDmScoreCard(cleanConvId, badge);
       });
 
-      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"], [class*="min-w-0"][class*="flex-col"]') || convElement;
+      const targetContainer = convElement.querySelector('[dir="ltr"], div[style*="flex-direction: row"], [data-testid="User-Name"], [class*="min-w-0"][class*="flex-col"], [class*="min-w-0"], span') || convElement;
       targetContainer.appendChild(badge);
     }
 

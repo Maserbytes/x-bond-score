@@ -164,6 +164,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Load Initial State
+  try {
+    const versionBadge = document.getElementById('extension-version-badge');
+    if (versionBadge && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) {
+      const manifest = chrome.runtime.getManifest();
+      if (manifest && manifest.version) {
+        versionBadge.innerText = `v${manifest.version}`;
+      }
+    }
+  } catch (e) {}
+
   await setupAccountSwitcher();
   await syncActiveTabAccountIfAvailable();
   await loadLeaderboard();
@@ -384,6 +394,54 @@ async function loadLeaderboard() {
   mutualRepliesEl.innerText = totalMutual;
 
   applyFilterAndRender();
+
+  // Asynchronously resolve real avatars for contacts missing them
+  const missingAvatars = cachedUsers
+    .filter(u => (!u.avatarUrl || u.avatarUrl === '') && u.handle)
+    .map(u => u.handle.toLowerCase().trim());
+  if (missingAvatars.length > 0) {
+    resolveMissingAvatarsForList(missingAvatars);
+  }
+}
+
+/**
+ * Sends a message to the active tab to resolve real avatars via on-page DOM or authenticated session API.
+ * Updates DOM cards in-place upon response.
+ */
+async function resolveMissingAvatarsForList(handles) {
+  if (!handles || handles.length === 0) return;
+  if (typeof chrome === 'undefined' || !chrome.tabs || !chrome.tabs.query) return;
+
+  try {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs || !tabs[0] || !tabs[0].id) return;
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'bondscore:resolve_missing_avatars', handles }, (res) => {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        if (res && res.results && typeof res.results === 'object') {
+          for (const [handle, data] of Object.entries(res.results)) {
+            if (!data || !data.avatarUrl) continue;
+            const h = handle.toLowerCase();
+            const user = cachedUsers.find(u => (u.handle || '').toLowerCase() === h);
+            if (user) {
+              user.avatarUrl = data.avatarUrl;
+              if (data.displayName && (!user.displayName || user.displayName === user.handle)) {
+                user.displayName = data.displayName;
+              }
+            }
+            const wraps = document.querySelectorAll(`.mutual-avatar-wrap[data-avatar-handle="${h}"]`);
+            wraps.forEach((wrap) => {
+              const pin = wrap.querySelector('.mutual-pin-badge');
+              wrap.innerHTML = `
+                <img class="mutual-avatar" src="${escapeHtml(data.avatarUrl)}" alt="${escapeHtml((user && user.displayName) || h)}" onerror="this.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+                <div class="mutual-avatar-fallback" style="display:none;">${escapeHtml(h.charAt(0).toUpperCase())}</div>
+                ${pin ? pin.outerHTML : ''}
+              `;
+            });
+          }
+        }
+      });
+    });
+  } catch (e) {}
 }
 
 function setupPlatformFilters() {
@@ -544,11 +602,13 @@ function renderUserList(users) {
       signalHtml = `<span class="popup-signal-pill ${followRel.id}" title="${followRel.desc}">${followRel.badgeText}</span>`;
     }
 
+    const cleanH = (u.handle || '').toLowerCase().trim();
     item.innerHTML = `
       <div class="mutual-user-info">
-        <div class="mutual-avatar-wrap">
+        <div class="mutual-avatar-wrap" data-avatar-handle="${escapeHtml(cleanH)}">
           ${u.avatarUrl
-            ? `<img class="mutual-avatar" src="${escapeHtml(u.avatarUrl)}" alt="${escapeHtml(u.displayName || u.handle)}">`
+            ? `<img class="mutual-avatar" src="${escapeHtml(u.avatarUrl)}" alt="${escapeHtml(u.displayName || u.handle)}" onerror="this.style.display='none'; if (this.nextElementSibling) this.nextElementSibling.style.display='flex';">
+               <div class="mutual-avatar-fallback" style="display:none;">${escapeHtml((u.handle || 'X').charAt(0).toUpperCase())}</div>`
             : `<div class="mutual-avatar-fallback">${escapeHtml((u.handle || 'X').charAt(0).toUpperCase())}</div>`
           }
           ${isPinned ? `<span class="mutual-pin-badge">⭐</span>` : ''}
